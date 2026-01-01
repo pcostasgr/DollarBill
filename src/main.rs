@@ -2,7 +2,7 @@
 mod bs_mod;
 mod mock_requests;
 
-use bs_mod::{black_scholes_call, implied_vol_call};
+use bs_mod::{black_scholes_merton_call, implied_vol_call};
 use mock_requests::fetch_mock_call_chain;
 use std::time::Instant;
 
@@ -38,7 +38,7 @@ async fn main() {
         );
 
         let iv_opt = iv_result.ok();
-        let bs_price = iv_opt.map_or(0.0, |iv| black_scholes_call(s, contract.strike, t, r, iv).price);
+        let bs_price = iv_opt.map_or(0.0, |iv| black_scholes_merton_call(s, contract.strike, t, r, iv, 0.0).price);
 
         let iv_str = iv_opt
             .map(|v| format!("{:.2}%", v * 100.0))

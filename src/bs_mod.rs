@@ -40,39 +40,40 @@ pub struct Greeks {
 }
 
 /// Black-Scholes European call pricer + full Greeks
-pub fn black_scholes_call(
-    s: f64,     // spot price
-    k: f64,     // strike
-    t: f64,     // time to expiration (years)
-    r: f64,     // risk-free rate
-    sigma: f64  // volatility
-) -> Greeks {    if t <= 0.0 {
-        let price = (s - k).max(0.0);
+/// Black-Scholes-Merton European call pricer + Greeks (with dividend yield q)
+/// Set q=0.0 for vanilla BS
+pub fn black_scholes_merton_call(
+    s: f64,
+    k: f64,
+    t: f64,
+    r: f64,
+    sigma: f64,
+    q: f64,  // Dividend yield (continuous, default 0.0)
+) -> Greeks {
+    if t <= 0.0 {
+        // Same as before
+        let price = s.max(k) - k;
         let delta = if s > k { 1.0 } else { 0.0 };
-        return Greeks {
-            price,
-            delta,
-            gamma: 0.0,
-            theta: 0.0,
-            vega: 0.0,
-            rho: 0.0,
-        };
+        return Greeks { price, delta, gamma: 0.0, theta: 0.0, vega: 0.0, rho: 0.0 };
     }
 
     let sqrt_t = t.sqrt();
-    let d1 = ((s / k).ln() + (r + 0.5 * sigma * sigma) * t) / (sigma * sqrt_t);
+    let d1 = ((s / k).ln() + (r - q + 0.5 * sigma * sigma) * t) / (sigma * sqrt_t);
     let d2 = d1 - sigma * sqrt_t;
 
     let nd1 = norm_cdf_abst(d1);
     let nd2 = norm_cdf_abst(d2);
     let n_d1_pdf = norm_pdf(d1);
 
-    let price = s * nd1 - k * (-r * t).exp() * nd2;
-    let delta = nd1;
-    let gamma = n_d1_pdf / (s * sigma * sqrt_t);
-    let vega = s * sqrt_t * n_d1_pdf;
-    let theta = -(s * n_d1_pdf * sigma) / (2.0 * sqrt_t) - r * k * (-r * t).exp() * nd2;
-    let rho = k * t * (-r * t).exp() * nd2;
+    let e_qt = (-q * t).exp();
+    let e_rt = (-r * t).exp();
+
+    let price = s * e_qt * nd1 - k * e_rt * nd2;
+    let delta = e_qt * nd1;
+    let gamma = e_qt * n_d1_pdf / (s * sigma * sqrt_t);
+    let vega = s * e_qt * sqrt_t * n_d1_pdf;
+    let theta = - (s * e_qt * n_d1_pdf * sigma) / (2.0 * sqrt_t) + q * s * e_qt * nd1 - r * k * e_rt * nd2;
+    let rho = k * t * e_rt * nd2;
 
     Greeks { price, delta, gamma, theta, vega, rho }
 }
@@ -100,7 +101,7 @@ pub fn implied_vol_call(
 
     let mut sigma = initial_guess.max(1e-10);
     for _ in 0..max_iter {
-        let greeks = black_scholes_call(s, k, t, r, sigma);
+        let greeks = black_scholes_merton_call(s, k, t, r, sigma,0.0);
         let price_diff = greeks.price - market_price;
 
         if price_diff.abs() < tolerance {
