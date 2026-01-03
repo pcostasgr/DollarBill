@@ -12,6 +12,10 @@ use heston::{heston_start, MonteCarloConfig, HestonMonteCarlo};
 use real_market_data::{fetch_market_data, display_summary};
 use std::time::Instant;
 
+// ========== CONFIGURATION ==========
+const USE_LIVE_DATA: bool = false;  // Set to true for Yahoo Finance, false for CSV
+// ===================================
+
 #[tokio::main]
 async fn main() {
     let symbol = "TSLA";  // Stock symbol to fetch
@@ -20,27 +24,43 @@ async fn main() {
 
     let start = Instant::now();
     
-    // Fetch live market data with proper error handling
-    let history = match fetch_market_data(symbol, days_back).await {
-        Ok(h) => {
-            println!("✓ Successfully fetched {} data", symbol);
-            h
-        },
-        Err(e) => {
-            println!("✗ Failed to fetch market data: {}", e);
-            println!("Falling back to CSV...");
-            
-            // Fallback to CSV if API fails
-            match load_csv_closes("tesla_one_year.csv") {
-                Ok(h) => {
-                    println!("✓ Loaded from CSV backup");
-                    h
-                },
-                Err(csv_err) => {
-                    println!("✗ CSV load also failed: {}", csv_err);
-                    println!("Cannot continue without data.");
-                    return;
+    // Choose data source based on configuration
+    let history = if USE_LIVE_DATA {
+        // Fetch live market data with proper error handling
+        match fetch_market_data(symbol, days_back).await {
+            Ok(h) => {
+                println!("✓ Successfully fetched {} data from Yahoo Finance", symbol);
+                h
+            },
+            Err(e) => {
+                println!("✗ Failed to fetch market data: {}", e);
+                println!("Falling back to CSV...");
+                
+                // Fallback to CSV if API fails
+                match load_csv_closes("tesla_one_year.csv") {
+                    Ok(h) => {
+                        println!("✓ Loaded from CSV backup");
+                        h
+                    },
+                    Err(csv_err) => {
+                        println!("✗ CSV load also failed: {}", csv_err);
+                        println!("Cannot continue without data.");
+                        return;
+                    }
                 }
+            }
+        }
+    } else {
+        // Use CSV data directly
+        match load_csv_closes("tesla_one_year.csv") {
+            Ok(h) => {
+                println!("✓ Loaded from CSV (USE_LIVE_DATA = false)");
+                h
+            },
+            Err(csv_err) => {
+                println!("✗ CSV load failed: {}", csv_err);
+                println!("Cannot continue without data.");
+                return;
             }
         }
     };
@@ -72,10 +92,11 @@ async fn main() {
     let current_price = *closes.last().unwrap();
     
     // Create Heston parameters easily:
+    let time_to_maturity = 1.0;  // 1 year
     let heston_params = heston_start(
         current_price,
         sigma,
-        1.0/52.0,    // 1 year to maturity
+        time_to_maturity,
         0.05    // 5% risk-free rate
     );
 
@@ -84,10 +105,10 @@ async fn main() {
         n_paths: 100000,
         n_steps: 500,
         seed: 42,
-        use_antithetic: false,  // Set to true for variance reduction
+        use_antithetic: true,  // Set to true for variance reduction
     };
-     // Compare with Black-Scholes
-    let bs_greeks = black_scholes_call(current_price, current_price, 1.0, 0.05, sigma);
+     // Compare with Black-Scholes (SAME MATURITY)
+    let bs_greeks = black_scholes_call(current_price, current_price, time_to_maturity, 0.05, sigma);
     
 
     let mc = HestonMonteCarlo::new(heston_params, config);

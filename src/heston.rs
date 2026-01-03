@@ -159,8 +159,7 @@ impl HestonMonteCarlo {
     }
 
     /// Simulate path using antithetic variates (negated random numbers)
-    /// Must be called immediately after simulate_path with same RNG state
-    fn simulate_path_antithetic(&self, rng: &mut LCG, original_randoms: &[(f64, f64)]) -> HestonPath {
+    fn simulate_path_antithetic(&self, original_randoms: &[(f64, f64)]) -> HestonPath {
         let dt = self.params.t / self.config.n_steps as f64;
         let sqrt_dt = dt.sqrt();
         
@@ -171,6 +170,80 @@ impl HestonMonteCarlo {
         variances.push(self.params.v0);
         
         for &(dw_s, dw_v) in original_randoms {
+            let s = *stock_prices.last().unwrap();
+            let v = *variances.last().unwrap();
+            
+            // Use NEGATED random variables (antithetic)
+            let dw_s_anti = -dw_s;
+            let dw_v_anti = -dw_v;
+            
+            let v_pos = v.max(0.0);
+            let sqrt_v = v_pos.sqrt();
+            
+            let s_new = s * (1.0 + self.params.r * dt + sqrt_v * sqrt_dt * dw_s_anti);
+            
+            let v_new = v + self.params.kappa * (self.params.theta - v_pos) * dt 
+                        + self.params.sigma * sqrt_v * sqrt_dt * dw_v_anti
+                        + 0.25 * self.params.sigma * self.params.sigma * dt * (dw_v_anti * dw_v_anti - 1.0);
+            
+            stock_prices.push(s_new.max(0.0));
+            variances.push(v_new);
+        }
+        
+        HestonPath {
+            stock_prices,
+            variances,
+        }
+    }
+
+    /// Simulate path and capture random numbers for antithetic pair
+    fn simulate_path_with_randoms(&self, rng: &mut LCG) -> (HestonPath, Vec<(f64, f64)>) {
+        let dt = self.params.t / self.config.n_steps as f64;
+        let sqrt_dt = dt.sqrt();
+        
+        let mut stock_prices = Vec::with_capacity(self.config.n_steps + 1);
+        let mut variances = Vec::with_capacity(self.config.n_steps + 1);
+        let mut randoms = Vec::with_capacity(self.config.n_steps);
+        
+        stock_prices.push(self.params.s0);
+        variances.push(self.params.v0);
+        
+        for _ in 0..self.config.n_steps {
+            let s = *stock_prices.last().unwrap();
+            let v = *variances.last().unwrap();
+            
+            let (dw_s, dw_v) = rng.next_correlated_normals(self.params.rho);
+            randoms.push((dw_s, dw_v));
+            
+            let v_pos = v.max(0.0);
+            let sqrt_v = v_pos.sqrt();
+            
+            let s_new = s * (1.0 + self.params.r * dt + sqrt_v * sqrt_dt * dw_s);
+            
+            let v_new = v + self.params.kappa * (self.params.theta - v_pos) * dt 
+                        + self.params.sigma * sqrt_v * sqrt_dt * dw_v
+                        + 0.25 * self.params.sigma * self.params.sigma * dt * (dw_v * dw_v - 1.0);
+            
+            stock_prices.push(s_new.max(0.0));
+            variances.push(v_new);
+        }
+        
+        (HestonPath { stock_prices, variances }, randoms)
+    }
+
+    /// Run Monte Carlo simulation and return all paths
+    pub fn simulate_paths(&self) -> Vec<HestonPath> {
+        let mut rng = LCG::new(self.config.seed);
+        let mut paths = Vec::with_capacity(self.config.n_paths);
+        
+        for _ in 0..self.config.n_paths {
+            paths.push(self.simulate_path(&mut rng));
+        }
+        
+        paths
+    }
+
+    /// Price a European call option (parallelized)
     /// Uses antithetic variates if configured
     pub fn price_european_call(&self, strike: f64) -> f64 {
         if self.config.use_antithetic {
@@ -207,7 +280,7 @@ impl HestonMonteCarlo {
                 
                 // Simulate pair
                 let (path1, randoms) = self.simulate_path_with_randoms(&mut rng);
-                let path2 = self.simulate_path_antithetic(&mut rng, &randoms);
+                let path2 = self.simulate_path_antithetic(&randoms);
                 
                 // Calculate payoffs
                 let final_price1 = *path1.stock_prices.last().unwrap();
@@ -260,7 +333,7 @@ impl HestonMonteCarlo {
                 let mut rng = LCG::new(self.config.seed + i as u64);
                 
                 let (path1, randoms) = self.simulate_path_with_randoms(&mut rng);
-                let path2 = self.simulate_path_antithetic(&mut rng, &randoms);
+                let path2 = self.simulate_path_antithetic(&randoms);
                 
                 let final_price1 = *path1.stock_prices.last().unwrap();
                 let final_price2 = *path2.stock_prices.last().unwrap();
@@ -272,81 +345,7 @@ impl HestonMonteCarlo {
             .sum();
         
         let discount_factor = (-self.params.r * self.params.t).exp();
-        discount_factor * payoff_sum / n_pair64;
-        let sqrt_dt = dt.sqrt();
-        
-        let mut stock_prices = Vec::with_capacity(self.config.n_steps + 1);
-        let mut variances = Vec::with_capacity(self.config.n_steps + 1);
-        let mut randoms = Vec::with_capacity(self.config.n_steps);
-        
-        stock_prices.push(self.params.s0);
-        variances.push(self.params.v0);
-        
-        for _ in 0..self.config.n_steps {
-            let s = *stock_prices.last().unwrap();
-            let v = *variances.last().unwrap();
-            
-            let (dw_s, dw_v) = rng.next_correlated_normals(self.params.rho);
-            randoms.push((dw_s, dw_v));
-            
-            let v_pos = v.max(0.0);
-            let sqrt_v = v_pos.sqrt();
-            
-            let s_new = s * (1.0 + self.params.r * dt + sqrt_v * sqrt_dt * dw_s);
-            
-            let v_new = v + self.params.kappa * (self.params.theta - v_pos) * dt 
-                        + self.params.sigma * sqrt_v * sqrt_dt * dw_v
-                        + 0.25 * self.params.sigma * self.params.sigma * dt * (dw_v * dw_v - 1.0);
-            
-            stock_prices.push(s_new.max(0.0));
-            variances.push(v_new);
-        }
-        
-        (HestonPath { stock_prices, variances }, randoms)
-    }
-
-    /// Run Monte Carlo simulation and return all paths
-    pub fn simulate_paths(&self) -> Vec<HestonPath> {
-        let mut rng = LCG::new(self.config.seed);
-        let mut paths = Vec::with_capacity(self.config.n_paths);
-        
-        for _ in 0..self.config.n_paths {
-            paths.push(self.simulate_path(&mut rng));
-        }
-        
-        paths
-    }
-
-    /// Price a European call option (parallelized)
-    pub fn price_european_call(&self, strike: f64) -> f64 {
-        let payoff_sum: f64 = (0..self.config.n_paths)
-            .into_par_iter()
-            .map(|i| {
-                let mut rng = LCG::new(self.config.seed + i as u64);
-                let path = self.simulate_path(&mut rng);
-                let final_price = *path.stock_prices.last().unwrap();
-                (final_price - strike).max(0.0)
-            })
-            .sum();
-        
-        let discount_factor = (-self.params.r * self.params.t).exp();
-        discount_factor * payoff_sum / self.config.n_paths as f64
-    }
-
-    /// Price a European put option (parallelized)
-    pub fn price_european_put(&self, strike: f64) -> f64 {
-        let payoff_sum: f64 = (0..self.config.n_paths)
-            .into_par_iter()
-            .map(|i| {
-                let mut rng = LCG::new(self.config.seed + i as u64);
-                let path = self.simulate_path(&mut rng);
-                let final_price = *path.stock_prices.last().unwrap();
-                (strike - final_price).max(0.0)
-            })
-            .sum();
-        
-        let discount_factor = (-self.params.r * self.params.t).exp();
-        discount_factor * payoff_sum / self.config.n_paths as f64
+        discount_factor * payoff_sum / n_pairs as f64
     }
 
     /// Calculate the average final stock price across all paths (parallelized)
@@ -379,8 +378,10 @@ impl HestonMonteCarlo {
 
     /// Calculate Greeks for a European call option using finite differences
     pub fn greeks_european_call(&self, strike: f64) -> HestonGreeks {
+        // Larger bumps needed for Monte Carlo (vs analytical methods)
+        // Even larger for short-dated options to overcome noise
         let bump_s = 0.01;      // 1% bump for spot
-        let bump_v = 0.0001;    // Small bump for variance
+        let bump_v = 0.01;      // 25% bump for variance (critical for short-dated)
         let bump_t = 1.0 / 365.0; // 1 day
         let bump_r = 0.0001;    // 1 basis point
         
@@ -419,7 +420,7 @@ impl HestonMonteCarlo {
             let mc_theta = HestonMonteCarlo::new(params_theta, self.config.clone());
             let price_theta = mc_theta.price_european_call(strike);
             
-            let theta = -(price_theta - price) / bump_t;
+            let theta = (price_theta - price) / bump_t;
             
             // Rho: ∂V/∂r
             let mut params_rho = self.params.clone();
@@ -434,7 +435,7 @@ impl HestonMonteCarlo {
                 delta,
                 gamma,
                 vega,
-                theta: theta / 365.0, // Per calendar day
+                theta,
                 rho,
             }
         } else {
@@ -452,8 +453,10 @@ impl HestonMonteCarlo {
 
     /// Calculate Greeks for a European put option using finite differences
     pub fn greeks_european_put(&self, strike: f64) -> HestonGreeks {
+        // Larger bumps needed for Monte Carlo (vs analytical methods)
+        // Even larger for short-dated options to overcome noise
         let bump_s = 0.01;
-        let bump_v = 0.0001;
+        let bump_v = 0.01;      // 25% bump for variance
         let bump_t = 1.0 / 365.0;
         let bump_r = 0.0001;
         
@@ -490,7 +493,7 @@ impl HestonMonteCarlo {
             let mc_theta = HestonMonteCarlo::new(params_theta, self.config.clone());
             let price_theta = mc_theta.price_european_put(strike);
             
-            let theta = -(price_theta - price) / bump_t;
+            let theta = (price_theta - price) / bump_t;
             
             // Rho
             let mut params_rho = self.params.clone();
@@ -505,7 +508,7 @@ impl HestonMonteCarlo {
                 delta,
                 gamma,
                 vega,
-                theta: theta / 365.0,
+                theta,
                 rho,
             }
         } else {
@@ -611,6 +614,7 @@ mod tests {
             n_paths: 1000,
             n_steps: 252,
             seed: 42,
+            use_antithetic: false,
         };
 
         let mc = HestonMonteCarlo::new(params, config);
@@ -638,6 +642,7 @@ mod tests {
             n_paths: 10000,
             n_steps: 252,
             seed: 42,
+            use_antithetic: false,
         };
 
         let strike = 100.0;
@@ -673,6 +678,7 @@ mod tests {
             n_paths: 5000,
             n_steps: 1000,
             seed: 123,
+            use_antithetic: false,
         };
 
         let mc = HestonMonteCarlo::new(params.clone(), config);
