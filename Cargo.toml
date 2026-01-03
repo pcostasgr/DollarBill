@@ -16,5 +16,6 @@ chrono = "0.4"                                      # Date/time handling
 time = "0.3"                                        # Time library for Yahoo Finance API
 rayon = "1.8"                                       # Data parallelism for Heston Monte Carlo
 num-complex = "0.4"                                 # Complex numbers for Carr-Madan formula
+argmin = { version = "0.10", features = ["serde1"] }  # Optimization framework with math support
 
 # Lean dependencies - only what we need

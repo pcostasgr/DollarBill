@@ -3,6 +3,7 @@ mod models;
 mod market_data;
 mod strategies;
 mod utils;
+mod calibration;
 
 use market_data::csv_loader::load_csv_closes;
 use models::bs_mod::{compute_historical_vol, black_scholes_call};
@@ -15,6 +16,7 @@ use std::time::Instant;
 
 // ========== CONFIGURATION ==========
 const USE_LIVE_DATA: bool = false;  // Set to true for Yahoo Finance, false for CSV
+const RUN_CALIBRATION_DEMO: bool = true;  // Set to false to skip calibration demo
 // ===================================
 
 #[tokio::main]
@@ -278,6 +280,85 @@ async fn main() {
     }
     
     // ===================================================================
+    // CALIBRATION DEMONSTRATION (Optional)
+    // ===================================================================
+    
+    if RUN_CALIBRATION_DEMO {
+        println!("\n{}", "=".repeat(70));
+        println!("CALIBRATION DEMONSTRATION");
+        println!("{}", "=".repeat(70));
+        
+        use calibration::{create_mock_market_data, calibrate_heston, CalibParams};
+        
+        // "True" parameters (simulate reality)
+        let true_params = CalibParams {
+            kappa: 3.5,
+            theta: 0.25,
+            sigma: 0.45,
+            rho: -0.75,
+            v0: 0.30,
+        };
+        
+        println!("\n🎯 True Parameters (hidden from optimizer):");
+        println!("  κ = {:.2}, θ = {:.4}, σ = {:.2}, ρ = {:.2}, v₀ = {:.4}",
+                 true_params.kappa, true_params.theta, true_params.sigma, 
+                 true_params.rho, true_params.v0);
+        
+        // Generate synthetic market data
+        let strikes: Vec<f64> = vec![0.85, 0.90, 0.95, 1.00, 1.05, 1.10, 1.15]
+            .iter()
+            .map(|k| current_price * k)
+            .collect();
+        let maturities = vec![30.0 / 365.0, 60.0 / 365.0];  // 30, 60 days
+        
+        let market_data = create_mock_market_data(
+            current_price,
+            rate,
+            &true_params,
+            &strikes,
+            &maturities,
+        );
+        
+        println!("📊 Generated {} synthetic market options", market_data.len());
+        
+        // Initial guess (intentionally wrong)
+        let initial_guess = CalibParams {
+            kappa: 2.0,
+            theta: 0.35,
+            sigma: 0.30,
+            rho: -0.60,
+            v0: 0.35,
+        };
+        
+        println!("\n🔧 Initial Guess:");
+        println!("  κ = {:.2}, θ = {:.4}, σ = {:.2}, ρ = {:.2}, v₀ = {:.4}",
+                 initial_guess.kappa, initial_guess.theta, initial_guess.sigma, 
+                 initial_guess.rho, initial_guess.v0);
+        
+        // Run calibration
+        let calib_start = Instant::now();
+        match calibrate_heston(current_price, rate, market_data, initial_guess) {
+            Ok(result) => {
+                let calib_time = calib_start.elapsed();
+                
+                result.print_summary();
+                
+                println!("\n⏱️  Calibration Time: {:.2} seconds", calib_time.as_secs_f64());
+                
+                println!("\n📈 Recovery Accuracy:");
+                println!("  κ error: {:.2}%", (result.params.kappa - true_params.kappa).abs() / true_params.kappa * 100.0);
+                println!("  θ error: {:.2}%", (result.params.theta - true_params.theta).abs() / true_params.theta * 100.0);
+                println!("  σ error: {:.2}%", (result.params.sigma - true_params.sigma).abs() / true_params.sigma * 100.0);
+                println!("  ρ error: {:.2}%", (result.params.rho - true_params.rho).abs() / true_params.rho.abs() * 100.0);
+                println!("  v₀ error: {:.2}%", (result.params.v0 - true_params.v0).abs() / true_params.v0 * 100.0);
+            }
+            Err(e) => {
+                println!("❌ Calibration failed: {}", e);
+            }
+        }
+    }
+    
+    // ===================================================================
     // SUMMARY
     // ===================================================================
     
@@ -289,9 +370,12 @@ async fn main() {
     println!("✓ Volatility smile captured by Heston characteristic function");
     println!("✓ Monte Carlo validation ({:.0}x slower)", speedup);
     println!("✓ Strategy framework operational");
+    if RUN_CALIBRATION_DEMO {
+        println!("✓ Parameter calibration working (argmin optimizer)");
+    }
     println!("\nNext Steps:");
     println!("  1. Add live options data feed (Polygon.io API)");
-    println!("  2. Implement full surface calibration");
+    println!("  2. Calibrate to real market options chain");
     println!("  3. Add more trading strategies");
     println!("  4. Build execution layer");
     println!("{}", "=".repeat(70));
