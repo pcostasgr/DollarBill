@@ -68,6 +68,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "csv",
+ "num-complex",
  "rayon",
  "reqwest 0.12.28",
  "serde",
@@ -866,6 +867,15 @@ name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
+
+[[package]]
+name = "num-complex"
+version = "0.4.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73f88a1307638156682bada9d7604135552957b7818057dcef22705b4d509495"
+dependencies = [
+ "num-traits",
+]
 
 [[package]]
 name = "num-conv"
