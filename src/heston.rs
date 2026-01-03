@@ -116,7 +116,7 @@ impl HestonMonteCarlo {
         HestonMonteCarlo { params, config }
     }
 
-    /// Simulate a single path using Euler discretization with full truncation scheme
+    /// Simulate a single path using Milstein scheme with full truncation
     fn simulate_path(&self, rng: &mut LCG) -> HestonPath {
         let dt = self.params.t / self.config.n_steps as f64;
         let sqrt_dt = dt.sqrt();
@@ -138,12 +138,14 @@ impl HestonMonteCarlo {
             let v_pos = v.max(0.0);
             let sqrt_v = v_pos.sqrt();
             
-            // Update stock price
+            // Update stock price (Euler is sufficient for log-normal process)
             let s_new = s * (1.0 + self.params.r * dt + sqrt_v * sqrt_dt * dw_s);
             
-            // Update variance using Euler scheme
+            // Update variance using Milstein scheme (more accurate)
+            // Adds second-order correction term: 0.25 * sigma^2 * dt * (dW^2 - 1)
             let v_new = v + self.params.kappa * (self.params.theta - v_pos) * dt 
-                        + self.params.sigma * sqrt_v * sqrt_dt * dw_v;
+                        + self.params.sigma * sqrt_v * sqrt_dt * dw_v
+                        + 0.25 * self.params.sigma * self.params.sigma * dt * (dw_v * dw_v - 1.0);
             
             stock_prices.push(s_new.max(0.0)); // Ensure non-negative stock price
             variances.push(v_new);
