@@ -1,9 +1,9 @@
-﻿// Heston parameter calibration - SIMPLIFIED VERSION (no argmin for now)
-// Using basic Nelder-Mead implementation
+﻿// Heston parameter calibration using custom Nelder-Mead optimizer
 
 use crate::models::heston::HestonParams;
 use crate::models::heston_analytical::{heston_call_carr_madan, heston_put_carr_madan};
 use crate::calibration::market_option::{MarketOption, OptionType};
+use crate::calibration::nelder_mead::{NelderMead, NelderMeadConfig};
 
 /// Compact calibration parameters (just the 5 we're fitting)
 #[derive(Debug, Clone)]
@@ -122,7 +122,30 @@ fn calculate_error(
     (total_error / total_weight).sqrt()
 }
 
-/// Calibrate Heston parameters (simplified - just returns initial guess for now)
+/// Check if parameters satisfy bounds
+fn check_bounds(params: &[f64]) -> bool {
+    let kappa = params[0];
+    let theta = params[1];
+    let sigma = params[2];
+    let rho = params[3];
+    let v0 = params[4];
+    
+    kappa >= 0.01 && kappa <= 10.0
+        && theta >= 0.01 && theta <= 2.0
+        && sigma >= 0.01 && sigma <= 1.5
+        && rho >= -1.0 && rho <= 0.0
+        && v0 >= 0.01 && v0 <= 2.0
+}
+
+/// Check Feller condition
+fn check_feller(params: &[f64]) -> bool {
+    let kappa = params[0];
+    let theta = params[1];
+    let sigma = params[2];
+    2.0 * kappa * theta > sigma.powi(2)
+}
+
+/// Calibrate Heston parameters using Nelder-Mead optimization
 pub fn calibrate_heston(
     spot: f64,
     rate: f64,
@@ -135,20 +158,75 @@ pub fn calibrate_heston(
     
     println!("Starting Heston calibration with {} options...", market_data.len());
     
-    let initial_error = calculate_error(&initial_guess, spot, rate, &market_data);
+    // Convert initial guess to vector
+    let initial_params = vec![
+        initial_guess.kappa,
+        initial_guess.theta,
+        initial_guess.sigma,
+        initial_guess.rho,
+        initial_guess.v0,
+    ];
     
-    // For now, just return the initial guess
-    // TODO: Implement actual optimization (Nelder-Mead or similar)
-    let final_params = initial_guess.clone();
-    let final_error = initial_error;
+    let initial_error = {
+        let calib_params = CalibParams {
+            kappa: initial_params[0],
+            theta: initial_params[1],
+            sigma: initial_params[2],
+            rho: initial_params[3],
+            v0: initial_params[4],
+        };
+        calculate_error(&calib_params, spot, rate, &market_data)
+    };
     
-    println!("⚠ NOTE: Calibration not yet implemented - returning initial guess");
+    // Define objective function with penalties for constraint violations
+    let objective = |params: &[f64]| {
+        // Check bounds
+        if !check_bounds(params) {
+            return 1e10;  // Penalty for out of bounds
+        }
+        
+        // Check Feller condition
+        if !check_feller(params) {
+            return 1e10;  // Penalty for violating Feller
+        }
+        
+        let calib_params = CalibParams {
+            kappa: params[0],
+            theta: params[1],
+            sigma: params[2],
+            rho: params[3],
+            v0: params[4],
+        };
+        
+        calculate_error(&calib_params, spot, rate, &market_data)
+    };
+    
+    // Run Nelder-Mead optimization
+    let config = NelderMeadConfig {
+        max_iterations: 500,
+        tolerance: 1e-6,
+        ..Default::default()
+    };
+    
+    let optimizer = NelderMead::new(config);
+    let result = optimizer.minimize(objective, initial_params);
+    
+    let final_params = CalibParams {
+        kappa: result.best_params[0],
+        theta: result.best_params[1],
+        sigma: result.best_params[2],
+        rho: result.best_params[3],
+        v0: result.best_params[4],
+    };
+    
+    let final_error = result.best_value;
+    let success = result.converged && final_error < initial_error * 0.5;
     
     Ok(CalibrationResult {
         params: final_params,
         rmse: final_error,
-        iterations: 0,
-        success: false,
+        iterations: result.iterations as u64,
+        success,
         initial_error,
         final_error,
     })
