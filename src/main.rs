@@ -4,27 +4,52 @@ mod csv_loader;
 mod action_table_out;
 mod pnl_output;
 mod heston;
+mod real_market_data;
 
 use csv_loader::load_csv_closes;
 use bs_mod::{compute_historical_vol, black_scholes_call};
 use heston::{heston_start, MonteCarloConfig, HestonMonteCarlo};
+use real_market_data::{fetch_market_data, display_summary};
 use std::time::Instant;
 
 #[tokio::main]
 async fn main() {
-    let csv_file = "tesla_one_year.csv";
+    let symbol = "TSLA";  // Stock symbol to fetch
+    let days_back = 365;
     let n_days = 10;
 
     let start = Instant::now();
-    let history = match load_csv_closes(csv_file) {
-        Ok(h) => h,
+    
+    // Fetch live market data with proper error handling
+    let history = match fetch_market_data(symbol, days_back).await {
+        Ok(h) => {
+            println!("✓ Successfully fetched {} data", symbol);
+            h
+        },
         Err(e) => {
-            println!("CSV load failed: {}", e);
-            return;
+            println!("✗ Failed to fetch market data: {}", e);
+            println!("Falling back to CSV...");
+            
+            // Fallback to CSV if API fails
+            match load_csv_closes("tesla_one_year.csv") {
+                Ok(h) => {
+                    println!("✓ Loaded from CSV backup");
+                    h
+                },
+                Err(csv_err) => {
+                    println!("✗ CSV load also failed: {}", csv_err);
+                    println!("Cannot continue without data.");
+                    return;
+                }
+            }
         }
     };
+    
     let load_time = start.elapsed();
-
+    
+    // Display market data summary
+    display_summary(&history);
+    
     println!("Loaded {} trading days", history.len());
 
     let closes: Vec<f64> = history.iter().map(|d| d.close).collect();
