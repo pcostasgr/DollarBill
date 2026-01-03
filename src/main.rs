@@ -82,8 +82,9 @@ async fn main() {
     // Run simulation:
     let config = MonteCarloConfig {
         n_paths: 100000,
-        n_steps: 1000,
+        n_steps: 500,
         seed: 42,
+        use_antithetic: false,  // Set to true for variance reduction
     };
      // Compare with Black-Scholes
     let bs_greeks = black_scholes_call(current_price, current_price, 1.0, 0.05, sigma);

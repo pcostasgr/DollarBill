@@ -34,6 +34,7 @@ pub struct MonteCarloConfig {
     pub n_paths: usize,     // Number of simulation paths
     pub n_steps: usize,     // Number of time steps
     pub seed: u64,          // Random seed for reproducibility
+    pub use_antithetic: bool, // Use antithetic variates for variance reduction
 }
 
 /// Simple Linear Congruential Generator for random numbers
@@ -155,6 +156,153 @@ impl HestonMonteCarlo {
             stock_prices,
             variances,
         }
+    }
+
+    /// Simulate path using antithetic variates (negated random numbers)
+    /// Must be called immediately after simulate_path with same RNG state
+    fn simulate_path_antithetic(&self, rng: &mut LCG, original_randoms: &[(f64, f64)]) -> HestonPath {
+        let dt = self.params.t / self.config.n_steps as f64;
+        let sqrt_dt = dt.sqrt();
+        
+        let mut stock_prices = Vec::with_capacity(self.config.n_steps + 1);
+        let mut variances = Vec::with_capacity(self.config.n_steps + 1);
+        
+        stock_prices.push(self.params.s0);
+        variances.push(self.params.v0);
+        
+        for &(dw_s, dw_v) in original_randoms {
+    /// Uses antithetic variates if configured
+    pub fn price_european_call(&self, strike: f64) -> f64 {
+        if self.config.use_antithetic {
+            self.price_european_call_antithetic(strike)
+        } else {
+            self.price_european_call_regular(strike)
+        }
+    }
+
+    /// Price European call - regular Monte Carlo
+    fn price_european_call_regular(&self, strike: f64) -> f64 {
+        let payoff_sum: f64 = (0..self.config.n_paths)
+            .into_par_iter()
+            .map(|i| {
+                let mut rng = LCG::new(self.config.seed + i as u64);
+                let path = self.simulate_path(&mut rng);
+                let final_price = *path.stock_prices.last().unwrap();
+                (final_price - strike).max(0.0)
+            })
+            .sum();
+        
+        let discount_factor = (-self.params.r * self.params.t).exp();
+        discount_factor * payoff_sum / self.config.n_paths as f64
+    }
+
+    /// Price European call - antithetic variates
+    fn price_european_call_antithetic(&self, strike: f64) -> f64 {
+        let n_pairs = self.config.n_paths / 2;
+        
+        let payoff_sum: f64 = (0..n_pairs)
+            .into_par_iter()
+            .map(|i| {
+                let mut rng = LCG::new(self.config.seed + i as u64);
+                
+                // Simulate pair
+                let (path1, randoms) = self.simulate_path_with_randoms(&mut rng);
+                let path2 = self.simulate_path_antithetic(&mut rng, &randoms);
+                
+                // Calculate payoffs
+                let final_price1 = *path1.stock_prices.last().unwrap();
+                let final_price2 = *path2.stock_prices.last().unwrap();
+                let payoff1 = (final_price1 - strike).max(0.0);
+                let payoff2 = (final_price2 - strike).max(0.0);
+                
+                // Average the pair
+                (payoff1 + payoff2) / 2.0
+            })
+            .sum();
+        
+        let discount_factor = (-self.params.r * self.params.t).exp();
+        discount_factor * payoff_sum / n_pairs as f64
+    }
+
+    /// Price a European put option (parallelized)
+    /// Uses antithetic variates if configured
+    pub fn price_european_put(&self, strike: f64) -> f64 {
+        if self.config.use_antithetic {
+            self.price_european_put_antithetic(strike)
+        } else {
+            self.price_european_put_regular(strike)
+        }
+    }
+
+    /// Price European put - regular Monte Carlo
+    fn price_european_put_regular(&self, strike: f64) -> f64 {
+        let payoff_sum: f64 = (0..self.config.n_paths)
+            .into_par_iter()
+            .map(|i| {
+                let mut rng = LCG::new(self.config.seed + i as u64);
+                let path = self.simulate_path(&mut rng);
+                let final_price = *path.stock_prices.last().unwrap();
+                (strike - final_price).max(0.0)
+            })
+            .sum();
+        
+        let discount_factor = (-self.params.r * self.params.t).exp();
+        discount_factor * payoff_sum / self.config.n_paths as f64
+    }
+
+    /// Price European put - antithetic variates
+    fn price_european_put_antithetic(&self, strike: f64) -> f64 {
+        let n_pairs = self.config.n_paths / 2;
+        
+        let payoff_sum: f64 = (0..n_pairs)
+            .into_par_iter()
+            .map(|i| {
+                let mut rng = LCG::new(self.config.seed + i as u64);
+                
+                let (path1, randoms) = self.simulate_path_with_randoms(&mut rng);
+                let path2 = self.simulate_path_antithetic(&mut rng, &randoms);
+                
+                let final_price1 = *path1.stock_prices.last().unwrap();
+                let final_price2 = *path2.stock_prices.last().unwrap();
+                let payoff1 = (strike - final_price1).max(0.0);
+                let payoff2 = (strike - final_price2).max(0.0);
+                
+                (payoff1 + payoff2) / 2.0
+            })
+            .sum();
+        
+        let discount_factor = (-self.params.r * self.params.t).exp();
+        discount_factor * payoff_sum / n_pair64;
+        let sqrt_dt = dt.sqrt();
+        
+        let mut stock_prices = Vec::with_capacity(self.config.n_steps + 1);
+        let mut variances = Vec::with_capacity(self.config.n_steps + 1);
+        let mut randoms = Vec::with_capacity(self.config.n_steps);
+        
+        stock_prices.push(self.params.s0);
+        variances.push(self.params.v0);
+        
+        for _ in 0..self.config.n_steps {
+            let s = *stock_prices.last().unwrap();
+            let v = *variances.last().unwrap();
+            
+            let (dw_s, dw_v) = rng.next_correlated_normals(self.params.rho);
+            randoms.push((dw_s, dw_v));
+            
+            let v_pos = v.max(0.0);
+            let sqrt_v = v_pos.sqrt();
+            
+            let s_new = s * (1.0 + self.params.r * dt + sqrt_v * sqrt_dt * dw_s);
+            
+            let v_new = v + self.params.kappa * (self.params.theta - v_pos) * dt 
+                        + self.params.sigma * sqrt_v * sqrt_dt * dw_v
+                        + 0.25 * self.params.sigma * self.params.sigma * dt * (dw_v * dw_v - 1.0);
+            
+            stock_prices.push(s_new.max(0.0));
+            variances.push(v_new);
+        }
+        
+        (HestonPath { stock_prices, variances }, randoms)
     }
 
     /// Run Monte Carlo simulation and return all paths
