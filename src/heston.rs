@@ -1,7 +1,8 @@
 // Heston Stochastic Volatility Model - Monte Carlo Implementation
-// This implementation uses no external libraries except std
+// This implementation uses no external libraries except std and rayon for parallelization
 
 use std::f64::consts::PI;
+use rayon::prelude::*;
 
 /// Heston model parameters
 #[derive(Debug, Clone)]
@@ -14,6 +15,17 @@ pub struct HestonParams {
     pub rho: f64,       // Correlation between asset and variance
     pub r: f64,         // Risk-free rate
     pub t: f64,         // Time to maturity
+}
+
+/// Greeks for Heston model options
+#[derive(Debug, Clone)]
+pub struct HestonGreeks {
+    pub price: f64,
+    pub delta: f64,      // ∂V/∂S
+    pub gamma: f64,      // ∂²V/∂S²
+    pub vega: f64,       // ∂V/∂v0 (initial variance)
+    pub theta: f64,      // -∂V/∂t (per day)
+    pub rho: f64,        // ∂V/∂r
 }
 
 /// Monte Carlo simulation configuration
@@ -155,62 +167,207 @@ impl HestonMonteCarlo {
         paths
     }
 
-    /// Price a European call option
+    /// Price a European call option (parallelized)
     pub fn price_european_call(&self, strike: f64) -> f64 {
-        let mut rng = LCG::new(self.config.seed);
-        let mut payoff_sum = 0.0;
-        
-        for _ in 0..self.config.n_paths {
-            let path = self.simulate_path(&mut rng);
-            let final_price = *path.stock_prices.last().unwrap();
-            let payoff = (final_price - strike).max(0.0);
-            payoff_sum += payoff;
-        }
+        let payoff_sum: f64 = (0..self.config.n_paths)
+            .into_par_iter()
+            .map(|i| {
+                let mut rng = LCG::new(self.config.seed + i as u64);
+                let path = self.simulate_path(&mut rng);
+                let final_price = *path.stock_prices.last().unwrap();
+                (final_price - strike).max(0.0)
+            })
+            .sum();
         
         let discount_factor = (-self.params.r * self.params.t).exp();
         discount_factor * payoff_sum / self.config.n_paths as f64
     }
 
-    /// Price a European put option
+    /// Price a European put option (parallelized)
     pub fn price_european_put(&self, strike: f64) -> f64 {
-        let mut rng = LCG::new(self.config.seed);
-        let mut payoff_sum = 0.0;
-        
-        for _ in 0..self.config.n_paths {
-            let path = self.simulate_path(&mut rng);
-            let final_price = *path.stock_prices.last().unwrap();
-            let payoff = (strike - final_price).max(0.0);
-            payoff_sum += payoff;
-        }
+        let payoff_sum: f64 = (0..self.config.n_paths)
+            .into_par_iter()
+            .map(|i| {
+                let mut rng = LCG::new(self.config.seed + i as u64);
+                let path = self.simulate_path(&mut rng);
+                let final_price = *path.stock_prices.last().unwrap();
+                (strike - final_price).max(0.0)
+            })
+            .sum();
         
         let discount_factor = (-self.params.r * self.params.t).exp();
         discount_factor * payoff_sum / self.config.n_paths as f64
     }
 
-    /// Calculate the average final stock price across all paths
+    /// Calculate the average final stock price across all paths (parallelized)
     pub fn average_final_price(&self) -> f64 {
-        let mut rng = LCG::new(self.config.seed);
-        let mut sum = 0.0;
-        
-        for _ in 0..self.config.n_paths {
-            let path = self.simulate_path(&mut rng);
-            sum += *path.stock_prices.last().unwrap();
-        }
+        let sum: f64 = (0..self.config.n_paths)
+            .into_par_iter()
+            .map(|i| {
+                let mut rng = LCG::new(self.config.seed + i as u64);
+                let path = self.simulate_path(&mut rng);
+                *path.stock_prices.last().unwrap()
+            })
+            .sum();
         
         sum / self.config.n_paths as f64
     }
 
-    /// Calculate the average final variance across all paths
+    /// Calculate the average final variance across all paths (parallelized)
     pub fn average_final_variance(&self) -> f64 {
-        let mut rng = LCG::new(self.config.seed);
-        let mut sum = 0.0;
-        
-        for _ in 0..self.config.n_paths {
-            let path = self.simulate_path(&mut rng);
-            sum += *path.variances.last().unwrap();
-        }
+        let sum: f64 = (0..self.config.n_paths)
+            .into_par_iter()
+            .map(|i| {
+                let mut rng = LCG::new(self.config.seed + i as u64);
+                let path = self.simulate_path(&mut rng);
+                *path.variances.last().unwrap()
+            })
+            .sum();
         
         sum / self.config.n_paths as f64
+    }
+
+    /// Calculate Greeks for a European call option using finite differences
+    pub fn greeks_european_call(&self, strike: f64) -> HestonGreeks {
+        let bump_s = 0.01;      // 1% bump for spot
+        let bump_v = 0.0001;    // Small bump for variance
+        let bump_t = 1.0 / 365.0; // 1 day
+        let bump_r = 0.0001;    // 1 basis point
+        
+        // Base price
+        let price = self.price_european_call(strike);
+        
+        // Delta: ∂V/∂S
+        let mut params_up = self.params.clone();
+        params_up.s0 = self.params.s0 * (1.0 + bump_s);
+        let mc_up = HestonMonteCarlo::new(params_up, self.config.clone());
+        let price_up = mc_up.price_european_call(strike);
+        
+        let mut params_down = self.params.clone();
+        params_down.s0 = self.params.s0 * (1.0 - bump_s);
+        let mc_down = HestonMonteCarlo::new(params_down, self.config.clone());
+        let price_down = mc_down.price_european_call(strike);
+        
+        let delta = (price_up - price_down) / (2.0 * self.params.s0 * bump_s);
+        
+        // Gamma: ∂²V/∂S²
+        let gamma = (price_up - 2.0 * price + price_down) / ((self.params.s0 * bump_s).powi(2));
+        
+        // Vega: ∂V/∂v0 (sensitivity to initial variance)
+        let mut params_vega_up = self.params.clone();
+        params_vega_up.v0 = self.params.v0 + bump_v;
+        let mc_vega = HestonMonteCarlo::new(params_vega_up, self.config.clone());
+        let price_vega_up = mc_vega.price_european_call(strike);
+        
+        // Convert to volatility units (multiply by 2*sqrt(v0) since ∂v/∂σ = 2σ)
+        let vega = (price_vega_up - price) / bump_v * 2.0 * self.params.v0.sqrt();
+        
+        // Theta: -∂V/∂t (negative time decay, per day)
+        if self.params.t > bump_t {
+            let mut params_theta = self.params.clone();
+            params_theta.t = self.params.t - bump_t;
+            let mc_theta = HestonMonteCarlo::new(params_theta, self.config.clone());
+            let price_theta = mc_theta.price_european_call(strike);
+            
+            let theta = -(price_theta - price) / bump_t;
+            
+            // Rho: ∂V/∂r
+            let mut params_rho = self.params.clone();
+            params_rho.r = self.params.r + bump_r;
+            let mc_rho = HestonMonteCarlo::new(params_rho, self.config.clone());
+            let price_rho = mc_rho.price_european_call(strike);
+            
+            let rho = (price_rho - price) / bump_r;
+            
+            HestonGreeks {
+                price,
+                delta,
+                gamma,
+                vega,
+                theta: theta / 365.0, // Per calendar day
+                rho,
+            }
+        } else {
+            // Near expiry, theta calculation may be unstable
+            HestonGreeks {
+                price,
+                delta,
+                gamma,
+                vega,
+                theta: 0.0,
+                rho: 0.0,
+            }
+        }
+    }
+
+    /// Calculate Greeks for a European put option using finite differences
+    pub fn greeks_european_put(&self, strike: f64) -> HestonGreeks {
+        let bump_s = 0.01;
+        let bump_v = 0.0001;
+        let bump_t = 1.0 / 365.0;
+        let bump_r = 0.0001;
+        
+        let price = self.price_european_put(strike);
+        
+        // Delta
+        let mut params_up = self.params.clone();
+        params_up.s0 = self.params.s0 * (1.0 + bump_s);
+        let mc_up = HestonMonteCarlo::new(params_up, self.config.clone());
+        let price_up = mc_up.price_european_put(strike);
+        
+        let mut params_down = self.params.clone();
+        params_down.s0 = self.params.s0 * (1.0 - bump_s);
+        let mc_down = HestonMonteCarlo::new(params_down, self.config.clone());
+        let price_down = mc_down.price_european_put(strike);
+        
+        let delta = (price_up - price_down) / (2.0 * self.params.s0 * bump_s);
+        
+        // Gamma
+        let gamma = (price_up - 2.0 * price + price_down) / ((self.params.s0 * bump_s).powi(2));
+        
+        // Vega
+        let mut params_vega_up = self.params.clone();
+        params_vega_up.v0 = self.params.v0 + bump_v;
+        let mc_vega = HestonMonteCarlo::new(params_vega_up, self.config.clone());
+        let price_vega_up = mc_vega.price_european_put(strike);
+        
+        let vega = (price_vega_up - price) / bump_v * 2.0 * self.params.v0.sqrt();
+        
+        // Theta
+        if self.params.t > bump_t {
+            let mut params_theta = self.params.clone();
+            params_theta.t = self.params.t - bump_t;
+            let mc_theta = HestonMonteCarlo::new(params_theta, self.config.clone());
+            let price_theta = mc_theta.price_european_put(strike);
+            
+            let theta = -(price_theta - price) / bump_t;
+            
+            // Rho
+            let mut params_rho = self.params.clone();
+            params_rho.r = self.params.r + bump_r;
+            let mc_rho = HestonMonteCarlo::new(params_rho, self.config.clone());
+            let price_rho = mc_rho.price_european_put(strike);
+            
+            let rho = (price_rho - price) / bump_r;
+            
+            HestonGreeks {
+                price,
+                delta,
+                gamma,
+                vega,
+                theta: theta / 365.0,
+                rho,
+            }
+        } else {
+            HestonGreeks {
+                price,
+                delta,
+                gamma,
+                vega,
+                theta: 0.0,
+                rho: 0.0,
+            }
+        }
     }
 
     /// Get model parameters
@@ -223,34 +380,34 @@ impl HestonMonteCarlo {
         &self.config
     }
 
-    /// Display terminal price distribution as ASCII histogram
+    /// Display terminal price distribution as ASCII histogram (parallelized)
     pub fn show_terminal_distribution(&self, num_bins: usize) {
-        let mut rng = LCG::new(self.config.seed);
-        let mut final_prices = Vec::with_capacity(self.config.n_paths);
+        let final_prices: Vec<f64> = (0..self.config.n_paths)
+            .into_par_iter()
+            .map(|i| {
+                let mut rng = LCG::new(self.config.seed + i as u64);
+                let path = self.simulate_path(&mut rng);
+                *path.stock_prices.last().unwrap()
+            })
+            .collect();
         
-        // Collect all final prices
-        for _ in 0..self.config.n_paths {
-            let path = self.simulate_path(&mut rng);
-            final_prices.push(*path.stock_prices.last().unwrap());
-        }
+        let mut sorted_prices = final_prices.clone();
+        sorted_prices.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let min_price = *sorted_prices.first().unwrap();
+        let max_price = *sorted_prices.last().unwrap();
+        let mean_price = sorted_prices.iter().sum::<f64>() / sorted_prices.len() as f64;
         
-        // Calculate statistics
-        final_prices.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let min_price = *final_prices.first().unwrap();
-        let max_price = *final_prices.last().unwrap();
-        let mean_price = final_prices.iter().sum::<f64>() / final_prices.len() as f64;
-        
-        let median_price = if final_prices.len() % 2 == 0 {
-            (final_prices[final_prices.len() / 2 - 1] + final_prices[final_prices.len() / 2]) / 2.0
+        let median_price = if sorted_prices.len() % 2 == 0 {
+            (sorted_prices[sorted_prices.len() / 2 - 1] + sorted_prices[sorted_prices.len() / 2]) / 2.0
         } else {
-            final_prices[final_prices.len() / 2]
+            sorted_prices[sorted_prices.len() / 2]
         };
         
         // Create histogram bins
         let bin_width = (max_price - min_price) / num_bins as f64;
         let mut bins = vec![0; num_bins];
         
-        for &price in &final_prices {
+        for &price in &sorted_prices {
             let bin_index = ((price - min_price) / bin_width).floor() as usize;
             let bin_index = bin_index.min(num_bins - 1);
             bins[bin_index] += 1;
@@ -266,8 +423,8 @@ impl HestonMonteCarlo {
         println!("  Min:    ${:.2}", min_price);
         println!("  Max:    ${:.2}", max_price);
         println!("  StdDev: ${:.2}", 
-                 (final_prices.iter().map(|x| (x - mean_price).powi(2)).sum::<f64>() 
-                  / final_prices.len() as f64).sqrt());
+                 (sorted_prices.iter().map(|x| (x - mean_price).powi(2)).sum::<f64>() 
+                  / sorted_prices.len() as f64).sqrt());
         println!("\nHistogram ({} bins, {} paths):", num_bins, self.config.n_paths);
         
         for i in 0..num_bins {
@@ -275,7 +432,7 @@ impl HestonMonteCarlo {
             let bin_end = bin_start + bin_width;
             let bar_length = (bins[i] as f64 * scale) as usize;
             let bar = "█".repeat(bar_length);
-            let pct = bins[i] as f64 / final_prices.len() as f64 * 100.0;
+            let pct = bins[i] as f64 / sorted_prices.len() as f64 * 100.0;
             
             println!("${:6.2}-{:6.2} | {:50} {:5} ({:4.1}%)", 
                      bin_start, bin_end, bar, bins[i], pct);

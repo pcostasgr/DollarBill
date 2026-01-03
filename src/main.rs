@@ -90,18 +90,29 @@ async fn main() {
     
 
     let mc = HestonMonteCarlo::new(heston_params, config);
-    let heston_call = mc.price_european_call(current_price);
+    
+    // Get Heston Greeks (warning: this takes time as it re-runs simulations)
+    let heston_greeks = mc.greeks_european_call(current_price);
     
     let heston_time = heston_start_time.elapsed();
     
    
     println!("\n=== Option Pricing Comparison (ATM, 1Y) ===");
     println!("Black-Scholes call: ${:.2}", bs_greeks.price);
-    println!("Heston Monte Carlo:  ${:.2}", heston_call);
+    println!("Heston Monte Carlo:  ${:.2}", heston_greeks.price);
     println!("Difference:          ${:.2} ({:.1}%)", 
-             heston_call - bs_greeks.price,
-             ((heston_call - bs_greeks.price) / bs_greeks.price * 100.0));
-    println!("Heston computation time: {:.6} ms", heston_time.as_secs_f64() * 1000.0);
+             heston_greeks.price - bs_greeks.price,
+             ((heston_greeks.price - bs_greeks.price) / bs_greeks.price * 100.0));
+    
+    println!("\n=== Greeks Comparison ===");
+    println!("             Black-Scholes    Heston MC");
+    println!("Delta:       {:8.4}         {:8.4}", bs_greeks.delta, heston_greeks.delta);
+    println!("Gamma:       {:8.4}         {:8.4}", bs_greeks.gamma, heston_greeks.gamma);
+    println!("Vega:        {:8.2}         {:8.2}", bs_greeks.vega, heston_greeks.vega);
+    println!("Theta:       {:8.2}         {:8.2}", bs_greeks.theta, heston_greeks.theta);
+    println!("Rho:         {:8.2}         {:8.2}", bs_greeks.rho, heston_greeks.rho);
+    
+    println!("\nHeston computation time: {:.6} ms", heston_time.as_secs_f64() * 1000.0);
 
     // Show terminal price distribution
     mc.show_terminal_distribution(20);

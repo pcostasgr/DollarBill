@@ -14,5 +14,6 @@ csv = "1.3"  # Latest stable as of Jan 2026 — fast, zero-copy, battle-tested
 yahoo_finance_api = "1.2"                          # Live market data from Yahoo Finance
 chrono = "0.4"                                      # Date/time handling
 time = "0.3"                                        # Time library for Yahoo Finance API
+rayon = "1.8"                                       # Data parallelism for Heston Monte Carlo
 
 # No other deps — we keep this lean as fuck
