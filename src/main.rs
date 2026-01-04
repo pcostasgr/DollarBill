@@ -261,6 +261,7 @@ async fn main() {
     let model_iv = heston_params.v0.sqrt();  // Heston calibrated vol
     
     let signals = registry.generate_all_signals(
+        symbol,
         current_price,
         market_iv,
         model_iv,
@@ -270,7 +271,7 @@ async fn main() {
     if !signals.is_empty() {
         println!("\n📊 Signal Summary:");
         for signal in &signals {
-            println!("\n[{}]", signal.strategy_name);
+            println!("\n[{} - {}]", signal.symbol, signal.strategy_name);
             println!("   Action: {:?}", signal.action);
             println!("   Strike: ${:.2}", signal.strike);
             println!("   Expiry: {} days", signal.expiry_days);

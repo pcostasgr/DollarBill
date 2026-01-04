@@ -79,6 +79,49 @@ pub fn black_scholes_merton_call(
     Greeks { price, delta, gamma, theta, vega, rho }
 }
 
+/// Black-Scholes-Merton European put pricer + full Greeks
+pub fn black_scholes_merton_put(
+    s: f64,
+    k: f64,
+    t: f64,
+    r: f64,
+    sigma: f64,
+    q: f64,
+) -> Greeks {
+    if t <= 0.0 {
+        let price = (k - s).max(0.0);
+        let delta = if s < k { -1.0 } else { 0.0 };
+        return Greeks {
+            price,
+            delta,
+            gamma: 0.0,
+            theta: 0.0,
+            vega: 0.0,
+            rho: 0.0,
+        };
+    }
+
+    let sqrt_t = t.sqrt();
+    let d1 = ((s / k).ln() + (r - q + 0.5 * sigma * sigma) * t) / (sigma * sqrt_t);
+    let d2 = d1 - sigma * sqrt_t;
+
+    let nd1_neg = norm_cdf_abst(-d1);
+    let nd2_neg = norm_cdf_abst(-d2);
+    let e_rt = (-r * t).exp();
+    let e_qt = (-q * t).exp();
+
+    let price = k * e_rt * nd2_neg - s * e_qt * nd1_neg;
+    let delta = -e_qt * nd1_neg;
+    let gamma = e_qt * norm_pdf(d1) / (s * sigma * sqrt_t);
+    let vega = s * e_qt * norm_pdf(d1) * sqrt_t;
+    let theta = -(s * norm_pdf(d1) * sigma * e_qt) / (2.0 * sqrt_t)
+                + q * s * e_qt * nd1_neg
+                - r * k * e_rt * nd2_neg;
+    let rho = -k * t * e_rt * nd2_neg;
+
+    Greeks { price, delta, gamma, theta, vega, rho }
+}
+
 // Wrapper for backward compatibility
 pub fn black_scholes_call(s: f64, k: f64, t: f64, r: f64, sigma: f64) -> Greeks {
     black_scholes_merton_call(s, k, t, r, sigma, 0.0)

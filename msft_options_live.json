@@ -1,0 +1,649 @@
+{
+  "symbol": "MSFT",
+  "spot_price": 472.94000244140625,
+  "expiration_date": "2026-01-23",
+  "time_to_expiry": 0.049315068493150684,
+  "fetched_at": "2026-01-04T13:19:53.707989",
+  "options": [
+    {
+      "strike": 270.0,
+      "bid": 201.55,
+      "ask": 204.95,
+      "volume": 0,
+      "open_interest": 2,
+      "option_type": "Call"
+    },
+    {
+      "strike": 280.0,
+      "bid": 191.55,
+      "ask": 195.0,
+      "volume": 5,
+      "open_interest": 5,
+      "option_type": "Call"
+    },
+    {
+      "strike": 300.0,
+      "bid": 171.55,
+      "ask": 175.05,
+      "volume": 0,
+      "open_interest": 2,
+      "option_type": "Call"
+    },
+    {
+      "strike": 310.0,
+      "bid": 161.65,
+      "ask": 165.05,
+      "volume": 0,
+      "open_interest": 2,
+      "option_type": "Call"
+    },
+    {
+      "strike": 320.0,
+      "bid": 151.65,
+      "ask": 155.2,
+      "volume": 0,
+      "open_interest": 2,
+      "option_type": "Call"
+    },
+    {
+      "strike": 355.0,
+      "bid": 116.8,
+      "ask": 120.2,
+      "volume": 2,
+      "open_interest": 2,
+      "option_type": "Call"
+    },
+    {
+      "strike": 380.0,
+      "bid": 91.9,
+      "ask": 95.0,
+      "volume": 0,
+      "open_interest": 4,
+      "option_type": "Call"
+    },
+    {
+      "strike": 390.0,
+      "bid": 82.0,
+      "ask": 85.1,
+      "volume": 6,
+      "open_interest": 2,
+      "option_type": "Call"
+    },
+    {
+      "strike": 395.0,
+      "bid": 77.0,
+      "ask": 80.35,
+      "volume": 0,
+      "open_interest": 1,
+      "option_type": "Call"
+    },
+    {
+      "strike": 400.0,
+      "bid": 72.05,
+      "ask": 74.35,
+      "volume": 25,
+      "open_interest": 25,
+      "option_type": "Call"
+    },
+    {
+      "strike": 405.0,
+      "bid": 67.1,
+      "ask": 70.25,
+      "volume": 1,
+      "open_interest": 6,
+      "option_type": "Call"
+    },
+    {
+      "strike": 415.0,
+      "bid": 57.75,
+      "ask": 60.6,
+      "volume": 0,
+      "open_interest": 1,
+      "option_type": "Call"
+    },
+    {
+      "strike": 420.0,
+      "bid": 53.2,
+      "ask": 55.5,
+      "volume": 1,
+      "open_interest": 2,
+      "option_type": "Call"
+    },
+    {
+      "strike": 430.0,
+      "bid": 42.65,
+      "ask": 45.85,
+      "volume": 5,
+      "open_interest": 5,
+      "option_type": "Call"
+    },
+    {
+      "strike": 435.0,
+      "bid": 39.3,
+      "ask": 40.3,
+      "volume": 1,
+      "open_interest": 2,
+      "option_type": "Call"
+    },
+    {
+      "strike": 440.0,
+      "bid": 34.65,
+      "ask": 35.6,
+      "volume": 23,
+      "open_interest": 11,
+      "option_type": "Call"
+    },
+    {
+      "strike": 445.0,
+      "bid": 30.1,
+      "ask": 31.05,
+      "volume": 1,
+      "open_interest": 2,
+      "option_type": "Call"
+    },
+    {
+      "strike": 450.0,
+      "bid": 25.7,
+      "ask": 26.65,
+      "volume": 20,
+      "open_interest": 101,
+      "option_type": "Call"
+    },
+    {
+      "strike": 455.0,
+      "bid": 21.95,
+      "ask": 22.15,
+      "volume": 21,
+      "open_interest": 16,
+      "option_type": "Call"
+    },
+    {
+      "strike": 460.0,
+      "bid": 18.0,
+      "ask": 18.2,
+      "volume": 128,
+      "open_interest": 63,
+      "option_type": "Call"
+    },
+    {
+      "strike": 465.0,
+      "bid": 14.4,
+      "ask": 14.6,
+      "volume": 52,
+      "open_interest": 52,
+      "option_type": "Call"
+    },
+    {
+      "strike": 470.0,
+      "bid": 11.25,
+      "ask": 11.4,
+      "volume": 392,
+      "open_interest": 122,
+      "option_type": "Call"
+    },
+    {
+      "strike": 475.0,
+      "bid": 8.45,
+      "ask": 8.6,
+      "volume": 1647,
+      "open_interest": 410,
+      "option_type": "Call"
+    },
+    {
+      "strike": 480.0,
+      "bid": 6.2,
+      "ask": 6.4,
+      "volume": 2116,
+      "open_interest": 452,
+      "option_type": "Call"
+    },
+    {
+      "strike": 485.0,
+      "bid": 4.4,
+      "ask": 4.55,
+      "volume": 1403,
+      "open_interest": 436,
+      "option_type": "Call"
+    },
+    {
+      "strike": 490.0,
+      "bid": 3.0,
+      "ask": 3.15,
+      "volume": 774,
+      "open_interest": 679,
+      "option_type": "Call"
+    },
+    {
+      "strike": 495.0,
+      "bid": 2.03,
+      "ask": 2.13,
+      "volume": 389,
+      "open_interest": 516,
+      "option_type": "Call"
+    },
+    {
+      "strike": 500.0,
+      "bid": 1.36,
+      "ask": 1.44,
+      "volume": 1992,
+      "open_interest": 2165,
+      "option_type": "Call"
+    },
+    {
+      "strike": 505.0,
+      "bid": 0.91,
+      "ask": 0.98,
+      "volume": 1143,
+      "open_interest": 1785,
+      "option_type": "Call"
+    },
+    {
+      "strike": 510.0,
+      "bid": 0.62,
+      "ask": 0.69,
+      "volume": 933,
+      "open_interest": 823,
+      "option_type": "Call"
+    },
+    {
+      "strike": 515.0,
+      "bid": 0.43,
+      "ask": 0.49,
+      "volume": 621,
+      "open_interest": 2061,
+      "option_type": "Call"
+    },
+    {
+      "strike": 520.0,
+      "bid": 0.31,
+      "ask": 0.37,
+      "volume": 164,
+      "open_interest": 651,
+      "option_type": "Call"
+    },
+    {
+      "strike": 525.0,
+      "bid": 0.24,
+      "ask": 0.29,
+      "volume": 1329,
+      "open_interest": 2923,
+      "option_type": "Call"
+    },
+    {
+      "strike": 530.0,
+      "bid": 0.17,
+      "ask": 0.19,
+      "volume": 92,
+      "open_interest": 694,
+      "option_type": "Call"
+    },
+    {
+      "strike": 535.0,
+      "bid": 0.12,
+      "ask": 0.17,
+      "volume": 44,
+      "open_interest": 239,
+      "option_type": "Call"
+    },
+    {
+      "strike": 540.0,
+      "bid": 0.08,
+      "ask": 0.12,
+      "volume": 37,
+      "open_interest": 435,
+      "option_type": "Call"
+    },
+    {
+      "strike": 545.0,
+      "bid": 0.05,
+      "ask": 0.11,
+      "volume": 25,
+      "open_interest": 55,
+      "option_type": "Call"
+    },
+    {
+      "strike": 550.0,
+      "bid": 0.05,
+      "ask": 0.09,
+      "volume": 16,
+      "open_interest": 180,
+      "option_type": "Call"
+    },
+    {
+      "strike": 555.0,
+      "bid": 0.03,
+      "ask": 0.08,
+      "volume": 10,
+      "open_interest": 30,
+      "option_type": "Call"
+    },
+    {
+      "strike": 560.0,
+      "bid": 0.02,
+      "ask": 0.07,
+      "volume": 6,
+      "open_interest": 148,
+      "option_type": "Call"
+    },
+    {
+      "strike": 565.0,
+      "bid": 0.01,
+      "ask": 0.06,
+      "volume": 50,
+      "open_interest": 15,
+      "option_type": "Call"
+    },
+    {
+      "strike": 350.0,
+      "bid": 0.01,
+      "ask": 0.07,
+      "volume": 7,
+      "open_interest": 40,
+      "option_type": "Put"
+    },
+    {
+      "strike": 370.0,
+      "bid": 0.04,
+      "ask": 0.1,
+      "volume": 2,
+      "open_interest": 27,
+      "option_type": "Put"
+    },
+    {
+      "strike": 375.0,
+      "bid": 0.06,
+      "ask": 0.12,
+      "volume": 2,
+      "open_interest": 9,
+      "option_type": "Put"
+    },
+    {
+      "strike": 380.0,
+      "bid": 0.07,
+      "ask": 0.12,
+      "volume": 5,
+      "open_interest": 15,
+      "option_type": "Put"
+    },
+    {
+      "strike": 385.0,
+      "bid": 0.09,
+      "ask": 0.14,
+      "volume": 10,
+      "open_interest": 89,
+      "option_type": "Put"
+    },
+    {
+      "strike": 390.0,
+      "bid": 0.11,
+      "ask": 0.16,
+      "volume": 5,
+      "open_interest": 68,
+      "option_type": "Put"
+    },
+    {
+      "strike": 395.0,
+      "bid": 0.13,
+      "ask": 0.18,
+      "volume": 5,
+      "open_interest": 403,
+      "option_type": "Put"
+    },
+    {
+      "strike": 400.0,
+      "bid": 0.16,
+      "ask": 0.22,
+      "volume": 66,
+      "open_interest": 60,
+      "option_type": "Put"
+    },
+    {
+      "strike": 405.0,
+      "bid": 0.21,
+      "ask": 0.26,
+      "volume": 69,
+      "open_interest": 93,
+      "option_type": "Put"
+    },
+    {
+      "strike": 410.0,
+      "bid": 0.26,
+      "ask": 0.31,
+      "volume": 17,
+      "open_interest": 79,
+      "option_type": "Put"
+    },
+    {
+      "strike": 415.0,
+      "bid": 0.33,
+      "ask": 0.38,
+      "volume": 38,
+      "open_interest": 105,
+      "option_type": "Put"
+    },
+    {
+      "strike": 420.0,
+      "bid": 0.41,
+      "ask": 0.47,
+      "volume": 59,
+      "open_interest": 167,
+      "option_type": "Put"
+    },
+    {
+      "strike": 425.0,
+      "bid": 0.53,
+      "ask": 0.59,
+      "volume": 49,
+      "open_interest": 160,
+      "option_type": "Put"
+    },
+    {
+      "strike": 430.0,
+      "bid": 0.7,
+      "ask": 0.76,
+      "volume": 78,
+      "open_interest": 274,
+      "option_type": "Put"
+    },
+    {
+      "strike": 435.0,
+      "bid": 0.92,
+      "ask": 0.99,
+      "volume": 578,
+      "open_interest": 616,
+      "option_type": "Put"
+    },
+    {
+      "strike": 440.0,
+      "bid": 1.22,
+      "ask": 1.3,
+      "volume": 245,
+      "open_interest": 513,
+      "option_type": "Put"
+    },
+    {
+      "strike": 445.0,
+      "bid": 1.64,
+      "ask": 1.72,
+      "volume": 237,
+      "open_interest": 841,
+      "option_type": "Put"
+    },
+    {
+      "strike": 450.0,
+      "bid": 2.22,
+      "ask": 2.31,
+      "volume": 594,
+      "open_interest": 1075,
+      "option_type": "Put"
+    },
+    {
+      "strike": 455.0,
+      "bid": 3.0,
+      "ask": 3.15,
+      "volume": 283,
+      "open_interest": 375,
+      "option_type": "Put"
+    },
+    {
+      "strike": 460.0,
+      "bid": 4.05,
+      "ask": 4.2,
+      "volume": 569,
+      "open_interest": 1009,
+      "option_type": "Put"
+    },
+    {
+      "strike": 465.0,
+      "bid": 5.45,
+      "ask": 5.6,
+      "volume": 399,
+      "open_interest": 694,
+      "option_type": "Put"
+    },
+    {
+      "strike": 470.0,
+      "bid": 7.25,
+      "ask": 7.4,
+      "volume": 390,
+      "open_interest": 824,
+      "option_type": "Put"
+    },
+    {
+      "strike": 475.0,
+      "bid": 9.5,
+      "ask": 9.75,
+      "volume": 188,
+      "open_interest": 577,
+      "option_type": "Put"
+    },
+    {
+      "strike": 480.0,
+      "bid": 12.25,
+      "ask": 12.55,
+      "volume": 216,
+      "open_interest": 392,
+      "option_type": "Put"
+    },
+    {
+      "strike": 485.0,
+      "bid": 15.5,
+      "ask": 15.8,
+      "volume": 98,
+      "open_interest": 261,
+      "option_type": "Put"
+    },
+    {
+      "strike": 490.0,
+      "bid": 19.15,
+      "ask": 19.5,
+      "volume": 109,
+      "open_interest": 147,
+      "option_type": "Put"
+    },
+    {
+      "strike": 495.0,
+      "bid": 22.85,
+      "ask": 23.8,
+      "volume": 10,
+      "open_interest": 87,
+      "option_type": "Put"
+    },
+    {
+      "strike": 500.0,
+      "bid": 27.2,
+      "ask": 28.25,
+      "volume": 71,
+      "open_interest": 565,
+      "option_type": "Put"
+    },
+    {
+      "strike": 505.0,
+      "bid": 31.85,
+      "ask": 32.9,
+      "volume": 9,
+      "open_interest": 37,
+      "option_type": "Put"
+    },
+    {
+      "strike": 510.0,
+      "bid": 35.95,
+      "ask": 39.25,
+      "volume": 10,
+      "open_interest": 46,
+      "option_type": "Put"
+    },
+    {
+      "strike": 515.0,
+      "bid": 40.8,
+      "ask": 44.2,
+      "volume": 3,
+      "open_interest": 7,
+      "option_type": "Put"
+    },
+    {
+      "strike": 520.0,
+      "bid": 45.85,
+      "ask": 49.2,
+      "volume": 1,
+      "open_interest": 0,
+      "option_type": "Put"
+    },
+    {
+      "strike": 525.0,
+      "bid": 50.8,
+      "ask": 54.15,
+      "volume": 4,
+      "open_interest": 0,
+      "option_type": "Put"
+    },
+    {
+      "strike": 530.0,
+      "bid": 55.65,
+      "ask": 59.15,
+      "volume": 1,
+      "open_interest": 0,
+      "option_type": "Put"
+    },
+    {
+      "strike": 540.0,
+      "bid": 65.65,
+      "ask": 69.15,
+      "volume": 8,
+      "open_interest": 0,
+      "option_type": "Put"
+    },
+    {
+      "strike": 545.0,
+      "bid": 70.65,
+      "ask": 74.15,
+      "volume": 0,
+      "open_interest": 0,
+      "option_type": "Put"
+    },
+    {
+      "strike": 550.0,
+      "bid": 75.65,
+      "ask": 79.15,
+      "volume": 4,
+      "open_interest": 0,
+      "option_type": "Put"
+    },
+    {
+      "strike": 555.0,
+      "bid": 80.85,
+      "ask": 84.15,
+      "volume": 2,
+      "open_interest": 0,
+      "option_type": "Put"
+    },
+    {
+      "strike": 560.0,
+      "bid": 85.85,
+      "ask": 89.2,
+      "volume": 2,
+      "open_interest": 0,
+      "option_type": "Put"
+    }
+  ]
+}

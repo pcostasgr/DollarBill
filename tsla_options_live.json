@@ -2,8 +2,8 @@
   "symbol": "TSLA",
   "spot_price": 438.07000732421875,
   "expiration_date": "2026-01-23",
-  "time_to_expiry": 0.052054794520547946,
-  "fetched_at": "2026-01-03T23:29:07.339117",
+  "time_to_expiry": 0.049315068493150684,
+  "fetched_at": "2026-01-04T13:19:49.807231",
   "options": [
     {
       "strike": 150.0,

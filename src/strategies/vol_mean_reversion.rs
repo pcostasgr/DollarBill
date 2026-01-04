@@ -29,6 +29,7 @@ impl TradingStrategy for VolMeanReversion {
     
     fn generate_signals(
         &self,
+        symbol: &str,
         spot: f64,
         market_iv: f64,
         model_iv: f64,
@@ -45,14 +46,14 @@ impl TradingStrategy for VolMeanReversion {
         
         // Signal generation logic
         if zscore > self.zscore_threshold && edge > self.edge_threshold {
-            println!("\n🔴 SELL SIGNAL: Vol Mean Reversion");
+            println!("\n🔴 SELL SIGNAL: {} - Vol Mean Reversion", symbol);
             println!("   Market IV ({:.1}%) is {:.1} std devs above mean", 
                      market_iv * 100.0, zscore);
             println!("   Model fair value: {:.1}%", model_iv * 100.0);
             println!("   Edge: {:.1}% overpriced", edge * 100.0);
             
             signals.push(TradeSignal {
-                symbol: "SYMBOL".to_string(), // Will be filled by caller
+                symbol: symbol.to_string(),
                 action: SignalAction::IronButterfly { wing_width: 50.0 },
                 strike: spot,
                 expiry_days: 30,
@@ -61,14 +62,14 @@ impl TradingStrategy for VolMeanReversion {
                 strategy_name: self.name().to_string(),
             });
         } else if zscore < -self.zscore_threshold && edge < -self.edge_threshold {
-            println!("\n🟢 BUY SIGNAL: Vol Mean Reversion");
+            println!("\n🟢 BUY SIGNAL: {} - Vol Mean Reversion", symbol);
             println!("   Market IV ({:.1}%) is {:.1} std devs below mean", 
                      market_iv * 100.0, zscore.abs());
             println!("   Model fair value: {:.1}%", model_iv * 100.0);
             println!("   Edge: {:.1}% underpriced", edge.abs() * 100.0);
             
             signals.push(TradeSignal {
-                symbol: "SYMBOL".to_string(),
+                symbol: symbol.to_string(),
                 action: SignalAction::BuyStraddle,
                 strike: spot,
                 expiry_days: 30,
@@ -77,7 +78,7 @@ impl TradingStrategy for VolMeanReversion {
                 strategy_name: self.name().to_string(),
             });
         } else {
-            println!("\n⚪ NO SIGNAL: Vol Mean Reversion");
+            println!("\n⚪ NO SIGNAL: {} - Vol Mean Reversion", symbol);
             println!("   Market IV: {:.1}%, Model IV: {:.1}%, Z-score: {:.2}", 
                      market_iv * 100.0, model_iv * 100.0, zscore);
         }

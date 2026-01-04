@@ -6,6 +6,7 @@ use black_scholes_rust::models::heston_analytical::{heston_call_carr_madan, hest
 
 #[derive(Debug)]
 struct TradeSignal {
+    symbol: String,
     option_type: String,
     strike: f64,
     market_bid: f64,
@@ -28,6 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // 1. Load live options
     let json_file = "tsla_options_live.json";
+    let symbol = json_file.split('_').next().unwrap_or("UNKNOWN").to_uppercase();
     let (spot, all_options) = load_options_from_json(json_file)?;
     let liquid_options = filter_liquid_options(all_options, 50, 10.0);
     println!();
@@ -75,6 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         
         if action != "HOLD" {
             signals.push(TradeSignal {
+                symbol: symbol.clone(),
                 option_type: match option.option_type {
                     OptionType::Call => "Call".to_string(),
                     OptionType::Put => "Put".to_string(),
@@ -110,12 +113,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("===============================================================");
     
     if !buy_signals.is_empty() {
-        println!("{:<6} {:<8} {:<10} {:<10} {:<12} {:<10} {:<10}",
-            "Type", "Strike", "Bid", "Ask", "Model Val", "Edge %", "Edge $");
-        println!("{:-<75}", "");
+        println!("{:<6} {:<6} {:<8} {:<10} {:<10} {:<12} {:<10} {:<10}",
+            "Symbol", "Type", "Strike", "Bid", "Ask", "Model Val", "Edge %", "Edge $");
+        println!("{:-<81}", "");
         
         for signal in buy_signals.iter().take(10) {
-            println!("{:<6} ${:<7.2} ${:<9.2} ${:<9.2} ${:<11.2} {:>9.2}% ${:>9.2}",
+            println!("{:<6} {:<6} ${:<7.2} ${:<9.2} ${:<9.2} ${:<11.2} {:>9.2}% ${:>9.2}",
+                signal.symbol,
                 signal.option_type,
                 signal.strike,
                 signal.market_bid,
@@ -141,12 +145,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("===============================================================");
     
     if !sell_signals.is_empty() {
-        println!("{:<6} {:<8} {:<10} {:<10} {:<12} {:<10} {:<10}",
-            "Type", "Strike", "Bid", "Ask", "Model Val", "Edge %", "Edge $");
-        println!("{:-<75}", "");
+        println!("{:<6} {:<6} {:<8} {:<10} {:<10} {:<12} {:<10} {:<10}",
+            "Symbol", "Type", "Strike", "Bid", "Ask", "Model Val", "Edge %", "Edge $");
+        println!("{:-<81}", "");
         
         for signal in sell_signals.iter().take(10) {
-            println!("{:<6} ${:<7.2} ${:<9.2} ${:<9.2} ${:<11.2} {:>9.2}% ${:>9.2}",
+            println!("{:<6} {:<6} ${:<7.2} ${:<9.2} ${:<9.2} ${:<11.2} {:>9.2}% ${:>9.2}",
+                signal.symbol,
                 signal.option_type,
                 signal.strike,
                 signal.market_bid,

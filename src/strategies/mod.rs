@@ -9,6 +9,7 @@ pub trait TradingStrategy: Send + Sync {
     /// Generate trading signals from market data
     fn generate_signals(
         &self,
+        symbol: &str,
         spot: f64,
         market_iv: f64,
         model_iv: f64,
@@ -62,6 +63,7 @@ impl StrategyRegistry {
     
     pub fn generate_all_signals(
         &self,
+        symbol: &str,
         spot: f64,
         market_iv: f64,
         model_iv: f64,
@@ -70,7 +72,7 @@ impl StrategyRegistry {
         let mut all_signals = vec![];
         
         for strategy in &self.strategies {
-            let signals = strategy.generate_signals(spot, market_iv, model_iv, historical_vol);
+            let signals = strategy.generate_signals(symbol, spot, market_iv, model_iv, historical_vol);
             all_signals.extend(signals);
         }
         
