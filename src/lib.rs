@@ -6,3 +6,4 @@ pub mod strategies;
 pub mod utils;
 pub mod calibration;
 pub mod backtesting;
+pub mod alpaca;
