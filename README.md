@@ -48,6 +48,14 @@ No traditional coding sessions. Just vibes, prompts, and Rust. 🚀
 - **JSON Loader** - Options chain data storage and retrieval
 - **Multi-Symbol Fetch** - Batch data collection scripts
 
+### Backtesting Framework
+- **Historical Simulation** - Run strategies on past data with full P&L tracking
+- **Performance Metrics** - Sharpe ratio, max drawdown, win rate, profit factor
+- **Equity Curve** - Track portfolio value over time
+- **Custom Strategies** - Flexible signal generator interface
+- **Risk Management** - Stop loss, take profit, position sizing
+- **Trade Analytics** - Entry/exit prices, holding periods, ROI per trade
+
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -86,6 +94,9 @@ cargo run --release --example multi_symbol_signals
 
 # Analyze volatility surfaces
 cargo run --release --example vol_surface_analysis
+
+# Backtest strategies on historical data
+cargo run --release --example backtest_strategy
 
 # Create 3D volatility visualizations (requires Python)
 python plot_vol_surface.py
@@ -159,6 +170,39 @@ Strike     Moneyness    IV %       Volume
     Market pricing in downside protection
 ```
 
+### Backtest Results
+
+```
+================================================================================
+BACKTEST RESULTS - TSLA
+================================================================================
+Period: 2025-01-03 to 2026-01-02
+Initial Capital: $100000.00
+Final Capital: $146402.25
+
+📊 PERFORMANCE METRICS
+--------------------------------------------------------------------------------
+Total P&L:        $    46406.25  ( 46.41%)
+Sharpe Ratio:             1.22
+Max Drawdown:     $        0.00  (  0.00%)
+
+📈 TRADE STATISTICS
+--------------------------------------------------------------------------------
+Total Trades:                2
+Winning Trades:              2  (100.00%)
+Losing Trades:               0
+
+Average Win:      $    23203.13
+Average Loss:     $        0.00
+Largest Win:      $    25390.73
+Largest Loss:     $        0.00
+Profit Factor:             inf
+
+Avg Days Held:             1.0
+Total Commissions:$        4.00
+================================================================================
+```
+
 ## 📂 Project Structure
 
 ```
@@ -182,6 +226,12 @@ black_scholes_rust/
 │   ├── strategies/                     # Trading strategies
 │   │   ├── vol_mean_reversion.rs       # Vol trading strategy
 │   │   └── mod.rs                      # Strategy trait
+│   ├── backtesting/                    # Backtesting framework
+│   │   ├── engine.rs                   # Backtest orchestration
+│   │   ├── position.rs                 # Position tracking
+│   │   ├── trade.rs                    # Trade records
+│   │   ├── metrics.rs                  # Performance analytics
+│   │   └── mod.rs                      # Module exports
 │   └── utils/                          # Utilities
 │       ├── vol_surface.rs              # Volatility surface tools
 │       ├── action_table_out.rs         # Output formatting
@@ -189,6 +239,7 @@ black_scholes_rust/
 ├── examples/
 │   ├── multi_symbol_signals.rs         # Main: Signals + Greeks + Risk
 │   ├── vol_surface_analysis.rs         # Volatility surface extraction
+│   ├── backtest_strategy.rs            # Strategy backtesting demo
 │   ├── calibrate_live_options.rs       # Heston calibration demo
 │   ├── trade_signals.rs                # Basic signal generation
 │   └── test_yahoo_options.rs           # Yahoo API testing
@@ -297,7 +348,7 @@ Greeks {
 ✅ **Options Trading** - Identify mispriced options  
 ✅ **Risk Management** - Monitor portfolio Greeks  
 ✅ **Volatility Analysis** - Study IV surfaces and skew  
-✅ **Strategy Backtesting** - Historical signal generation  
+✅ **Strategy Backtesting** - Evaluate historical performance with realistic P&L  
 ✅ **Market Making** - Fair value pricing  
 ✅ **Research** - Model calibration and comparison  
 
@@ -311,6 +362,7 @@ Greeks {
 - ✅ Portfolio risk analytics
 - ✅ Volatility surface extraction
 - ✅ Real-time market data integration
+- ✅ **Backtesting framework** - Historical strategy performance analysis
 
 **Compilation:** ✅ Clean build (minor warnings only)  
 **Performance:** ✅ Optimized with `--release` builds  
@@ -320,7 +372,6 @@ Greeks {
 
 - [ ] Real-time Greeks updates via WebSocket
 - [ ] Position optimizer with Kelly criterion
-- [ ] Backtest framework for historical performance
 - [ ] Additional strategies (Iron Condor, Calendar spreads)
 - [ ] Greeks hedging calculator
 - [ ] GARCH volatility forecasting

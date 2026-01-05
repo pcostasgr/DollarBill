@@ -6,7 +6,7 @@ import yfinance as yf
 import pandas as pd
 
 TICKER = "TSLA"
-PERIOD = "1y"  # 1 year — change to "2y", "max", etc. if you want more
+PERIOD = "5y"  # 5 years for comprehensive backtesting
 
 print(f"Downloading {PERIOD} of {TICKER} data from Yahoo Finance...")
 
@@ -20,9 +20,9 @@ data = data.reset_index()
 data = data[['Date', 'Open', 'High', 'Low', 'Close', 'Volume']]
 
 # Dump to CSV — no row index numbers
-data.to_csv("tesla_one_year.csv", index=False)
+data.to_csv("tesla_five_year.csv", index=False)
 
-print("tesla_one_year.csv saved in current directory!")
+print("tesla_five_year.csv saved in current directory!")
 print(f"Rows downloaded: {len(data)}")
 print("Last 5 rows:")
 print(data.tail(5))

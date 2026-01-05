@@ -5,3 +5,4 @@ pub mod market_data;
 pub mod strategies;
 pub mod utils;
 pub mod calibration;
+pub mod backtesting;
