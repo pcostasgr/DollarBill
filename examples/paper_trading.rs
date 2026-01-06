@@ -158,17 +158,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
     for symbol in symbols {
         println!("--- {} ---", symbol);
 
-        // Get 30 days of daily bars for historical context
+        // Get 60 days of daily bars to ensure we have at least 30 trading days
         let end_time = chrono::Utc::now();
-        let start_time = end_time - chrono::Duration::days(30);
+        let start_time = end_time - chrono::Duration::days(60);
+        
+        let start_str = start_time.format("%Y-%m-%d").to_string();
+        let end_str = end_time.format("%Y-%m-%d").to_string();
         
         let bars = match client
             .get_bars(
                 symbol,
                 "1Day",
-                &start_time.to_rfc3339(),
-                Some(&end_time.to_rfc3339()),
-                Some(30),
+                &start_str,
+                Some(&end_str),
+                Some(60),
             )
             .await
         {
@@ -183,6 +186,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             println!("   ⚠️  No historical data available");
             continue;
         }
+
+        println!("   Bars received: {}", bars.len());
 
         // Extract closing prices
         let prices: Vec<f64> = bars.iter().map(|b| b.c).collect();
@@ -250,10 +255,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     Err(e) => println!("   ❌ Close failed: {}", e),
                 }
             }
-            Signal::Buy if has_position => {
+            Signal::Buy => {
                 println!("   💼 Already have position - holding");
             }
-            Signal::Sell if !has_position => {
+            Signal::Sell => {
                 println!("   ⚪ No position to sell");
             }
             Signal::Hold => {

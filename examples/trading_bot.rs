@@ -164,17 +164,20 @@ impl TradingBot {
                 continue;
             }
 
-            // Get 30 days of bars
+            // Get 60 days of bars to ensure we have at least 30 trading days
             let end_time = chrono::Utc::now();
-            let start_time = end_time - chrono::Duration::days(30);
+            let start_time = end_time - chrono::Duration::days(60);
+            
+            let start_str = start_time.format("%Y-%m-%d").to_string();
+            let end_str = end_time.format("%Y-%m-%d").to_string();
 
             let bars = match self.client
                 .get_bars(
                     symbol,
                     "1Day",
-                    &start_time.to_rfc3339(),
-                    Some(&end_time.to_rfc3339()),
-                    Some(30),
+                    &start_str,
+                    Some(&end_str),
+                    Some(60),
                 )
                 .await
             {

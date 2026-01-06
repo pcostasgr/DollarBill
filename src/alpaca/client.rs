@@ -279,7 +279,7 @@ impl AlpacaClient {
         limit: Option<i32>,
     ) -> Result<Vec<Bar>, Box<dyn Error>> {
         let mut url = format!(
-            "{}/v2/stocks/{}/bars?timeframe={}&start={}",
+            "{}/v2/stocks/{}/bars?timeframe={}&start={}&feed=iex",
             self.data_url, symbol, timeframe, start
         );
         
