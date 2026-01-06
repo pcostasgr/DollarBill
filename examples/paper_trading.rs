@@ -112,8 +112,16 @@ fn generate_signal(
 async fn main() -> Result<(), Box<dyn Error>> {
     println!("=== ALPACA PAPER TRADING - LIVE STRATEGY TEST ===\n");
 
-    // Initialize Alpaca client
-    let client = AlpacaClient::from_env()?;
+    // Debug: Show what keys we're using
+    let api_key = std::env::var("ALPACA_API_KEY")
+        .map_err(|_| "ALPACA_API_KEY not set")?;
+    let api_secret = std::env::var("ALPACA_API_SECRET")
+        .map_err(|_| "ALPACA_API_SECRET not set")?;
+    
+    println!("🔑 Using API Key: {}", api_key);
+    
+    // Initialize Alpaca client - create directly instead of from_env()
+    let client = AlpacaClient::new(api_key, api_secret);
 
     // Test symbols (your proven performers)
     let symbols = vec![
@@ -128,9 +136,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Get account info
     let account = client.get_account().await?;
     println!("📊 Account Status:");
-    println!("   Cash: ${:.2}", account.cash);
-    println!("   Buying Power: ${:.2}", account.buying_power);
-    println!("   Portfolio Value: ${:.2}", account.portfolio_value);
+    println!("   Account Number: {}", account.account_number);
+    println!("   Cash: ${}", account.cash);
+    println!("   Buying Power: ${}", account.buying_power);
+    println!("   Portfolio Value: ${}", account.portfolio_value);
     println!();
 
     // Get current positions

@@ -1,1 +1,5 @@
 /target
+
+# API keys (do not commit!)
+run_paper_trading.sh
+run_paper_trading.ps1
