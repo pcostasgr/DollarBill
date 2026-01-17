@@ -32,7 +32,7 @@ async fn main() {
     let start = Instant::now();
     
     // Load data (CSV for now)
-    let history = match load_csv_closes("tesla_one_year.csv") {
+    let history = match load_csv_closes("data/tesla_one_year.csv") {
         Ok(h) => {
             println!("\n✓ Loaded from CSV (USE_LIVE_DATA = {})", USE_LIVE_DATA);
             h

@@ -7,7 +7,7 @@ Write-Host "================================================" -ForegroundColor C
 Write-Host ""
 
 Write-Host "Step 1: Fetching live options data from Yahoo Finance..." -ForegroundColor Yellow
-python fetch_options.py
+python py/fetch_options.py
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Error: Failed to fetch options data" -ForegroundColor Red

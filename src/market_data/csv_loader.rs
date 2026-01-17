@@ -13,7 +13,7 @@ pub struct HistoricalDay {
 }
 
 /// Load closes from any Yahoo-style CSV
-/// filename: &str — path to CSV (e.g., "tesla_one_year.csv")
+/// filename: &str — path to CSV (e.g., "data/tesla_one_year.csv")
 pub fn load_csv_closes(filename: &str) -> Result<Vec<HistoricalDay>, Box<dyn Error>> {
     let file = File::open(filename)?;
     let mut rdr = ReaderBuilder::new()

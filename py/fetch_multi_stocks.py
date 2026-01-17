@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 # Configure symbols and time period
 SYMBOLS = ["TSLA", "AAPL", "NVDA", "MSFT", "META", "GOOGL", "AMZN"]
 PERIOD = "5y"  # Options: 1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max
-OUTPUT_DIR = ""  # Leave empty for current directory, or set to "data/"
+OUTPUT_DIR = "data/"  # Leave empty for current directory, or set to "data/"
 
 print("=" * 70)
 print("MULTI-SYMBOL STOCK DATA FETCHER")

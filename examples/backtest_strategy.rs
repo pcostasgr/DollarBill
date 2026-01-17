@@ -105,7 +105,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 fn backtest_symbol(symbol: &str) -> Result<(), Box<dyn Error>> {
     // Load historical data
-    let csv_file = format!("{}_five_year.csv", symbol.to_lowercase());
+    let csv_file = format!("data/{}_five_year.csv", symbol.to_lowercase());
     let mut historical_data = load_csv_closes(&csv_file)?;
     
     // Reverse so we iterate forward through time (oldest first)

@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     symbol, surface_points.len(), spot);
                 
                 // Save to CSV
-                let csv_filename = format!("{}_vol_surface.csv", symbol.to_lowercase());
+                let csv_filename = format!("data/{}_vol_surface.csv", symbol.to_lowercase());
                 if let Err(e) = save_vol_surface_csv(&surface_points, &symbol, &csv_filename) {
                     println!("  ⚠ Failed to save CSV: {}", e);
                 } else {
@@ -73,7 +73,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if success_count > 0 {
         println!("\n📊 CSV files generated:");
         for symbol in &symbols {
-            println!("  {}_vol_surface.csv", symbol.to_lowercase());
+            println!("  data/{}_vol_surface.csv", symbol.to_lowercase());
         }
         
         println!("\n💡 Next steps:");
@@ -85,7 +85,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("\n🐍 Python visualization example:");
         println!("  import pandas as pd");
         println!("  import plotly.graph_objects as go");
-        println!("  df = pd.read_csv('tsla_vol_surface.csv')");
+        println!("  df = pd.read_csv('data/tsla_vol_surface.csv')");
         println!("  fig = go.Figure(data=[go.Surface(");
         println!("      x=df['Strike'], y=df['TimeToExpiry'], z=df['ImpliedVol']");
         println!("  )])");

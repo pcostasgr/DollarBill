@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 
 SYMBOL = "TSLA"
-OUTPUT_FILE = "tsla_options_live.json"
+OUTPUT_FILE = "data/tsla_options_live.json"
 EXPIRATION_INDEX = 2  # 0 = nearest, 1 = next week, 2 = ~2-3 weeks out
 
 print(f"Fetching options chain for {SYMBOL}...")

@@ -8,7 +8,7 @@ echo "================================================"
 echo ""
 
 echo "Step 1: Fetching live options data from Yahoo Finance..."
-python fetch_options.py
+python py/fetch_options.py
 
 if [ $? -ne 0 ]; then
     echo "Error: Failed to fetch options data"

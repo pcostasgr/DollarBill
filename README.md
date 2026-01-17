@@ -80,10 +80,10 @@ cargo build --release
 
 ```bash
 # Fetch historical stock data
-python fetch_multi_stocks.py
+python py/fetch_multi_stocks.py
 
 # Fetch live options chains
-python fetch_multi_options.py
+python py/fetch_multi_options.py
 ```
 
 ### Run Analysis
@@ -99,17 +99,17 @@ cargo run --release --example vol_surface_analysis
 cargo run --release --example backtest_strategy
 
 # Create 3D volatility visualizations (requires Python)
-python plot_vol_surface.py
+python py/plot_vol_surface.py
 ```
 
 ### PowerShell Quick Scripts
 
 ```powershell
 # Trade signals with full Greeks
-.\run_multi_signals.ps1
+.\scripts\run_multi_signals.ps1
 
 # Complete volatility pipeline
-.\run_vol_surface.ps1
+.\scripts\run_vol_surface.ps1
 ```
 
 ## 📊 Example Output
@@ -243,11 +243,23 @@ DollarBill/
 │   ├── calibrate_live_options.rs       # Heston calibration demo
 │   ├── trade_signals.rs                # Basic signal generation
 │   └── test_yahoo_options.rs           # Yahoo API testing
-├── fetch_multi_stocks.py               # Stock data fetcher
-├── fetch_multi_options.py              # Options chain fetcher
-├── plot_vol_surface.py                 # 3D volatility visualization
-├── run_multi_signals.ps1               # PowerShell: Run signals
-├── run_vol_surface.ps1                 # PowerShell: Vol pipeline
+├── py/
+│   ├── fetch_multi_stocks.py           # Stock data fetcher
+│   ├── fetch_multi_options.py          # Options chain fetcher
+│   ├── plot_vol_surface.py             # 3D volatility visualization
+│   ├── fetch_options.py                # Single symbol options fetcher
+│   ├── get_tesla_quotes.py             # Tesla quotes fetcher
+│   └── get_tesla_stock_csv.py          # Tesla CSV downloader
+├── scripts/
+│   ├── run_multi_signals.ps1           # PowerShell: Run signals
+│   ├── run_vol_surface.ps1             # PowerShell: Vol pipeline
+│   ├── run_signals.ps1                 # PowerShell: Single symbol signals
+│   ├── run_backtest.ps1                # PowerShell: Backtesting
+│   ├── run_paper_trading.ps1           # PowerShell: Paper trading
+│   ├── run_multi_signals.bat           # Batch: Run signals
+│   ├── run_signals.bat                 # Batch: Single symbol signals
+│   ├── run_paper_trading.sh            # Shell: Paper trading
+│   └── run_signals.sh                  # Shell: Single symbol signals
 ├── IMPLEMENTATION_SUMMARY.md           # Detailed feature docs
 ├── ADVANCED_FEATURES.md                # User guide
 └── Cargo.toml                          # Rust dependencies

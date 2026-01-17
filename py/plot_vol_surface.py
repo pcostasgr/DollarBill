@@ -13,7 +13,7 @@ SYMBOLS = ["TSLA", "AAPL", "NVDA", "MSFT"]
 
 def plot_vol_surface_3d(symbol):
     """Create 3D volatility surface plot for a symbol"""
-    filename = f"{symbol.lower()}_vol_surface.csv"
+    filename = f"data/{symbol.lower()}_vol_surface.csv"
     
     try:
         df = pd.read_csv(filename)

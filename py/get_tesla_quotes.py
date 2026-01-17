@@ -19,7 +19,7 @@ data = {
     "historical_prices": history_dict
 }
 
-with open(f"{TICKER.lower()}_data.json", "w") as f:
+with open(f"data/{TICKER.lower()}_one_year.json", "w") as f:
     json.dump(data, f, indent=4, default=str)
 
-print(f"{TICKER.lower()}_data.json saved without errors!")
+print(f"data/{TICKER.lower()}_one_year.json saved without errors!")

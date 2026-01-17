@@ -10,7 +10,7 @@ import time
 # Configure symbols and options parameters
 SYMBOLS = ["TSLA", "AAPL", "NVDA", "MSFT"]
 EXPIRATION_INDEX = 2  # 0 = nearest, 1 = next week, 2 = ~2-3 weeks out
-OUTPUT_DIR = ""  # Leave empty for current directory, or set to "options_data/"
+OUTPUT_DIR = "data/"  # Leave empty for current directory, or set to "options_data/"
 DELAY_SECONDS = 1  # Delay between API calls to avoid rate limiting
 
 print("=" * 70)

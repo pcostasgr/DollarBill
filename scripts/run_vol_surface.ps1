@@ -10,7 +10,7 @@ cargo run --release --example vol_surface_analysis
 
 Write-Host ""
 Write-Host "Step 2: Generating interactive visualizations..."
-python plot_vol_surface.py
+python py/plot_vol_surface.py
 
 Write-Host ""
 Write-Host "============================================================"
