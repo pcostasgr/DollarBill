@@ -1,5 +1,7 @@
 # DollarBill 🦀📈
 
+![DollarBill](DollarBill.png)
+
 A high-performance options pricing and analytics platform built in pure Rust. Features institutional-grade pricing models (Black-Scholes-Merton, Heston), real-time market data integration, full Greeks calculations, portfolio risk analytics, and volatility surface visualization.
 
 ## 🤖 Development Approach
@@ -266,6 +268,7 @@ DollarBill/
 │   ├── backtesting-guide.md            # Backtesting methodology
 │   ├── implementation-summary.md       # Technical implementation details
 │   └── trading-guide.md                # Trading strategies guide
+├── images/                             # Generated charts and visualizations
 └── Cargo.toml                          # Rust dependencies
 ```
 

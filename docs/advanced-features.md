@@ -62,9 +62,9 @@ python plot_vol_surface.py
 
 **Output files:**
 - `data/{symbol}_vol_surface.csv` - Raw volatility data
-- `{symbol}_vol_surface_3d.html` - 3D interactive surface
-- `{symbol}_vol_smile.html` - 2D smile (IV vs Strike)
-- `{symbol}_term_structure.html` - IV vs Time to Expiry
+- `images/{symbol}_vol_surface_3d.html` - 3D interactive surface
+- `images/{symbol}_vol_smile.html` - 2D smile (IV vs Strike)
+- `images/{symbol}_term_structure.html` - IV vs Time to Expiry
 
 **Example vol_surface_analysis output:**
 ```

@@ -172,21 +172,21 @@ def create_multi_symbol_dashboard():
         # 3D Surface
         fig_3d = plot_vol_surface_3d(symbol)
         if fig_3d:
-            html_file = f"{symbol.lower()}_vol_surface_3d.html"
+            html_file = f"images/{symbol.lower()}_vol_surface_3d.html"
             fig_3d.write_html(html_file)
             print(f"  ✓ 3D surface → {html_file}")
         
-        # 2D Smile
+        # Vol Smile
         fig_smile = plot_vol_smile(symbol)
         if fig_smile:
-            html_file = f"{symbol.lower()}_vol_smile.html"
+            html_file = f"images/{symbol.lower()}_vol_smile.html"
             fig_smile.write_html(html_file)
             print(f"  ✓ Vol smile → {html_file}")
         
         # Term Structure
         fig_term = plot_term_structure(symbol)
         if fig_term:
-            html_file = f"{symbol.lower()}_term_structure.html"
+            html_file = f"images/{symbol.lower()}_term_structure.html"
             fig_term.write_html(html_file)
             print(f"  ✓ Term structure → {html_file}")
     

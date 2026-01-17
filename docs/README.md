@@ -30,6 +30,7 @@ DollarBill/
 ├── py/                     # Python utilities
 ├── scripts/                # Shell/batch scripts
 ├── data/                   # CSV/JSON data files
+├── images/                 # Generated charts and visualizations
 └── README.md              # Main project documentation
 ```
 
@@ -39,6 +40,7 @@ DollarBill/
 - [Fetch Market Data](../py/fetch_multi_stocks.py)
 - [View Backtest Results](../scripts/run_backtest.ps1)
 - [Generate Volatility Surfaces](../scripts/run_vol_surface.ps1)
+- [View Generated Charts](../images/)
 
 ## 📞 Support
 

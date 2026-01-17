@@ -92,9 +92,9 @@ Strike     Moneyness    IV %       Volume
 
 **Generated Files:**
 - `data/{symbol}_vol_surface.csv` - Raw IV data
-- `{symbol}_vol_surface_3d.html` - Interactive 3D plot
-- `{symbol}_vol_smile.html` - 2D smile chart
-- `{symbol}_term_structure.html` - Term structure plot
+- `images/{symbol}_vol_surface_3d.html` - Interactive 3D plot
+- `images/{symbol}_vol_smile.html` - 2D smile chart
+- `images/{symbol}_term_structure.html` - Term structure plot
 
 ---
 
