@@ -123,9 +123,9 @@ impl TradingBot {
 
     async fn run_iteration(&self) -> Result<(), Box<dyn Error>> {
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-        println!("\n{'=':<60}", "");
+        println!("\n{:=>60}", "");
         println!("🤖 Trading Bot Iteration - {}", timestamp);
-        println!("{'=':<60}\n", "");
+        println!("{:=>60}\n", "");
 
         // Get account status
         let account = self.client.get_account().await?;
