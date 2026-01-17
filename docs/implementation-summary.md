@@ -72,7 +72,7 @@ Top 10 Positions (1 contract each):
 - `src/utils/vol_surface.rs` - Core volatility surface module
 - `examples/vol_surface_analysis.rs` - Surface extraction example
 - `plot_vol_surface.py` - Python 3D visualization
-- `run_vol_surface.ps1` - End-to-end pipeline script
+- `scripts/run_vol_surface.ps1` - End-to-end pipeline script
 
 **Output Example:**
 ```
@@ -91,7 +91,7 @@ Strike     Moneyness    IV %       Volume
 ```
 
 **Generated Files:**
-- `{symbol}_vol_surface.csv` - Raw IV data
+- `data/{symbol}_vol_surface.csv` - Raw IV data
 - `{symbol}_vol_surface_3d.html` - Interactive 3D plot
 - `{symbol}_vol_smile.html` - 2D smile chart
 - `{symbol}_term_structure.html` - Term structure plot
@@ -107,15 +107,15 @@ Strike     Moneyness    IV %       Volume
 
 **Python Scripts:**
 1. `plot_vol_surface.py` (230 lines) - 3D visualization with plotly
-2. `fetch_multi_stocks.py` (67 lines) - Multi-symbol stock fetcher
+2. `py/fetch_multi_stocks.py` (67 lines) - Multi-symbol stock fetcher
 3. `fetch_multi_options.py` (115 lines) - Multi-symbol options fetcher
 
 **Run Scripts:**
-1. `run_multi_signals.ps1` - Signals with Greeks
-2. `run_vol_surface.ps1` - Complete vol surface pipeline
+1. `scripts/run_multi_signals.ps1` - Signals with Greeks
+2. `scripts/run_vol_surface.ps1` - Complete vol surface pipeline
 
 **Documentation:**
-1. `ADVANCED_FEATURES.md` - Comprehensive user guide
+1. `advanced-features.md` - Comprehensive user guide
 
 ---
 
@@ -125,7 +125,7 @@ Strike     Moneyness    IV %       Volume
 
 ```bash
 # 1. Fetch data
-python fetch_multi_stocks.py
+python py/fetch_multi_stocks.py
 python fetch_multi_options.py
 
 # 2. Run analysis with Greeks
@@ -140,10 +140,10 @@ python plot_vol_surface.py
 
 ```powershell
 # Signals + Greeks + Portfolio Risk
-.\run_multi_signals.ps1
+.\scripts\run_multi_signals.ps1
 
 # Full Volatility Pipeline
-.\run_vol_surface.ps1
+.\scripts\run_vol_surface.ps1
 ```
 
 ---
@@ -214,4 +214,4 @@ python plot_vol_surface.py
 - Volatility surface pipeline fully functional
 - Python visualization requires: `pip install pandas plotly`
 - All code documented with inline comments
-- Comprehensive user guide in ADVANCED_FEATURES.md
+- Comprehensive user guide in advanced-features.md

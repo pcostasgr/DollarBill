@@ -61,7 +61,7 @@ python plot_vol_surface.py
 ```
 
 **Output files:**
-- `{symbol}_vol_surface.csv` - Raw volatility data
+- `data/{symbol}_vol_surface.csv` - Raw volatility data
 - `{symbol}_vol_surface_3d.html` - 3D interactive surface
 - `{symbol}_vol_smile.html` - 2D smile (IV vs Strike)
 - `{symbol}_term_structure.html` - IV vs Time to Expiry
@@ -107,7 +107,7 @@ Strike     Moneyness    IV %       Volume
 
 ```bash
 # 1. Fetch market data
-python fetch_multi_stocks.py    # Historical stock prices
+python py/fetch_multi_stocks.py    # Historical stock prices
 python fetch_multi_options.py   # Live options chains
 
 # 2. Generate trade signals with Greeks
@@ -124,8 +124,8 @@ python plot_vol_surface.py
 
 **Windows PowerShell:**
 ```powershell
-.\run_multi_signals.ps1    # Signals with Greeks & portfolio risk
-.\run_vol_surface.ps1      # Full vol surface pipeline
+.\scripts\run_multi_signals.ps1    # Signals with Greeks & portfolio risk
+.\scripts\run_vol_surface.ps1      # Full vol surface pipeline
 ```
 
 ## 🔬 Technical Details
@@ -159,7 +159,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
-df = pd.read_csv('tsla_vol_surface.csv')
+df = pd.read_csv('data/tsla_vol_surface.csv')
 fig = plt.figure()
 ax = fig.add_subplot(111, projection='3d')
 ax.scatter(df['Strike'], df['TimeToExpiry'], df['ImpliedVol']*100)
@@ -193,9 +193,9 @@ plt.show()
 
 **Python Scripts:**
 - `plot_vol_surface.py` - 3D visualization
-- `fetch_multi_stocks.py` - Multi-symbol stock data
+- `py/fetch_multi_stocks.py` - Multi-symbol stock data
 - `fetch_multi_options.py` - Multi-symbol options data
 
 **Run Scripts:**
-- `run_multi_signals.ps1` - Full signal analysis
-- `run_vol_surface.ps1` - Volatility pipeline
+- `scripts/run_multi_signals.ps1` - Full signal analysis
+- `scripts/run_vol_surface.ps1` - Volatility pipeline

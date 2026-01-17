@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let results: Vec<_> = symbols
         .par_iter()
         .map(|symbol| {
-            let json_file = format!("{}_options_live.json", symbol.to_lowercase());
+            let json_file = format!("data/{}_options_live.json", symbol.to_lowercase());
             
             match load_options_from_json(&json_file) {
                 Ok((spot, options)) => {

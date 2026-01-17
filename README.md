@@ -260,8 +260,12 @@ DollarBill/
 │   ├── run_signals.bat                 # Batch: Single symbol signals
 │   ├── run_paper_trading.sh            # Shell: Paper trading
 │   └── run_signals.sh                  # Shell: Single symbol signals
-├── IMPLEMENTATION_SUMMARY.md           # Detailed feature docs
-├── ADVANCED_FEATURES.md                # User guide
+├── docs/
+│   ├── advanced-features.md            # Advanced features guide
+│   ├── alpaca-guide.md                 # Alpaca API integration
+│   ├── backtesting-guide.md            # Backtesting methodology
+│   ├── implementation-summary.md       # Technical implementation details
+│   └── trading-guide.md                # Trading strategies guide
 └── Cargo.toml                          # Rust dependencies
 ```
 
@@ -350,8 +354,11 @@ Greeks {
 ## 📚 Documentation
 
 - **README.md** (this file) - Overview and quick start
-- **IMPLEMENTATION_SUMMARY.md** - Detailed feature documentation
-- **ADVANCED_FEATURES.md** - User guide with examples
+- **[Advanced Features](docs/advanced-features.md)** - Detailed feature guides and examples
+- **[Alpaca Integration](docs/alpaca-guide.md)** - Paper trading setup and API usage
+- **[Backtesting Guide](docs/backtesting-guide.md)** - Strategy testing methodology
+- **[Trading Strategies](docs/trading-guide.md)** - Live trading examples and workflows
+- **[Implementation Details](docs/implementation-summary.md)** - Technical documentation
 - **Inline comments** - Throughout source code
 - **Example programs** - Demonstrative usage in `examples/`
 
