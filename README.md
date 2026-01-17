@@ -1,4 +1,4 @@
-# Black-Scholes Rust 🦀📈
+# DollarBill 🦀📈
 
 A high-performance options pricing and analytics platform built in pure Rust. Features institutional-grade pricing models (Black-Scholes-Merton, Heston), real-time market data integration, full Greeks calculations, portfolio risk analytics, and volatility surface visualization.
 
@@ -72,7 +72,7 @@ pip install pandas plotly
 
 ```bash
 git clone <repository-url>
-cd black_scholes_rust
+cd DollarBill
 cargo build --release
 ```
 
@@ -206,7 +206,7 @@ Total Commissions:$        4.00
 ## 📂 Project Structure
 
 ```
-black_scholes_rust/
+DollarBill/
 ├── src/
 │   ├── lib.rs                          # Library exports
 │   ├── main.rs                         # Main entry point
