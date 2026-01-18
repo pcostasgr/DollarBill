@@ -148,14 +148,18 @@ Edit the examples to adjust:
 // Change position size (shares per trade)
 let position_size = 5.0;  // Default: 5 shares
 
-// Change symbols
-let symbols = vec!["TSLA", "NVDA", "QQQ"];  // Add ETFs, etc.
+// Change symbols by editing config/stocks.json
+// Enable/disable stocks without code changes:
+// {
+//   "symbol": "TSLA",
+//   "enabled": true,  // Set to false to exclude
+// }
 
 // Adjust max positions (trading_bot only)
 max_positions: 3,  // Increase for more diversification
 
 // Change thresholds
-let (rsi_oversold, rsi_overbought, momentum_threshold) = 
+let (rsi_oversold, rsi_overbought, momentum_threshold) =
     (35.0, 65.0, 0.025);  // Tweak sensitivity
 ```
 

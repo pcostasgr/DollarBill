@@ -2,12 +2,13 @@
 
 ## 🎯 Recently Added Features
 
-### 1. JSON Configuration System ⭐ NEW
+### 1. JSON Configuration System ⭐ ENHANCED
 
-**What it does:** Centralizes all stock configuration in a single `config/stocks.json` file that controls the entire pipeline.
+**What it does:** Centralizes all stock configuration in a single `config/stocks.json` file that controls the entire pipeline. Individual config files now contain only algorithm parameters, not symbol lists.
 
 **Configuration file structure:**
 ```json
+// config/stocks.json - Central symbol management
 {
   "stocks": [
     {
@@ -25,19 +26,28 @@
     }
   ]
 }
+
+// Individual configs - Parameters only
+{
+  "trading": {
+    "position_size_shares": 100,
+    "max_positions": 3
+    // No symbols array - loaded from stocks.json
+  }
+}
 ```
 
 **How it works:**
-- **Python fetchers** automatically read enabled stocks from config
-- **Rust examples** load symbols from config at runtime
-- **Enable/disable stocks** without touching any code
+- **All examples** automatically read enabled stocks from `config/stocks.json`
+- **Individual configs** contain only algorithm parameters (thresholds, sizes, limits)
+- **Enable/disable stocks** by editing `stocks.json` - no code changes needed
 - **Add new stocks** by editing JSON only
 
 **Benefits:**
-- Single source of truth for all symbols
-- Consistent across entire pipeline
-- No code changes needed to modify stock universe
-- Easy to add market/sector metadata
+- Single source of truth for all symbols across the entire platform
+- Clean separation between symbol management and algorithm parameters
+- Enable/disable stocks globally without touching individual configs
+- Consistent symbol universe across all examples and scripts
 
 ### 2. Greeks Output for Each Signal ✅
 
