@@ -2,7 +2,7 @@
 
 ![DollarBill](DollarBill.png)
 
-A high-performance options pricing and analytics platform built in pure Rust. Features institutional-grade pricing models (Black-Scholes-Merton, Heston), real-time market data integration, full Greeks calculations, portfolio risk analytics, and volatility surface visualization.
+A high-performance options pricing and analytics platform built in pure Rust. Features institutional-grade pricing models (Black-Scholes-Merton, Heston), real-time market data integration, full Greeks calculations, portfolio risk analytics, volatility surface visualization, and **JSON-configurable multi-symbol trading pipeline**.
 
 ## 🤖 Development Approach
 
@@ -26,7 +26,7 @@ No traditional coding sessions. Just vibes, prompts, and Rust. 🚀
 
 ### Trade Signal Generation
 - **Mispricing Detection** - Model price vs. market price comparison
-- **Multi-Symbol Analysis** - Parallel processing of TSLA, AAPL, NVDA, MSFT
+- **Multi-Symbol Analysis** - Parallel processing of configurable stocks
 - **Greeks Per Signal** - Full risk metrics for every trade opportunity
 - **Liquidity Filtering** - Minimum volume and open interest thresholds
 
@@ -58,6 +58,13 @@ No traditional coding sessions. Just vibes, prompts, and Rust. 🚀
 - **Risk Management** - Stop loss, take profit, position sizing
 - **Trade Analytics** - Entry/exit prices, holding periods, ROI per trade
 
+### **JSON Configuration System** ⭐ NEW
+- **Centralized Stock Management** - Single `config/stocks.json` file controls all symbols
+- **Enable/Disable Stocks** - Toggle stocks without code changes
+- **Pipeline Synchronization** - All components (Python fetchers + Rust examples) use same config
+- **Market Support** - US and European markets with sector classification
+- **Automatic Adaptation** - Entire pipeline adapts when config changes
+
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -87,6 +94,24 @@ Edit `config/stocks.json` to specify which stocks to analyze and trade:
   "stocks": [
     {
       "symbol": "TSLA",
+      "market": "US",
+      "sector": "Technology",
+      "enabled": true
+    },
+    {
+      "symbol": "AAPL",
+      "market": "US", 
+      "sector": "Technology",
+      "enabled": true
+    },
+    {
+      "symbol": "NVDA",
+      "market": "US",
+      "sector": "Technology", 
+      "enabled": true
+    },
+    {
+      "symbol": "MSFT",
       "market": "US",
       "sector": "Technology",
       "enabled": true
@@ -255,9 +280,12 @@ Total Commissions:$        4.00
 
 ```
 DollarBill/
+├── config/
+│   └── stocks.json                    # Central stock configuration
 ├── src/
 │   ├── lib.rs                          # Library exports
 │   ├── main.rs                         # Main entry point
+│   ├── config.rs                       # JSON configuration loader
 │   ├── models/                         # Pricing models
 │   │   ├── bs_mod.rs                   # Black-Scholes-Merton + Greeks
 │   │   ├── heston.rs                   # Heston model structures
@@ -280,6 +308,10 @@ DollarBill/
 │   │   ├── trade.rs                    # Trade records
 │   │   ├── metrics.rs                  # Performance analytics
 │   │   └── mod.rs                      # Module exports
+│   ├── alpaca/                         # Paper trading integration
+│   │   ├── client.rs                   # Alpaca API client
+│   │   ├── types.rs                    # API data structures
+│   │   └── mod.rs                      # Module exports
 │   └── utils/                          # Utilities
 │       ├── vol_surface.rs              # Volatility surface tools
 │       ├── action_table_out.rs         # Output formatting
@@ -290,10 +322,13 @@ DollarBill/
 │   ├── backtest_strategy.rs            # Strategy backtesting demo
 │   ├── calibrate_live_options.rs       # Heston calibration demo
 │   ├── trade_signals.rs                # Basic signal generation
-│   └── test_yahoo_options.rs           # Yahoo API testing
+│   ├── alpaca_demo.rs                  # Alpaca API demo
+│   ├── paper_trading.rs                # Paper trading with momentum
+│   ├── trading_bot.rs                  # Continuous trading bot
+│   └── test_keys.rs                    # Alpaca API key testing
 ├── py/
-│   ├── fetch_multi_stocks.py           # Stock data fetcher
-│   ├── fetch_multi_options.py          # Options chain fetcher
+│   ├── fetch_multi_stocks.py           # Stock data fetcher (config-driven)
+│   ├── fetch_multi_options.py          # Options chain fetcher (config-driven)
 │   ├── plot_vol_surface.py             # 3D volatility visualization
 │   ├── fetch_options.py                # Single symbol options fetcher
 │   ├── get_tesla_quotes.py             # Tesla quotes fetcher
@@ -315,6 +350,7 @@ DollarBill/
 │   ├── implementation-summary.md       # Technical implementation details
 │   └── trading-guide.md                # Trading strategies guide
 ├── images/                             # Generated charts and visualizations
+├── data/                               # Market data storage
 └── Cargo.toml                          # Rust dependencies
 ```
 
@@ -400,7 +436,24 @@ Greeks {
 | Complex Math | num-complex |
 | Time/Date | Chrono, Time |
 
-## 📚 Documentation
+## � Data Coverage
+
+**Configurable Stocks (via config/stocks.json):**
+- **Enabled by Default:** TSLA, AAPL, NVDA, MSFT (US Technology)
+- **Available for Enable:** SAP.DE (EU Technology example)
+- **Easy to Add:** Any Yahoo Finance supported symbol
+
+**Data Types Available:**
+- **Historical Stock Data:** 5+ years of daily prices (CSV format)
+- **Live Options Chains:** Real-time bid/ask for all strikes (JSON format)
+- **Volatility Surfaces:** Implied volatility extraction and analysis
+
+**Pipeline Integration:**
+- All components automatically use enabled stocks from config
+- No code changes needed to add/remove symbols
+- Consistent symbol handling across Python fetchers and Rust examples
+
+## �📚 Documentation
 
 - **README.md** (this file) - Overview and quick start
 - **[Advanced Features](docs/advanced-features.md)** - Detailed feature guides and examples
@@ -431,6 +484,9 @@ Greeks {
 - ✅ Volatility surface extraction
 - ✅ Real-time market data integration
 - ✅ **Backtesting framework** - Historical strategy performance analysis
+- ✅ **JSON Configuration System** - Centralized stock management
+- ✅ **Paper Trading Integration** - Alpaca API client
+- ✅ **Parallel Processing** - Multi-symbol pipeline
 
 **Compilation:** ✅ Clean build (minor warnings only)  
 **Performance:** ✅ Optimized with `--release` builds  

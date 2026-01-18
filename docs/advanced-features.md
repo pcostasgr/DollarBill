@@ -2,7 +2,44 @@
 
 ## 🎯 Recently Added Features
 
-### 1. Greeks Output for Each Signal ✅
+### 1. JSON Configuration System ⭐ NEW
+
+**What it does:** Centralizes all stock configuration in a single `config/stocks.json` file that controls the entire pipeline.
+
+**Configuration file structure:**
+```json
+{
+  "stocks": [
+    {
+      "symbol": "TSLA",
+      "market": "US",
+      "sector": "Technology",
+      "enabled": true,
+      "notes": "High volatility, good for options"
+    },
+    {
+      "symbol": "AAPL",
+      "market": "US",
+      "sector": "Technology",
+      "enabled": true
+    }
+  ]
+}
+```
+
+**How it works:**
+- **Python fetchers** automatically read enabled stocks from config
+- **Rust examples** load symbols from config at runtime
+- **Enable/disable stocks** without touching any code
+- **Add new stocks** by editing JSON only
+
+**Benefits:**
+- Single source of truth for all symbols
+- Consistent across entire pipeline
+- No code changes needed to modify stock universe
+- Easy to add market/sector metadata
+
+### 2. Greeks Output for Each Signal ✅
 
 **What it does:** Calculates and displays Delta, Gamma, Vega, and Theta for every trade signal.
 
@@ -19,7 +56,7 @@ AAPL   Put    $270.00  $8.20    $8.50    $10.10      22.0%  -0.350   0.0042   45
 cargo run --release --example multi_symbol_signals
 ```
 
-### 2. Portfolio Risk Metrics ✅
+### 3. Portfolio Risk Metrics ✅
 
 **What it does:** Aggregates Greeks across your top positions to show portfolio-level risk exposure.
 
@@ -47,7 +84,7 @@ Top 10 Positions (1 contract each):
 - **High Vega**: You profit if volatility increases
 - **Negative Theta**: You lose money each day from time decay
 
-### 3. Volatility Surface Visualization ✅
+### 4. Volatility Surface Visualization ✅
 
 **What it does:** Extracts implied volatility from market prices and visualizes the volatility "smile" and "surface".
 
@@ -106,9 +143,12 @@ Strike     Moneyness    IV %       Volume
 ### Full Analysis Pipeline
 
 ```bash
-# 1. Fetch market data
+# 0. Configure stocks (edit config/stocks.json to enable/disable symbols)
+# All components automatically use enabled stocks from config
+
+# 1. Fetch market data for enabled stocks
 python py/fetch_multi_stocks.py    # Historical stock prices
-python fetch_multi_options.py   # Live options chains
+python py/fetch_multi_options.py   # Live options chains
 
 # 2. Generate trade signals with Greeks
 cargo run --release --example multi_symbol_signals
@@ -117,7 +157,7 @@ cargo run --release --example multi_symbol_signals
 cargo run --release --example vol_surface_analysis
 
 # 4. Visualize volatility (requires: pip install pandas plotly)
-python plot_vol_surface.py
+python py/plot_vol_surface.py
 ```
 
 ### Quick Start Scripts

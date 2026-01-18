@@ -2,7 +2,46 @@
 
 ## ✅ Completed Features
 
-### 1. Greeks Output for Each Signal
+### 1. JSON Configuration System ⭐ NEW
+**Status:** ✅ COMPLETE
+
+**Implementation:**
+- Created `config/stocks.json` as central configuration file
+- Added `src/config.rs` module for JSON loading and parsing
+- Updated all Python fetchers to read from config
+- Updated main Rust examples to use config-driven symbols
+- Implemented fallback defaults for robustness
+
+**Files Modified:**
+- `config/stocks.json` - New central configuration file
+- `src/config.rs` - New JSON configuration loader
+- `py/fetch_multi_options.py` - Updated to use config
+- `py/fetch_multi_stocks.py` - Updated to use config
+- `examples/multi_symbol_signals.rs` - Updated to load from config
+
+**Configuration Structure:**
+```json
+{
+  "stocks": [
+    {
+      "symbol": "TSLA",
+      "market": "US",
+      "sector": "Technology",
+      "enabled": true
+    }
+  ]
+}
+```
+
+**Benefits:**
+- Single source of truth for all symbols
+- Enable/disable stocks without code changes
+- Consistent across entire pipeline
+- Easy to add new stocks or markets
+
+---
+
+### 2. Greeks Output for Each Signal
 **Status:** ✅ COMPLETE
 
 **Implementation:**
@@ -24,7 +63,7 @@ AAPL   Put    $270.00  22.0%  -0.350   0.0042   45.30    -8.75
 
 ---
 
-### 2. Portfolio Risk Metrics  
+### 3. Portfolio Risk Metrics  
 **Status:** ✅ COMPLETE
 
 **Implementation:**
@@ -56,7 +95,7 @@ Top 10 Positions (1 contract each):
 
 ---
 
-### 3. Volatility Surface Visualization
+### 4. Volatility Surface Visualization
 **Status:** ✅ COMPLETE
 
 **Implementation:**
@@ -101,14 +140,16 @@ Strike     Moneyness    IV %       Volume
 ## 📁 New Files Summary
 
 **Source Code:**
-1. `src/utils/vol_surface.rs` (243 lines) - Volatility surface tools
-2. `examples/vol_surface_analysis.rs` (75 lines) - IV extraction example
-3. `examples/multi_symbol_signals.rs` (modified) - Added Greeks + risk metrics
+1. `src/config.rs` (45 lines) - JSON configuration loader ⭐ NEW
+2. `config/stocks.json` (36 lines) - Central stock configuration ⭐ NEW
+3. `src/utils/vol_surface.rs` (243 lines) - Volatility surface tools
+4. `examples/vol_surface_analysis.rs` (75 lines) - IV extraction example
+5. `examples/multi_symbol_signals.rs` (modified) - Added Greeks + risk metrics
 
 **Python Scripts:**
 1. `plot_vol_surface.py` (230 lines) - 3D visualization with plotly
-2. `py/fetch_multi_stocks.py` (67 lines) - Multi-symbol stock fetcher
-3. `fetch_multi_options.py` (115 lines) - Multi-symbol options fetcher
+2. `py/fetch_multi_stocks.py` (67 lines) - Multi-symbol stock fetcher (config-driven)
+3. `py/fetch_multi_options.py` (115 lines) - Multi-symbol options fetcher (config-driven)
 
 **Run Scripts:**
 1. `scripts/run_multi_signals.ps1` - Signals with Greeks
@@ -170,12 +211,13 @@ python plot_vol_surface.py
 
 ## 📊 Project Statistics
 
-**Total Lines of Code Added:** ~700 lines
-**New Modules:** 1 (vol_surface)
+**Total Lines of Code Added:** ~800 lines
+**New Modules:** 2 (config + vol_surface)
 **New Examples:** 1 (vol_surface_analysis)
 **Modified Examples:** 1 (multi_symbol_signals)
-**Python Scripts:** 3
+**Python Scripts:** 3 (all config-driven)
 **Documentation Files:** 1
+**Configuration Files:** 1 (stocks.json)
 
 **Compilation Status:** ✅ Clean (4 minor warnings, no errors)
 
@@ -185,12 +227,14 @@ python plot_vol_surface.py
 
 | Feature | Before | After |
 |---------|--------|-------|
+| JSON Configuration | ❌ | ✅ Centralized stock management |
 | Greeks per signal | ❌ | ✅ Delta, Gamma, Vega, Theta |
 | Portfolio risk | ❌ | ✅ Aggregated Greeks + analysis |
 | Vol surface | ❌ | ✅ Extract, analyze, visualize |
 | IV calculation | ❌ | ✅ Newton-Raphson solver |
 | Skew detection | ❌ | ✅ Put/call skew analysis |
 | 3D visualization | ❌ | ✅ Interactive plotly charts |
+| Pipeline consistency | ❌ | ✅ All components use same config |
 
 ---
 
