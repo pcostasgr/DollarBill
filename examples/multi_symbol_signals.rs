@@ -4,9 +4,50 @@ use dollarbill::calibration::heston_calibrator::{calibrate_heston, CalibParams};
 use dollarbill::calibration::market_option::OptionType;
 use dollarbill::models::heston_analytical::{heston_call_carr_madan, heston_put_carr_madan};
 use dollarbill::models::bs_mod::{black_scholes_merton_call, black_scholes_merton_put};
-use dollarbill::config::StocksConfig;
+use dollarbill::market_data::symbols::load_enabled_stocks;
 use rayon::prelude::*;
 use std::time::Instant;
+use serde::Deserialize;
+use std::fs;
+
+#[derive(Debug, Deserialize)]
+struct SignalsConfig {
+    analysis: AnalysisConfig,
+    calibration: CalibrationConfig,
+    options: OptionsConfig,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnalysisConfig {
+    risk_free_rate: f64,
+    liquidity_filters: LiquidityFilters,
+    edge_thresholds: EdgeThresholds,
+}
+
+#[derive(Debug, Deserialize)]
+struct LiquidityFilters {
+    min_volume: i32,
+    max_spread_pct: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct EdgeThresholds {
+    min_edge_dollars: f64,
+    min_delta: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct CalibrationConfig {
+    tolerance: f64,
+    max_iterations: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct OptionsConfig {
+    default_time_to_expiry_days: usize,
+    min_time_to_expiry_days: usize,
+    max_time_to_expiry_days: usize,
+}
 
 #[derive(Debug, Clone)]
 struct TradeSignal {
@@ -51,7 +92,7 @@ struct SymbolResult {
 
 const SIGNAL_THRESHOLD: f64 = 5.0;  // 5% edge required for signal
 
-fn process_symbol(symbol: &str) -> Result<SymbolResult, Box<dyn std::error::Error + Send + Sync>> {
+fn process_symbol(symbol: &str, config: &SignalsConfig) -> Result<SymbolResult, Box<dyn std::error::Error + Send + Sync>> {
     let start = Instant::now();
     
     // Load options for this symbol
@@ -59,7 +100,7 @@ fn process_symbol(symbol: &str) -> Result<SymbolResult, Box<dyn std::error::Erro
     let (spot, all_options) = load_options_from_json(&json_file)
         .map_err(|e| format!("Failed to load {}: {}", json_file, e))?;
     
-    let liquid_options = filter_liquid_options(all_options, 50, 10.0);
+    let liquid_options = filter_liquid_options(all_options, config.analysis.liquidity_filters.min_volume, config.analysis.liquidity_filters.max_spread_pct);
     
     if liquid_options.is_empty() {
         return Ok(SymbolResult {
@@ -81,7 +122,7 @@ fn process_symbol(symbol: &str) -> Result<SymbolResult, Box<dyn std::error::Erro
         v0: 0.30,
     };
     
-    let rate = 0.05;
+    let rate = config.analysis.risk_free_rate;
     let result = calibrate_heston(spot, rate, liquid_options.clone(), initial_guess)
         .map_err(|e| format!("Calibration failed for {}: {}", symbol, e))?;
     
@@ -172,10 +213,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("{}{}MULTI-SYMBOL TRADE SIGNAL GENERATOR{}", BOLD, CYAN, RESET);
     println!("Parallel Heston Calibration & Options Mispricing Detection");
     println!("===============================================================\n");
-    
-    // Load stocks from JSON configuration
-    let stocks_config = StocksConfig::load_from_file("config/stocks.json")?;
-    let symbols: Vec<String> = stocks_config.enabled_symbols();
+
+    // Load signals configuration
+    let config_content = fs::read_to_string("config/signals_config.json")
+        .map_err(|e| format!("Failed to read signals config file: {}", e))?;
+    let config: SignalsConfig = serde_json::from_str(&config_content)
+        .map_err(|e| format!("Failed to parse signals config file: {}", e))?;
+
+    println!("📋 Loaded signals configuration from config/signals_config.json");
+
+    // Load enabled symbols from stocks.json
+    let symbols = load_enabled_stocks().expect("Failed to load stocks from config/stocks.json");
     
     if symbols.is_empty() {
         eprintln!("No enabled stocks found in config/stocks.json");
@@ -193,7 +241,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .par_iter()
         .map(|symbol| {
             print!("  ⏳ {}...", symbol);
-            match process_symbol(symbol) {
+            match process_symbol(symbol, &config) {
                 Ok(result) => {
                     println!(" ✓ ({} ms, {} signals)", result.calibration_time_ms, result.signals.len());
                     Ok(result)

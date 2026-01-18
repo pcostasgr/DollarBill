@@ -1,0 +1,36 @@
+{
+  "trading": {
+    "position_size_shares": 5.0,
+    "max_positions": 3,
+    "risk_management": {
+      "stop_loss_pct": 15.0,
+      "take_profit_pct": 40.0
+    }
+  },
+  "signals": {
+    "rsi_period": 14,
+    "momentum_period": 5,
+    "volatility_thresholds": {
+      "high_vol_threshold": 0.50,
+      "medium_vol_threshold": 0.35
+    },
+    "thresholds": {
+      "high_vol": {
+        "rsi_oversold": 40.0,
+        "rsi_overbought": 60.0,
+        "momentum_threshold": 0.03
+      },
+      "medium_vol": {
+        "rsi_oversold": 35.0,
+        "rsi_overbought": 65.0,
+        "momentum_threshold": 0.02
+      }
+    }
+  },
+  "paper_trading": {
+    "initial_balance": 10000.0,
+    "commission_per_trade": 0.0,
+    "data_lookback_days": 60,
+    "simulation_days": 30
+  }
+}

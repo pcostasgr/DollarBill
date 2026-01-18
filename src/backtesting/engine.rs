@@ -95,7 +95,7 @@ impl BacktestEngine {
                         symbol,
                         spot,
                         spot,  // ATM strike
-                        30,    // 30 days to expiry
+                        self.config.days_to_expiry,
                         hist_vol,
                         &day.date,
                     );

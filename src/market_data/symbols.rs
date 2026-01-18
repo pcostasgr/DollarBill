@@ -1,6 +1,47 @@
 // src/symbols.rs
 // Popular and viral stock symbols for analysis
 
+use serde::Deserialize;
+use std::fs;
+
+/// Stock configuration loaded from stocks.json
+#[derive(Debug, Deserialize)]
+pub struct StockConfig {
+    pub stocks: Vec<Stock>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Stock {
+    pub symbol: String,
+    pub market: String,
+    pub sector: String,
+    pub enabled: bool,
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+/// Load enabled stocks from config/stocks.json
+pub fn load_enabled_stocks() -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let config_path = "config/stocks.json";
+    let content = fs::read_to_string(config_path)?;
+    let config: StockConfig = serde_json::from_str(&content)?;
+    
+    Ok(config.stocks
+        .into_iter()
+        .filter(|stock| stock.enabled)
+        .map(|stock| stock.symbol)
+        .collect())
+}
+
+/// Load all stocks (enabled and disabled) from config/stocks.json
+pub fn load_all_stocks() -> Result<Vec<Stock>, Box<dyn std::error::Error>> {
+    let config_path = "config/stocks.json";
+    let content = fs::read_to_string(config_path)?;
+    let config: StockConfig = serde_json::from_str(&content)?;
+    
+    Ok(config.stocks)
+}
+
 /// Array of 20 viral and popular stocks for trading analysis
 pub const VIRAL_STOCKS: [&str; 20] = [
     "TSLA",  // Tesla - Electric vehicles, most traded stock

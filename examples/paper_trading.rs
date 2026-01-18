@@ -1,6 +1,64 @@
 use dollarbill::alpaca::{AlpacaClient, OrderRequest, OrderSide, OrderType, TimeInForce};
+use dollarbill::market_data::symbols::load_enabled_stocks;
 use std::collections::HashMap;
 use std::error::Error;
+use std::fs;
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+struct PaperTradingConfig {
+    trading: TradingConfig,
+    signals: SignalsConfig,
+    paper_trading: PaperTradingSettings,
+}
+
+#[derive(Debug, Deserialize)]
+struct TradingConfig {
+    position_size_shares: f64,
+    max_positions: usize,
+    risk_management: RiskManagementConfig,
+}
+
+#[derive(Debug, Deserialize)]
+struct RiskManagementConfig {
+    stop_loss_pct: f64,
+    take_profit_pct: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct SignalsConfig {
+    rsi_period: usize,
+    momentum_period: usize,
+    volatility_thresholds: VolatilityThresholds,
+    thresholds: Thresholds,
+}
+
+#[derive(Debug, Deserialize)]
+struct VolatilityThresholds {
+    high_vol_threshold: f64,
+    medium_vol_threshold: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct Thresholds {
+    high_vol: VolThresholds,
+    medium_vol: VolThresholds,
+}
+
+#[derive(Debug, Deserialize)]
+struct VolThresholds {
+    rsi_oversold: f64,
+    rsi_overbought: f64,
+    momentum_threshold: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct PaperTradingSettings {
+    initial_balance: f64,
+    commission_per_trade: f64,
+    data_lookback_days: i64,
+    simulation_days: usize,
+}
 
 /// Calculate RSI from price history
 fn calculate_rsi(prices: &[f64], period: usize) -> Option<f64> {
@@ -65,32 +123,37 @@ fn generate_signal(
     prices: &[f64],
     current_price: f64,
     annual_vol: f64,
+    config: &SignalsConfig,
 ) -> Signal {
     if prices.len() < 30 {
         return Signal::Hold;
     }
 
-    // Adjust thresholds based on volatility
-    let (rsi_oversold, rsi_overbought, momentum_threshold) = if annual_vol > 0.50 {
+    // Adjust thresholds based on volatility from configuration
+    let (rsi_oversold, rsi_overbought, momentum_threshold) = if annual_vol > config.volatility_thresholds.high_vol_threshold {
         // High volatility: aggressive thresholds
-        (40.0, 60.0, 0.03)
-    } else if annual_vol > 0.35 {
+        (config.thresholds.high_vol.rsi_oversold,
+         config.thresholds.high_vol.rsi_overbought,
+         config.thresholds.high_vol.momentum_threshold)
+    } else if annual_vol > config.volatility_thresholds.medium_vol_threshold {
         // Medium volatility: moderate thresholds
-        (35.0, 65.0, 0.02)
+        (config.thresholds.medium_vol.rsi_oversold,
+         config.thresholds.medium_vol.rsi_overbought,
+         config.thresholds.medium_vol.momentum_threshold)
     } else {
         // Low volatility: conservative (mostly hold)
-        (30.0, 70.0, 0.015)
+        return Signal::Hold;
     };
 
     // Calculate RSI
-    let rsi = match calculate_rsi(prices, 14) {
+    let rsi = match calculate_rsi(prices, config.rsi_period) {
         Some(r) => r,
         None => return Signal::Hold,
     };
 
     // Calculate momentum (5-day change)
-    let momentum = if prices.len() >= 5 {
-        (current_price - prices[prices.len() - 5]) / prices[prices.len() - 5]
+    let momentum = if prices.len() >= config.momentum_period {
+        (current_price - prices[prices.len() - config.momentum_period]) / prices[prices.len() - config.momentum_period]
     } else {
         0.0
     };
@@ -112,26 +175,27 @@ fn generate_signal(
 async fn main() -> Result<(), Box<dyn Error>> {
     println!("=== ALPACA PAPER TRADING - LIVE STRATEGY TEST ===\n");
 
+    // Load configuration
+    let config_content = fs::read_to_string("config/paper_trading_config.json")
+        .map_err(|e| format!("Failed to read paper trading config file: {}", e))?;
+    let config: PaperTradingConfig = serde_json::from_str(&config_content)
+        .map_err(|e| format!("Failed to parse paper trading config file: {}", e))?;
+
+    println!("📋 Loaded paper trading configuration from config/paper_trading_config.json");
+
     // Debug: Show what keys we're using
     let api_key = std::env::var("ALPACA_API_KEY")
         .map_err(|_| "ALPACA_API_KEY not set")?;
     let api_secret = std::env::var("ALPACA_API_SECRET")
         .map_err(|_| "ALPACA_API_SECRET not set")?;
-    
+
     println!("🔑 Using API Key: {}", api_key);
-    
+
     // Initialize Alpaca client - create directly instead of from_env()
     let client = AlpacaClient::new(api_key, api_secret);
 
-    // Test symbols (your proven performers)
-    let symbols = vec![
-        "TSLA",  // High vol: 60.7%
-        "NVDA",  // High vol: 52.4%
-        "META",  // Medium vol: 42.1%
-        "AMZN",  // Medium vol: 37.8%
-        "GOOGL", // Medium vol: 35.2%
-        // Skip AAPL and MSFT (low vol, poor backtest results)
-    ];
+    // Load enabled symbols from stocks.json
+    let symbols = load_enabled_stocks().expect("Failed to load stocks from config/stocks.json");
 
     // Get account info
     let account = client.get_account().await?;
@@ -162,7 +226,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("🔍 Analyzing Signals...\n");
 
     let mut signals_generated = 0;
-    let position_size = 5.0; // Number of shares per trade
+    let position_size = config.trading.position_size_shares;
 
     for symbol in symbols {
         println!("--- {} ---", symbol);
@@ -176,7 +240,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         
         let bars = match client
             .get_bars(
-                symbol,
+                &symbol,
                 "1Day",
                 &start_str,
                 Some(&end_str),
@@ -202,7 +266,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let prices: Vec<f64> = bars.iter().map(|b| b.c).collect();
 
         // Get current price from latest snapshot
-        let snapshot = match client.get_snapshot(symbol).await {
+        let snapshot = match client.get_snapshot(&symbol).await {
             Ok(s) => s,
             Err(e) => {
                 println!("   ⚠️  Failed to get current price: {}", e);
@@ -222,11 +286,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         println!("   Current Price: ${:.2}", current_price);
 
         // Generate signal
-        let signal = generate_signal(&prices, current_price, annual_vol);
+        let signal = generate_signal(&prices, current_price, annual_vol, &config.signals);
         println!("   Signal: {:?}", signal);
 
         // Check if we have a position
-        let has_position = position_map.contains_key(symbol);
+        let has_position = position_map.contains_key(&symbol);
 
         // Execute trade based on signal
         match signal {
@@ -256,7 +320,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             Signal::Sell if has_position => {
                 println!("   🔴 SELL SIGNAL - Closing position...");
                 
-                match client.close_position(symbol).await {
+                match client.close_position(&symbol).await {
                     Ok(result) => {
                         println!("   ✅ Position closed! Order ID: {}", result.id);
                         signals_generated += 1;

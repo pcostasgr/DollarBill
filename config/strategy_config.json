@@ -1,0 +1,85 @@
+{
+  "backtest": {
+    "commission_per_trade": 1.0,
+    "risk_free_rate": 0.05,
+    "max_positions": 5,
+    "position_size_pct": 20.0,
+    "stop_loss_pct": 50.0,
+    "take_profit_pct": 100.0
+  },
+  "strategies": {
+    "short_term": {
+      "initial_capital": 100000.0,
+      "days_to_expiry": 14,
+      "max_days_hold": 10,
+      "vol_threshold_high_vol": 0.35,
+      "vol_threshold_medium_vol": 0.30,
+      "vol_threshold_low_vol": 0.25
+    },
+    "medium_term": {
+      "initial_capital": 100000.0,
+      "days_to_expiry": 30,
+      "max_days_hold": 21,
+      "rsi_oversold": 35.0,
+      "rsi_overbought": 65.0,
+      "momentum_threshold": 0.01,
+      "vol_zscore_lookback": 20,
+      "strike_offsets": {
+        "call_otm_pct": 1.03,
+        "put_otm_pct": 0.97
+      },
+      "momentum_breakout": {
+        "momentum_threshold": 0.025,
+        "vol_zscore_threshold": 0.5,
+        "call_otm_pct": 1.02,
+        "put_otm_pct": 0.98
+      }
+    },
+    "long_term": {
+      "initial_capital": 100000.0,
+      "days_to_expiry": 60,
+      "max_days_hold": 45,
+      "rsi_period": 14,
+      "momentum_period": 10,
+      "vol_zscore_lookback": 20,
+      "volatility_thresholds": {
+        "high_vol_threshold": 50.0,
+        "medium_vol_threshold": 35.0
+      },
+      "rsi_momentum_thresholds": {
+        "high_vol": {
+          "rsi_oversold": 45.0,
+          "rsi_overbought": 55.0,
+          "momentum_threshold": 0.003
+        },
+        "medium_vol": {
+          "rsi_oversold": 40.0,
+          "rsi_overbought": 60.0,
+          "momentum_threshold": 0.007
+        },
+        "low_vol": {
+          "rsi_oversold": 35.0,
+          "rsi_overbought": 65.0,
+          "momentum_threshold": 0.01
+        }
+      },
+      "strike_offsets": {
+        "call_otm_pct": 1.02,
+        "put_otm_pct": 0.98
+      },
+      "momentum_breakout": {
+        "momentum_threshold": 0.02,
+        "vol_zscore_threshold": 0.1,
+        "call_otm_pct": 1.01,
+        "put_otm_pct": 0.99
+      },
+      "rsi_divergence": {
+        "rsi_oversold": 45.0,
+        "rsi_overbought": 55.0,
+        "momentum_threshold": 0.005,
+        "call_otm_pct": 1.015,
+        "put_otm_pct": 0.985
+      }
+    }
+  }
+}

@@ -3,17 +3,55 @@
 
 use dollarbill::market_data::options_json_loader::load_options_from_json;
 use dollarbill::utils::vol_surface::{extract_vol_surface, save_vol_surface_csv, print_vol_smile};
+use dollarbill::market_data::symbols::load_enabled_stocks;
 use rayon::prelude::*;
 use std::time::Instant;
+use serde::Deserialize;
+use std::fs;
+
+#[derive(Debug, Deserialize)]
+struct VolSurfaceConfig {
+    volatility_surface: VolSurfaceAnalysis,
+}
+
+#[derive(Debug, Deserialize)]
+struct VolSurfaceAnalysis {
+    risk_free_rate: f64,
+    analysis: AnalysisParams,
+    calibration: CalibrationParams,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnalysisParams {
+    min_strikes_around_atm: usize,
+    max_strikes_around_atm: usize,
+    moneyness_tolerance: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct CalibrationParams {
+    tolerance: f64,
+    max_iterations: usize,
+    initial_vol_guess: f64,
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("===============================================================");
     println!("VOLATILITY SURFACE ANALYZER");
     println!("Extract and visualize implied volatility surfaces");
     println!("===============================================================\n");
-    
-    let symbols = vec!["TSLA", "AAPL", "NVDA", "MSFT"];
-    let rate = 0.05;
+
+    // Load configuration
+    let config_content = fs::read_to_string("config/vol_surface_config.json")
+        .map_err(|e| format!("Failed to read vol surface config file: {}", e))?;
+    let config: VolSurfaceConfig = serde_json::from_str(&config_content)
+        .map_err(|e| format!("Failed to parse vol surface config file: {}", e))?;
+
+    println!("📋 Loaded volatility surface configuration from config/vol_surface_config.json");
+
+    // Load enabled symbols from stocks.json
+    let symbols = load_enabled_stocks().expect("Failed to load stocks from config/stocks.json");
+    let rate = config.volatility_surface.risk_free_rate;
     
     println!("Processing {} symbols...\n", symbols.len());
     let start = Instant::now();

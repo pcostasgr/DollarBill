@@ -3,7 +3,114 @@
 
 use dollarbill::backtesting::{BacktestEngine, BacktestConfig, SignalAction};
 use dollarbill::market_data::csv_loader::load_csv_closes;
+use serde::{Deserialize, Serialize};
 use std::error::Error;
+use std::fs;
+
+// Configuration structures
+#[derive(Debug, Deserialize)]
+struct StrategyConfig {
+    backtest: BacktestCommon,
+    strategies: Strategies,
+}
+
+#[derive(Debug, Deserialize)]
+struct BacktestCommon {
+    commission_per_trade: f64,
+    risk_free_rate: f64,
+    max_positions: usize,
+    position_size_pct: f64,
+    stop_loss_pct: f64,
+    take_profit_pct: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct Strategies {
+    short_term: ShortTermConfig,
+    medium_term: MediumTermConfig,
+    long_term: LongTermConfig,
+}
+
+#[derive(Debug, Deserialize)]
+struct ShortTermConfig {
+    initial_capital: f64,
+    days_to_expiry: usize,
+    max_days_hold: usize,
+    vol_threshold_high_vol: f64,
+    vol_threshold_medium_vol: f64,
+    vol_threshold_low_vol: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct MediumTermConfig {
+    initial_capital: f64,
+    days_to_expiry: usize,
+    max_days_hold: usize,
+    rsi_oversold: f64,
+    rsi_overbought: f64,
+    momentum_threshold: f64,
+    vol_zscore_lookback: usize,
+    strike_offsets: StrikeOffsets,
+    momentum_breakout: MomentumBreakout,
+}
+
+#[derive(Debug, Deserialize)]
+struct LongTermConfig {
+    initial_capital: f64,
+    days_to_expiry: usize,
+    max_days_hold: usize,
+    rsi_period: usize,
+    momentum_period: usize,
+    vol_zscore_lookback: usize,
+    volatility_thresholds: VolatilityThresholds,
+    rsi_momentum_thresholds: RsiMomentumThresholds,
+    strike_offsets: StrikeOffsets,
+    momentum_breakout: MomentumBreakout,
+    rsi_divergence: RsiDivergence,
+}
+
+#[derive(Debug, Deserialize)]
+struct VolatilityThresholds {
+    high_vol_threshold: f64,
+    medium_vol_threshold: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct RsiMomentumThresholds {
+    high_vol: VolThresholds,
+    medium_vol: VolThresholds,
+    low_vol: VolThresholds,
+}
+
+#[derive(Debug, Deserialize)]
+struct VolThresholds {
+    rsi_oversold: f64,
+    rsi_overbought: f64,
+    momentum_threshold: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct StrikeOffsets {
+    call_otm_pct: f64,
+    put_otm_pct: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct MomentumBreakout {
+    momentum_threshold: f64,
+    vol_zscore_threshold: f64,
+    call_otm_pct: f64,
+    put_otm_pct: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct RsiDivergence {
+    rsi_oversold: f64,
+    rsi_overbought: f64,
+    momentum_threshold: f64,
+    call_otm_pct: f64,
+    put_otm_pct: f64,
+}
 
 // Helper: Calculate z-score for volatility
 fn calculate_vol_zscore(current_vol: f64, hist_vols: &[f64], lookback: usize) -> f64 {
@@ -92,20 +199,38 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("{}", "=".repeat(80));
     println!();
     
-    // Test all available symbols
-    let symbols = vec!["TSLA", "AAPL", "NVDA", "MSFT", "META", "GOOGL", "AMZN"];
+    // Load configuration
+    let config_content = fs::read_to_string("config/strategy_config.json")
+        .map_err(|e| format!("Failed to read config file: {}", e))?;
+    let config: StrategyConfig = serde_json::from_str(&config_content)
+        .map_err(|e| format!("Failed to parse config file: {}", e))?;
     
-    for symbol in symbols {
+    println!("📋 Loaded configuration from config/strategy_config.json");
+
+    // Parse command line arguments for symbols
+    let args: Vec<String> = std::env::args().collect();
+    let symbols_to_test: Vec<String> = if args.len() > 1 {
+        args[1..].to_vec() // Skip the program name
+    } else {
+        // Default symbols if none provided
+        vec!["AAPL".to_string(), "NVDA".to_string(), "MSFT".to_string(), "AMZN".to_string()]
+    };
+
+    println!("🎯 Testing symbols: {:?}", symbols_to_test);
+    println!();
+
+    // Test specified symbols
+    for symbol in &symbols_to_test {
         println!("\n🔍 Backtesting {}...", symbol);
-        backtest_symbol(symbol)?;
+        backtest_symbol(symbol, &config)?;
     }
     
     Ok(())
 }
 
-fn backtest_symbol(symbol: &str) -> Result<(), Box<dyn Error>> {
+fn backtest_symbol(symbol: &str, config: &StrategyConfig) -> Result<(), Box<dyn Error>> {
     // Load historical data
-    let csv_file = format!("data/{}_five_year.csv", symbol.to_lowercase());
+    let csv_file = format!("data/{}_one_year.csv", symbol.to_lowercase());
     let mut historical_data = load_csv_closes(&csv_file)?;
     
     // Reverse so we iterate forward through time (oldest first)
@@ -123,9 +248,9 @@ fn backtest_symbol(symbol: &str) -> Result<(), Box<dyn Error>> {
     println!("  Measured Volatility: {:.1}% annualized", annual_vol);
     
     // Adaptive strategy selection based on volatility
-    if annual_vol > 50.0 {
+    if annual_vol > config.strategies.long_term.volatility_thresholds.high_vol_threshold {
         println!("  🎯 Strategy: HIGH-VOL Momentum (aggressive)");
-    } else if annual_vol > 35.0 {
+    } else if annual_vol > config.strategies.long_term.volatility_thresholds.medium_vol_threshold {
         println!("  🎯 Strategy: MEDIUM-VOL Momentum (conservative)");
     } else {
         println!("  ⚠️  Strategy: LOW-VOL (options buying not recommended)");
@@ -133,39 +258,39 @@ fn backtest_symbol(symbol: &str) -> Result<(), Box<dyn Error>> {
     
     // Configure backtest with different holding periods
     let config_short = BacktestConfig {
-        initial_capital: 100_000.0,
-        commission_per_trade: 1.0,
-        risk_free_rate: 0.05,
-        max_positions: 5,
-        position_size_pct: 20.0,
-        days_to_expiry: 14,  // 2-week options
-        max_days_hold: 10,   // Close after 10 days
-        stop_loss_pct: Some(50.0),
-        take_profit_pct: Some(100.0),
+        initial_capital: config.strategies.short_term.initial_capital,
+        commission_per_trade: config.backtest.commission_per_trade,
+        risk_free_rate: config.backtest.risk_free_rate,
+        max_positions: config.backtest.max_positions,
+        position_size_pct: config.backtest.position_size_pct,
+        days_to_expiry: config.strategies.short_term.days_to_expiry,
+        max_days_hold: config.strategies.short_term.max_days_hold,
+        stop_loss_pct: Some(config.backtest.stop_loss_pct),
+        take_profit_pct: Some(config.backtest.take_profit_pct),
     };
     
     let config_medium = BacktestConfig {
-        initial_capital: 100_000.0,
-        commission_per_trade: 1.0,
-        risk_free_rate: 0.05,
-        max_positions: 5,
-        position_size_pct: 20.0,
-        days_to_expiry: 30,  // 1-month options
-        max_days_hold: 21,   // Close after 3 weeks
-        stop_loss_pct: Some(50.0),
-        take_profit_pct: Some(100.0),
+        initial_capital: config.strategies.medium_term.initial_capital,
+        commission_per_trade: config.backtest.commission_per_trade,
+        risk_free_rate: config.backtest.risk_free_rate,
+        max_positions: config.backtest.max_positions,
+        position_size_pct: config.backtest.position_size_pct,
+        days_to_expiry: config.strategies.medium_term.days_to_expiry,
+        max_days_hold: config.strategies.medium_term.max_days_hold,
+        stop_loss_pct: Some(config.backtest.stop_loss_pct),
+        take_profit_pct: Some(config.backtest.take_profit_pct),
     };
     
     let config_long = BacktestConfig {
-        initial_capital: 100_000.0,
-        commission_per_trade: 1.0,
-        risk_free_rate: 0.05,
-        max_positions: 5,
-        position_size_pct: 20.0,
-        days_to_expiry: 60,  // 2-month options
-        max_days_hold: 45,   // Close after 6 weeks
-        stop_loss_pct: Some(50.0),
-        take_profit_pct: Some(100.0),
+        initial_capital: config.strategies.long_term.initial_capital,
+        commission_per_trade: config.backtest.commission_per_trade,
+        risk_free_rate: config.backtest.risk_free_rate,
+        max_positions: config.backtest.max_positions,
+        position_size_pct: config.backtest.position_size_pct,
+        days_to_expiry: config.strategies.long_term.days_to_expiry,
+        max_days_hold: config.strategies.long_term.max_days_hold,
+        stop_loss_pct: Some(config.backtest.stop_loss_pct),
+        take_profit_pct: Some(config.backtest.take_profit_pct),
     };
     
     // Run strategy 1: Short-term (adaptive based on volatility)
@@ -173,12 +298,12 @@ fn backtest_symbol(symbol: &str) -> Result<(), Box<dyn Error>> {
     let mut engine = BacktestEngine::new(config_short.clone());
     
     // Adjust threshold based on volatility
-    let vol_threshold = if annual_vol > 50.0 {
-        0.35  // High-vol: only trade when vol is really low
-    } else if annual_vol > 35.0 {
-        0.30  // Medium-vol: moderate threshold
+    let vol_threshold = if annual_vol > config.strategies.long_term.volatility_thresholds.high_vol_threshold {
+        config.strategies.short_term.vol_threshold_high_vol
+    } else if annual_vol > config.strategies.long_term.volatility_thresholds.medium_vol_threshold {
+        config.strategies.short_term.vol_threshold_medium_vol
     } else {
-        0.25  // Low-vol: lower threshold (but likely won't help much)
+        config.strategies.short_term.vol_threshold_low_vol
     };
     
     let result = engine.run_simple_strategy(
@@ -215,32 +340,41 @@ fn backtest_symbol(symbol: &str) -> Result<(), Box<dyn Error>> {
                 let momentum_5d = calculate_momentum(&prices, 5);
                 let momentum_10d = calculate_momentum(&prices, 10);
                 let rsi = calculate_rsi(&prices, 14);
+                let vol_zscore = calculate_vol_zscore(current_vol, &hist_vols[..day_idx], config.strategies.medium_term.vol_zscore_lookback);
                 
-                // Adaptive thresholds based on symbol volatility
-                let (momentum_threshold, strike_mult) = if annual_vol > 50.0 {
-                    (0.02, 1.01)  // High-vol: 2% threshold, 1% OTM
-                } else if annual_vol > 35.0 {
-                    (0.015, 1.005) // Medium-vol: 1.5% threshold, 0.5% OTM
-                } else {
-                    (0.01, 1.0)    // Low-vol: 1% threshold, ATM (but likely won't help)
-                };
-                
-                // SIGNAL 1: Upward momentum with room to run
-                if momentum_5d > momentum_threshold && momentum_10d > 0.0 && rsi < 70.0 {
+                // SIGNAL 1: RSI oversold with positive momentum
+                if rsi < config.strategies.medium_term.rsi_oversold && momentum_10d > config.strategies.medium_term.momentum_threshold {
                     signals.push(SignalAction::BuyCall {
-                        strike: spot * strike_mult,
-                        days_to_expiry: 30,
+                        strike: spot * config.strategies.medium_term.strike_offsets.call_otm_pct,
+                        days_to_expiry: config.strategies.medium_term.days_to_expiry,
                         volatility: current_vol,
                     });
                 }
                 
-                // SIGNAL 2: Downward momentum with room to run
-                else if momentum_5d < -momentum_threshold && momentum_10d < 0.0 && rsi > 30.0 {
+                // SIGNAL 2: RSI overbought with negative momentum
+                else if rsi > config.strategies.medium_term.rsi_overbought && momentum_10d < -config.strategies.medium_term.momentum_threshold {
                     signals.push(SignalAction::BuyPut {
-                        strike: spot * (2.0 - strike_mult),  // Mirror of call strike
-                        days_to_expiry: 30,
+                        strike: spot * config.strategies.medium_term.strike_offsets.put_otm_pct,
+                        days_to_expiry: config.strategies.medium_term.days_to_expiry,
                         volatility: current_vol,
                     });
+                }
+                
+                // SIGNAL 3: Strong momentum with volatility spike
+                if momentum_10d.abs() > config.strategies.medium_term.momentum_breakout.momentum_threshold && vol_zscore > config.strategies.medium_term.momentum_breakout.vol_zscore_threshold {
+                    if momentum_10d > 0.0 {
+                        signals.push(SignalAction::BuyCall {
+                            strike: spot * config.strategies.medium_term.momentum_breakout.call_otm_pct,
+                            days_to_expiry: config.strategies.medium_term.days_to_expiry,
+                            volatility: current_vol,
+                        });
+                    } else {
+                        signals.push(SignalAction::BuyPut {
+                            strike: spot * config.strategies.medium_term.momentum_breakout.put_otm_pct,
+                            days_to_expiry: config.strategies.medium_term.days_to_expiry,
+                            volatility: current_vol,
+                        });
+                    }
                 }
             }
             
@@ -273,24 +407,30 @@ fn backtest_symbol(symbol: &str) -> Result<(), Box<dyn Error>> {
                     .map(|d| (d.date.clone(), d.close))
                     .collect();
                 
-                let rsi = calculate_rsi(&prices, 14);
-                let momentum_10d = calculate_momentum(&prices, 10);
-                let vol_zscore = calculate_vol_zscore(current_vol, &hist_vols[..day_idx], 20);
+                let rsi = calculate_rsi(&prices, config.strategies.long_term.rsi_period);
+                let momentum_10d = calculate_momentum(&prices, config.strategies.long_term.momentum_period);
+                let vol_zscore = calculate_vol_zscore(current_vol, &hist_vols[..day_idx], config.strategies.long_term.vol_zscore_lookback);
                 
-                // Adaptive thresholds based on volatility
-                let (rsi_oversold, rsi_overbought, momentum_threshold) = if annual_vol > 50.0 {
-                    (40.0, 60.0, 0.005)  // High-vol: wider bands, small momentum OK
-                } else if annual_vol > 35.0 {
-                    (35.0, 65.0, 0.01)   // Medium-vol: tighter bands, need more momentum
+                // Adaptive thresholds based on volatility - RELAXED for less conservative approach
+                let (rsi_oversold, rsi_overbought, momentum_threshold) = if annual_vol > config.strategies.long_term.volatility_thresholds.high_vol_threshold {
+                    (config.strategies.long_term.rsi_momentum_thresholds.high_vol.rsi_oversold,
+                     config.strategies.long_term.rsi_momentum_thresholds.high_vol.rsi_overbought,
+                     config.strategies.long_term.rsi_momentum_thresholds.high_vol.momentum_threshold)
+                } else if annual_vol > config.strategies.long_term.volatility_thresholds.medium_vol_threshold {
+                    (config.strategies.long_term.rsi_momentum_thresholds.medium_vol.rsi_oversold,
+                     config.strategies.long_term.rsi_momentum_thresholds.medium_vol.rsi_overbought,
+                     config.strategies.long_term.rsi_momentum_thresholds.medium_vol.momentum_threshold)
                 } else {
-                    (30.0, 70.0, 0.015)  // Low-vol: extreme bands, need strong momentum
+                    (config.strategies.long_term.rsi_momentum_thresholds.low_vol.rsi_oversold,
+                     config.strategies.long_term.rsi_momentum_thresholds.low_vol.rsi_overbought,
+                     config.strategies.long_term.rsi_momentum_thresholds.low_vol.momentum_threshold)
                 };
                 
                 // SIGNAL 1: Oversold + Positive Momentum
                 if rsi < rsi_oversold && momentum_10d > momentum_threshold {
                     signals.push(SignalAction::BuyCall {
-                        strike: spot * 1.02,  // 2% OTM for leverage
-                        days_to_expiry: 60,
+                        strike: spot * config.strategies.long_term.strike_offsets.call_otm_pct,
+                        days_to_expiry: config.strategies.long_term.days_to_expiry,
                         volatility: current_vol,
                     });
                 }
@@ -298,24 +438,42 @@ fn backtest_symbol(symbol: &str) -> Result<(), Box<dyn Error>> {
                 // SIGNAL 2: Overbought + Negative Momentum
                 else if rsi > rsi_overbought && momentum_10d < -momentum_threshold {
                     signals.push(SignalAction::BuyPut {
-                        strike: spot * 0.98,  // 2% OTM
-                        days_to_expiry: 60,
+                        strike: spot * config.strategies.long_term.strike_offsets.put_otm_pct,
+                        days_to_expiry: config.strategies.long_term.days_to_expiry,
                         volatility: current_vol,
                     });
                 }
                 
-                // SIGNAL 3: Strong momentum breakout (only for high-vol stocks)
-                else if annual_vol > 50.0 && momentum_10d.abs() > 0.03 && vol_zscore > 0.3 {
+                // SIGNAL 3: Strong momentum breakout (relaxed for all stocks)
+                if momentum_10d.abs() > config.strategies.long_term.momentum_breakout.momentum_threshold && vol_zscore > config.strategies.long_term.momentum_breakout.vol_zscore_threshold {
                     if momentum_10d > 0.0 {
                         signals.push(SignalAction::BuyCall {
-                            strike: spot,
-                            days_to_expiry: 60,
+                            strike: spot * config.strategies.long_term.momentum_breakout.call_otm_pct,
+                            days_to_expiry: config.strategies.long_term.days_to_expiry,
                             volatility: current_vol,
                         });
                     } else {
                         signals.push(SignalAction::BuyPut {
-                            strike: spot,
-                            days_to_expiry: 60,
+                            strike: spot * config.strategies.long_term.momentum_breakout.put_otm_pct,
+                            days_to_expiry: config.strategies.long_term.days_to_expiry,
+                            volatility: current_vol,
+                        });
+                    }
+                }
+                
+                // SIGNAL 4: RSI divergence with moderate momentum (new signal)
+                else if (rsi < config.strategies.long_term.rsi_divergence.rsi_oversold && momentum_10d > config.strategies.long_term.rsi_divergence.momentum_threshold) || 
+                        (rsi > config.strategies.long_term.rsi_divergence.rsi_overbought && momentum_10d < -config.strategies.long_term.rsi_divergence.momentum_threshold) {
+                    if rsi < config.strategies.long_term.rsi_divergence.rsi_oversold {
+                        signals.push(SignalAction::BuyCall {
+                            strike: spot * config.strategies.long_term.rsi_divergence.call_otm_pct,
+                            days_to_expiry: config.strategies.long_term.days_to_expiry,
+                            volatility: current_vol,
+                        });
+                    } else {
+                        signals.push(SignalAction::BuyPut {
+                            strike: spot * config.strategies.long_term.rsi_divergence.put_otm_pct,
+                            days_to_expiry: config.strategies.long_term.days_to_expiry,
                             volatility: current_vol,
                         });
                     }

@@ -1,0 +1,15 @@
+{
+  "volatility_surface": {
+    "risk_free_rate": 0.05,
+    "analysis": {
+      "min_strikes_around_atm": 3,
+      "max_strikes_around_atm": 10,
+      "moneyness_tolerance": 0.05
+    },
+    "calibration": {
+      "tolerance": 1e-6,
+      "max_iterations": 100,
+      "initial_vol_guess": 0.3
+    }
+  }
+}

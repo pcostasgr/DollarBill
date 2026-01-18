@@ -3,6 +3,48 @@ use dollarbill::market_data::options_json_loader::{load_options_from_json, filte
 use dollarbill::calibration::heston_calibrator::{calibrate_heston, CalibParams};
 use dollarbill::calibration::market_option::{MarketOption, OptionType};
 use dollarbill::models::heston_analytical::{heston_call_carr_madan, heston_put_carr_madan};
+use dollarbill::market_data::symbols::load_enabled_stocks;
+use serde::Deserialize;
+use std::fs;
+
+#[derive(Debug, Deserialize)]
+struct SignalsConfig {
+    analysis: AnalysisConfig,
+    calibration: CalibrationConfig,
+    options: OptionsConfig,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnalysisConfig {
+    risk_free_rate: f64,
+    liquidity_filters: LiquidityFilters,
+    edge_thresholds: EdgeThresholds,
+}
+
+#[derive(Debug, Deserialize)]
+struct LiquidityFilters {
+    min_volume: i32,
+    max_spread_pct: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct EdgeThresholds {
+    min_edge_dollars: f64,
+    min_delta: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct CalibrationConfig {
+    tolerance: f64,
+    max_iterations: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct OptionsConfig {
+    default_time_to_expiry_days: usize,
+    min_time_to_expiry_days: usize,
+    max_time_to_expiry_days: usize,
+}
 
 #[derive(Debug)]
 struct TradeSignal {
@@ -26,14 +68,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("===============================================================");
     println!("TRADE SIGNAL GENERATOR - Live Options Mispricing Detection");
     println!("===============================================================\n");
-    
+
+    // Load configuration
+    let config_content = fs::read_to_string("config/signals_config.json")
+        .map_err(|e| format!("Failed to read signals config file: {}", e))?;
+    let config: SignalsConfig = serde_json::from_str(&config_content)
+        .map_err(|e| format!("Failed to parse signals config file: {}", e))?;
+
+    println!("📋 Loaded signals configuration from config/signals_config.json");
+
     // 1. Load live options
     let json_file = "tsla_options_live.json";
     let symbol = json_file.split('_').next().unwrap_or("UNKNOWN").to_uppercase();
     let (spot, all_options) = load_options_from_json(json_file)?;
-    let liquid_options = filter_liquid_options(all_options, 50, 10.0);
+    let liquid_options = filter_liquid_options(all_options, config.analysis.liquidity_filters.min_volume, config.analysis.liquidity_filters.max_spread_pct);
     println!();
-    
+
     // 2. Calibrate Heston model
     println!("Calibrating Heston model...");
     let initial_guess = CalibParams {
@@ -43,8 +93,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         rho: -0.60,
         v0: 0.30,
     };
-    
-    let rate = 0.05;
+
+    let rate = config.analysis.risk_free_rate;
     let result = calibrate_heston(spot, rate, liquid_options.clone(), initial_guess)?;
     
     println!("✓ Calibration complete (RMSE: ${:.2}, {} iterations)\n", result.final_error, result.iterations);

@@ -1,7 +1,64 @@
 use dollarbill::alpaca::{AlpacaClient, OrderRequest, OrderSide, OrderType, TimeInForce};
+use dollarbill::market_data::symbols::load_enabled_stocks;
 use std::collections::HashMap;
 use std::error::Error;
+use std::fs;
 use tokio::time::{sleep, Duration};
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+struct TradingBotConfig {
+    trading: TradingConfig,
+    signals: SignalsConfig,
+    execution: ExecutionConfig,
+}
+
+#[derive(Debug, Deserialize)]
+struct TradingConfig {
+    position_size_shares: i32,
+    max_positions: usize,
+    risk_management: RiskManagementConfig,
+}
+
+#[derive(Debug, Deserialize)]
+struct RiskManagementConfig {
+    stop_loss_pct: f64,
+    take_profit_pct: f64,
+    max_daily_trades: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct SignalsConfig {
+    rsi_period: usize,
+    momentum_period: usize,
+    volatility_thresholds: VolatilityThresholds,
+    thresholds: Thresholds,
+}
+
+#[derive(Debug, Deserialize)]
+struct VolatilityThresholds {
+    high_vol_threshold: f64,
+    medium_vol_threshold: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct Thresholds {
+    high_vol: VolThresholds,
+    medium_vol: VolThresholds,
+}
+
+#[derive(Debug, Deserialize)]
+struct VolThresholds {
+    rsi_oversold: f64,
+    rsi_overbought: f64,
+    momentum_threshold: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExecutionConfig {
+    continuous_mode_interval_minutes: u64,
+    data_lookback_days: i64,
+}
 
 /// Calculate RSI
 fn calculate_rsi(prices: &[f64], period: usize) -> Option<f64> {
@@ -61,27 +118,31 @@ enum Signal {
 }
 
 /// Generate signal based on proven backtested strategy
-fn generate_signal(prices: &[f64], current_price: f64, annual_vol: f64) -> Signal {
+fn generate_signal(prices: &[f64], current_price: f64, annual_vol: f64, config: &SignalsConfig) -> Signal {
     if prices.len() < 30 {
         return Signal::Hold;
     }
 
-    // Volatility-adaptive thresholds (from backtesting)
-    let (rsi_oversold, rsi_overbought, momentum_threshold) = if annual_vol > 0.50 {
-        (40.0, 60.0, 0.03) // High vol: aggressive
-    } else if annual_vol > 0.35 {
-        (35.0, 65.0, 0.02) // Medium vol: moderate
+    // Volatility-adaptive thresholds from configuration
+    let (rsi_oversold, rsi_overbought, momentum_threshold) = if annual_vol > config.volatility_thresholds.high_vol_threshold {
+        (config.thresholds.high_vol.rsi_oversold,
+         config.thresholds.high_vol.rsi_overbought,
+         config.thresholds.high_vol.momentum_threshold)
+    } else if annual_vol > config.volatility_thresholds.medium_vol_threshold {
+        (config.thresholds.medium_vol.rsi_oversold,
+         config.thresholds.medium_vol.rsi_overbought,
+         config.thresholds.medium_vol.momentum_threshold)
     } else {
         return Signal::Hold; // Low vol: skip (learned from AAPL)
     };
 
-    let rsi = match calculate_rsi(prices, 14) {
+    let rsi = match calculate_rsi(prices, config.rsi_period) {
         Some(r) => r,
         None => return Signal::Hold,
     };
 
-    let momentum = if prices.len() >= 5 {
-        (current_price - prices[prices.len() - 5]) / prices[prices.len() - 5]
+    let momentum = if prices.len() >= config.momentum_period {
+        (current_price - prices[prices.len() - config.momentum_period]) / prices[prices.len() - config.momentum_period]
     } else {
         0.0
     };
@@ -100,24 +161,16 @@ fn generate_signal(prices: &[f64], current_price: f64, annual_vol: f64) -> Signa
 /// Trading bot state
 struct TradingBot {
     client: AlpacaClient,
+    config: TradingBotConfig,
     symbols: Vec<String>,
-    position_size: f64,
-    max_positions: usize,
 }
 
 impl TradingBot {
-    fn new(client: AlpacaClient) -> Self {
+    fn new(client: AlpacaClient, config: TradingBotConfig, symbols: Vec<String>) -> Self {
         Self {
             client,
-            symbols: vec![
-                "TSLA".to_string(),
-                "NVDA".to_string(),
-                "META".to_string(),
-                "AMZN".to_string(),
-                "GOOGL".to_string(),
-            ],
-            position_size: 5.0, // Shares per trade
-            max_positions: 3,   // Max concurrent positions
+            config,
+            symbols,
         }
     }
 
@@ -160,7 +213,7 @@ impl TradingBot {
         // Analyze each symbol
         for symbol in &self.symbols {
             // Skip if we already have max positions and don't own this one
-            if positions.len() >= self.max_positions && !position_map.contains_key(symbol) {
+            if positions.len() >= self.config.trading.max_positions && !position_map.contains_key(symbol) {
                 continue;
             }
 
@@ -201,7 +254,7 @@ impl TradingBot {
 
             // Calculate metrics
             let annual_vol = calculate_volatility(&prices).unwrap_or(0.0);
-            let signal = generate_signal(&prices, current_price, annual_vol);
+            let signal = generate_signal(&prices, current_price, annual_vol, &self.config.signals);
 
             // Only show interesting signals
             if signal != Signal::Hold || position_map.contains_key(symbol) {
@@ -219,10 +272,10 @@ impl TradingBot {
                 // Execute trades
                 match (signal, has_position) {
                     (Signal::Buy, false) => {
-                        print!(" → Buying {} shares...", self.position_size);
+                        print!(" → Buying {} shares...", self.config.trading.position_size_shares);
                         let order = OrderRequest {
                             symbol: symbol.clone(),
-                            qty: self.position_size,
+                            qty: self.config.trading.position_size_shares as f64,
                             side: OrderSide::Buy,
                             r#type: OrderType::Market,
                             time_in_force: TimeInForce::Day,
@@ -255,8 +308,8 @@ impl TradingBot {
     async fn run_continuous(&self, interval_minutes: u64) -> Result<(), Box<dyn Error>> {
         println!("\n🚀 Starting Continuous Trading Bot");
         println!("   Symbols: {:?}", self.symbols);
-        println!("   Position Size: {} shares", self.position_size);
-        println!("   Max Positions: {}", self.max_positions);
+        println!("   Position Size: {} shares", self.config.trading.position_size_shares);
+        println!("   Max Positions: {}", self.config.trading.max_positions);
         println!("   Check Interval: {} minutes", interval_minutes);
         println!("\n   Press Ctrl+C to stop\n");
 
@@ -273,12 +326,23 @@ impl TradingBot {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    // Load configuration
+    let config_content = fs::read_to_string("config/trading_bot_config.json")
+        .map_err(|e| format!("Failed to read trading bot config file: {}", e))?;
+    let config: TradingBotConfig = serde_json::from_str(&config_content)
+        .map_err(|e| format!("Failed to parse trading bot config file: {}", e))?;
+
+    println!("📋 Loaded trading bot configuration from config/trading_bot_config.json");
+
+    // Load enabled symbols from stocks.json
+    let symbols = load_enabled_stocks().expect("Failed to load stocks from config/stocks.json");
+
     let client = AlpacaClient::from_env()?;
-    let bot = TradingBot::new(client);
+    let bot = TradingBot::new(client, config, symbols);
 
     // Choose mode: single run or continuous
     let args: Vec<String> = std::env::args().collect();
-    
+
     if args.len() > 1 && args[1] == "--continuous" {
         let interval = if args.len() > 2 {
             args[2].parse().unwrap_or(5)
