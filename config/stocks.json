@@ -1,0 +1,36 @@
+{
+  "stocks": [
+    {
+      "symbol": "TSLA",
+      "market": "US",
+      "sector": "Technology",
+      "enabled": true,
+      "notes": "High volatility, good for options"
+    },
+    {
+      "symbol": "AAPL",
+      "market": "US",
+      "sector": "Technology",
+      "enabled": true
+    },
+    {
+      "symbol": "NVDA",
+      "market": "US",
+      "sector": "Technology",
+      "enabled": true
+    },
+    {
+      "symbol": "MSFT",
+      "market": "US",
+      "sector": "Technology",
+      "enabled": true
+    },
+    {
+      "symbol": "SAP.DE",
+      "market": "EU",
+      "sector": "Technology",
+      "enabled": false,
+      "notes": "European market example"
+    }
+  ]
+}

@@ -4,6 +4,7 @@ use dollarbill::calibration::heston_calibrator::{calibrate_heston, CalibParams};
 use dollarbill::calibration::market_option::OptionType;
 use dollarbill::models::heston_analytical::{heston_call_carr_madan, heston_put_carr_madan};
 use dollarbill::models::bs_mod::{black_scholes_merton_call, black_scholes_merton_put};
+use dollarbill::config::StocksConfig;
 use rayon::prelude::*;
 use std::time::Instant;
 
@@ -54,7 +55,7 @@ fn process_symbol(symbol: &str) -> Result<SymbolResult, Box<dyn std::error::Erro
     let start = Instant::now();
     
     // Load options for this symbol
-    let json_file = format!("{}_options_live.json", symbol.to_lowercase());
+    let json_file = format!("data/{}_options_live.json", symbol.to_lowercase());
     let (spot, all_options) = load_options_from_json(&json_file)
         .map_err(|e| format!("Failed to load {}: {}", json_file, e))?;
     
@@ -172,14 +173,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Parallel Heston Calibration & Options Mispricing Detection");
     println!("===============================================================\n");
     
-    // Symbols to analyze (must have corresponding JSON files)
-    let symbols = vec!["TSLA", "AAPL", "NVDA", "MSFT"];
+    // Load stocks from JSON configuration
+    let stocks_config = StocksConfig::load_from_file("config/stocks.json")?;
+    let symbols: Vec<String> = stocks_config.enabled_symbols();
+    
+    if symbols.is_empty() {
+        eprintln!("No enabled stocks found in config/stocks.json");
+        return Ok(());
+    }
     
     println!("📊 Processing {} symbols in parallel...\n", symbols.len());
     let total_start = Instant::now();
     
+    // Convert to &str for par_iter
+    let symbols_refs: Vec<&str> = symbols.iter().map(|s| s.as_str()).collect();
+    
     // Parallel calibration and signal generation
-    let results: Vec<_> = symbols
+    let results: Vec<_> = symbols_refs
         .par_iter()
         .map(|symbol| {
             print!("  ⏳ {}...", symbol);

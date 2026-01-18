@@ -6,16 +6,29 @@ import yfinance as yf
 import json
 from datetime import datetime
 import time
+import os
+
+# Load symbols from config file
+def load_symbols_from_config():
+    config_path = os.path.join(os.path.dirname(__file__), '..', 'config', 'stocks.json')
+    try:
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+        return [stock['symbol'] for stock in config['stocks'] if stock.get('enabled', False)]
+    except (FileNotFoundError, KeyError, json.JSONDecodeError) as e:
+        print(f"Error loading config: {e}")
+        print("Falling back to default symbols")
+        return ["TSLA", "AAPL", "NVDA", "MSFT"]
 
 # Configure symbols and options parameters
-SYMBOLS = ["TSLA", "AAPL", "NVDA", "MSFT"]
+SYMBOLS = load_symbols_from_config()
 EXPIRATION_INDEX = 2  # 0 = nearest, 1 = next week, 2 = ~2-3 weeks out
 OUTPUT_DIR = "data/"  # Leave empty for current directory, or set to "options_data/"
 DELAY_SECONDS = 1  # Delay between API calls to avoid rate limiting
 
 print("=" * 70)
 print("MULTI-SYMBOL OPTIONS DATA FETCHER")
-print(f"Fetching options chains for {len(SYMBOLS)} symbols")
+print(f"Fetching options chains for {len(SYMBOLS)} symbols: {', '.join(SYMBOLS)}")
 print(f"Target expiration: Index {EXPIRATION_INDEX}")
 print("=" * 70)
 
@@ -23,7 +36,7 @@ results = []
 
 for i, symbol in enumerate(SYMBOLS):
     try:
-        print(f"\n[{i+1}/{len(SYMBOLS)}] 📊 Fetching {symbol} options...", end=" ")
+        print(f"\n[{i+1}/{len(SYMBOLS)}] [DATA] Fetching {symbol} options...", end=" ")
         
         ticker = yf.Ticker(symbol)
         spot_price = ticker.history(period="1d")["Close"].iloc[-1]
@@ -31,7 +44,7 @@ for i, symbol in enumerate(SYMBOLS):
         # Get available expirations
         expirations = ticker.options
         if len(expirations) <= EXPIRATION_INDEX:
-            print(f"❌ Not enough expirations (only {len(expirations)} available)")
+            print(f"[ERROR] Not enough expirations (only {len(expirations)} available)")
             results.append({"symbol": symbol, "status": "FAILED", "reason": f"Only {len(expirations)} expirations"})
             continue
         
@@ -88,7 +101,7 @@ for i, symbol in enumerate(SYMBOLS):
         call_count = sum(1 for o in data["options"] if o["option_type"] == "Call")
         put_count = sum(1 for o in data["options"] if o["option_type"] == "Put")
         
-        print(f"✓ {len(data['options'])} options | ${spot_price:.2f} | {expiration_date} ({days_to_expiry}d)")
+        print(f"[OK] {len(data['options'])} options | ${spot_price:.2f} | {expiration_date} ({days_to_expiry}d)")
         
         results.append({
             "symbol": symbol,
@@ -107,7 +120,7 @@ for i, symbol in enumerate(SYMBOLS):
             time.sleep(DELAY_SECONDS)
         
     except Exception as e:
-        print(f"❌ Error: {str(e)}")
+        print(f"[ERROR] Error: {str(e)}")
         results.append({"symbol": symbol, "status": "FAILED", "reason": str(e)})
 
 # Summary
@@ -118,7 +131,7 @@ print("=" * 70)
 successful = [r for r in results if r["status"] == "SUCCESS"]
 failed = [r for r in results if r["status"] == "FAILED"]
 
-print(f"\n✓ Successful: {len(successful)}/{len(SYMBOLS)}")
+print(f"\n[SUCCESS] Successful: {len(successful)}/{len(SYMBOLS)}")
 if successful:
     print(f"\n{'Symbol':<8} {'Spot':>10} {'Expiry':<12} {'Days':>6} {'Calls':>7} {'Puts':>7} {'Total':>7} {'File'}")
     print("-" * 90)

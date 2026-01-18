@@ -78,13 +78,36 @@ cd DollarBill
 cargo build --release
 ```
 
+### Configure Stocks
+
+Edit `config/stocks.json` to specify which stocks to analyze and trade:
+
+```json
+{
+  "stocks": [
+    {
+      "symbol": "TSLA",
+      "market": "US",
+      "sector": "Technology",
+      "enabled": true
+    }
+  ]
+}
+```
+
+- Set `"enabled": true` to include a stock in the pipeline
+- Add/remove stocks as needed
+- The pipeline automatically uses enabled stocks
+
 ### Fetch Market Data
 
+The Python scripts automatically read enabled stocks from `config/stocks.json`:
+
 ```bash
-# Fetch historical stock data
+# Fetch historical stock data for enabled stocks
 python py/fetch_multi_stocks.py
 
-# Fetch live options chains
+# Fetch live options chains for enabled stocks
 python py/fetch_multi_options.py
 ```
 
