@@ -462,6 +462,7 @@ Greeks {
 - **[Backtesting Guide](docs/backtesting-guide.md)** - Strategy testing methodology
 - **[Trading Strategies](docs/trading-guide.md)** - Live trading examples and workflows
 - **[Implementation Details](docs/implementation-summary.md)** - Technical documentation
+- **[Parameter Atlas](docs/parameter_atlas.md)** - Complete configuration reference
 - **Inline comments** - Throughout source code
 - **Example programs** - Demonstrative usage in `examples/`
 

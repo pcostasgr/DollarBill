@@ -19,6 +19,7 @@ Welcome to the DollarBill documentation! This folder contains comprehensive guid
 
 ### Development
 - **[Implementation Summary](implementation-summary.md)** - Technical details, architecture, and implementation notes
+- **[Parameter Atlas](parameter_atlas.md)** - Complete reference for all configuration parameters
 
 ## 📂 Project Structure
 
