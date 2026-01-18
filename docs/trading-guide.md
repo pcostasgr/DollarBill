@@ -17,9 +17,9 @@ cargo run --example paper_trading
 ```
 
 **What it does:**
-- Scans TSLA, NVDA, META, AMZN, GOOGL (skips low-vol AAPL/MSFT)
+- Scans all **enabled stocks from `config/stocks.json`**
 - Uses same momentum + RSI strategy from backtesting
-- Volatility-adaptive thresholds (aggressive for TSLA/NVDA, moderate for META/AMZN/GOOGL)
+- Volatility-adaptive thresholds (aggressive for high-vol stocks, moderate for others)
 - Buys 5 shares on BUY signals (if no position)
 - Sells entire position on SELL signals
 - Shows account balance and current P&L
@@ -74,7 +74,7 @@ cargo run --example trading_bot -- --continuous 15
 - Runs in a loop (checks market every N minutes)
 - Max 3 concurrent positions (risk management)
 - Shows timestamp and P&L% for each position
-- Cleaner output focused on actionable signals
+- Scans all **enabled stocks from `config/stocks.json`**
 - Press Ctrl+C to stop
 
 **Output Example:**
@@ -91,7 +91,7 @@ cargo run --example trading_bot -- --continuous 15
 🔍 Scanning for signals...
 
    NVDA $875.30 | Vol: 52.4% | 🟢 BUY → Holding (already owned)
-   META $425.80 | Vol: 42.1% | ⏸️  HOLD
+   AAPL $425.80 | Vol: 42.1% | ⏸️  HOLD
 
 💤 Sleeping for 5 minutes...
 ```

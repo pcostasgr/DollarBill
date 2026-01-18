@@ -224,17 +224,21 @@ plt.show()
 
 ## 📁 File Reference
 
+**Configuration:**
+- `config/stocks.json` - Central stock configuration ⭐ NEW
+- `src/config.rs` - JSON configuration loader ⭐ NEW
+
 **New Examples:**
-- `examples/multi_symbol_signals.rs` - Greeks + portfolio risk
+- `examples/multi_symbol_signals.rs` - Greeks + portfolio risk (config-driven)
 - `examples/vol_surface_analysis.rs` - IV extraction
 
 **New Modules:**
 - `src/utils/vol_surface.rs` - Volatility surface tools
 
-**Python Scripts:**
-- `plot_vol_surface.py` - 3D visualization
+**Python Scripts (Config-Driven):**
+- `py/plot_vol_surface.py` - 3D visualization
 - `py/fetch_multi_stocks.py` - Multi-symbol stock data
-- `fetch_multi_options.py` - Multi-symbol options data
+- `py/fetch_multi_options.py` - Multi-symbol options data
 
 **Run Scripts:**
 - `scripts/run_multi_signals.ps1` - Full signal analysis

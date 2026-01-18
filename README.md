@@ -80,7 +80,7 @@ pip install pandas plotly yfinance
 ### Installation
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/yourusername/DollarBill.git
 cd DollarBill
 cargo build --release
 ```
@@ -96,18 +96,19 @@ Edit `config/stocks.json` to specify which stocks to analyze and trade:
       "symbol": "TSLA",
       "market": "US",
       "sector": "Technology",
-      "enabled": true
+      "enabled": true,
+      "notes": "High volatility, good for options"
     },
     {
       "symbol": "AAPL",
-      "market": "US", 
+      "market": "US",
       "sector": "Technology",
       "enabled": true
     },
     {
       "symbol": "NVDA",
       "market": "US",
-      "sector": "Technology", 
+      "sector": "Technology",
       "enabled": true
     },
     {
@@ -533,11 +534,11 @@ This software is for **educational and research purposes only**. It is not finan
 
 ## 📄 License
 
-[Specify your license here - e.g., MIT, Apache 2.0, etc.]
+MIT License - see [LICENSE](LICENSE) file for details
 
 ## 👤 Author
 
-Costas
+Costas (Built with AI assistance from Claude Sonnet 4.5 and Grok)
 
 ---
 

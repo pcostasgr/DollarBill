@@ -24,6 +24,7 @@ Welcome to the DollarBill documentation! This folder contains comprehensive guid
 
 ```
 DollarBill/
+├── config/                  # JSON configuration files
 ├── docs/                    # Documentation (this folder)
 ├── src/                     # Rust source code
 ├── examples/               # Rust example programs

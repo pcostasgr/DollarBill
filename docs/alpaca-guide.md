@@ -58,7 +58,7 @@ cargo run --example alpaca_demo
 
 ### Get Account Info
 ```rust
-use black_scholes_rust::alpaca::AlpacaClient;
+use dollarbill::alpaca::AlpacaClient;
 
 let client = AlpacaClient::from_env()?;
 let account = client.get_account().await?;
