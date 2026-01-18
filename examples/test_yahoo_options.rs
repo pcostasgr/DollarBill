@@ -1,10 +1,11 @@
 // Quick test to fetch live TSLA options from Yahoo Finance
-use black_scholes_rust::market_data::real_option_data_yahoo::{
+use dollarbill::market_data::real_option_data_yahoo::{
     fetch_yahoo_options, 
     get_available_expirations,
     display_options_summary,
     fetch_liquid_options,
 };
+use dollarbill::calibration::market_option::OptionType;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -42,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     let calls: Vec<_> = liquid_options
         .iter()
-        .filter(|o| matches!(o.option_type, black_scholes_rust::calibration::market_option::OptionType::Call))
+        .filter(|o| matches!(o.option_type, OptionType::Call))
         .take(10)
         .collect();
     

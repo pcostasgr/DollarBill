@@ -1,8 +1,8 @@
 // Volatility surface analysis for multiple symbols
 // Generates volatility smile visualizations and CSV exports
 
-use black_scholes_rust::market_data::options_json_loader::load_options_from_json;
-use black_scholes_rust::utils::vol_surface::{extract_vol_surface, save_vol_surface_csv, print_vol_smile};
+use dollarbill::market_data::options_json_loader::load_options_from_json;
+use dollarbill::utils::vol_surface::{extract_vol_surface, save_vol_surface_csv, print_vol_smile};
 use rayon::prelude::*;
 use std::time::Instant;
 

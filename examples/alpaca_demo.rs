@@ -8,7 +8,7 @@
 //    $env:ALPACA_API_SECRET="your_secret_here"
 // 4. Run: cargo run --example alpaca_demo
 
-use black_scholes_rust::alpaca::{AlpacaClient, OrderRequest, OrderSide, OrderType, TimeInForce};
+use dollarbill::alpaca::{AlpacaClient, OrderRequest, OrderSide, OrderType, TimeInForce};
 use std::error::Error;
 
 #[tokio::main]

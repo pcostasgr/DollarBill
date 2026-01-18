@@ -1,4 +1,4 @@
-// Library exports for black_scholes_rust
+// Library exports for dollarbill
 
 pub mod models;
 pub mod market_data;

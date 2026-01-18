@@ -1,8 +1,8 @@
 // Backtest example - demonstrates the backtesting framework
 // Tests real volatility and momentum-based trading strategies
 
-use black_scholes_rust::backtesting::{BacktestEngine, BacktestConfig, SignalAction};
-use black_scholes_rust::market_data::csv_loader::load_csv_closes;
+use dollarbill::backtesting::{BacktestEngine, BacktestConfig, SignalAction};
+use dollarbill::market_data::csv_loader::load_csv_closes;
 use std::error::Error;
 
 // Helper: Calculate z-score for volatility

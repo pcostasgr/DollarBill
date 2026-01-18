@@ -12,7 +12,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("API Key: {}", api_key);
     println!("API Secret: {}...{}", &api_secret[..10], &api_secret[api_secret.len()-5..]);
     
-    let client = black_scholes_rust::alpaca::AlpacaClient::new(api_key, api_secret);
+    let client = dollarbill::alpaca::AlpacaClient::new(api_key, api_secret);
     let account = client.get_account().await?;
     
     println!("\n📊 Account Info:");

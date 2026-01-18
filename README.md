@@ -66,8 +66,8 @@ No traditional coding sessions. Just vibes, prompts, and Rust. 🚀
 # Rust (2021 edition or later)
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# Python (optional, for 3D visualization)
-pip install pandas plotly
+# Python (optional, for data fetching and 3D visualization)
+pip install pandas plotly yfinance
 ```
 
 ### Installation
@@ -104,9 +104,32 @@ cargo run --release --example backtest_strategy
 python py/plot_vol_surface.py
 ```
 
+### Release Build Workflow (Recommended)
+
+For faster execution, pre-build the release binaries once, then run the pipeline quickly:
+
+```powershell
+# Step 1: Build release binaries (do this once)
+.\scripts\build_release.ps1
+
+# Step 2: Run the complete pipeline quickly (no compilation time)
+.\scripts\run_release_pipeline.ps1
+```
+
+This saves significant time compared to `cargo run --release` which compiles each time.
+
 ### PowerShell Quick Scripts
 
 ```powershell
+# Build release binaries once for fast execution
+.\scripts\build_release.ps1
+
+# Complete pipeline: Data fetch -> Calibration -> Signals -> Paper trading (fast execution)
+.\scripts\run_release_pipeline.ps1
+
+# Complete pipeline: Data fetch -> Calibration -> Signals -> Paper trading (with compilation)
+.\scripts\run_full_pipeline.ps1
+
 # Trade signals with full Greeks
 .\scripts\run_multi_signals.ps1
 

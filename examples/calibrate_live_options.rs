@@ -1,6 +1,6 @@
 // Test loading live options from Python-generated JSON
-use black_scholes_rust::market_data::options_json_loader::{load_options_from_json, filter_liquid_options};
-use black_scholes_rust::calibration::heston_calibrator::{calibrate_heston, CalibParams};
+use dollarbill::market_data::options_json_loader::{load_options_from_json, filter_liquid_options};
+use dollarbill::calibration::heston_calibrator::{calibrate_heston, CalibParams};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -49,8 +49,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("{:<10} {:<12} {:<12} {:<12}", "Strike", "Market Mid", "Model Price", "Diff %");
     println!("{:-<50}", "");
     
-    use black_scholes_rust::models::heston_analytical::heston_call_carr_madan;
-    use black_scholes_rust::calibration::market_option::OptionType;
+    use dollarbill::models::heston_analytical::heston_call_carr_madan;
+    use dollarbill::calibration::market_option::OptionType;
     
     let time_to_expiry = liquid_options[0].time_to_expiry;
     let heston_params = result.params.to_heston(spot, rate, time_to_expiry);

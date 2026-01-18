@@ -63,22 +63,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "812e12b5285cc515a9c72a5c1d3b6d46a19dac5acfef5265968c166106e31dd3"
 
 [[package]]
-name = "black_scholes_rust"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "csv",
- "num-complex",
- "rayon",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "time",
- "tokio",
- "yahoo_finance_api",
-]
-
-[[package]]
 name = "bumpalo"
 version = "3.19.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -199,6 +183,22 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.112",
+]
+
+[[package]]
+name = "dollarbill"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "csv",
+ "num-complex",
+ "rayon",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "time",
+ "tokio",
+ "yahoo_finance_api",
 ]
 
 [[package]]

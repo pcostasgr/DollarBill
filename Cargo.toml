@@ -1,5 +1,5 @@
 [package]
-name = "black_scholes_rust"
+name = "dollarbill"
 version = "0.1.0"
 edition = "2021"
 

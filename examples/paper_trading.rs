@@ -1,4 +1,4 @@
-use black_scholes_rust::alpaca::{AlpacaClient, OrderRequest, OrderSide, OrderType, TimeInForce};
+use dollarbill::alpaca::{AlpacaClient, OrderRequest, OrderSide, OrderType, TimeInForce};
 use std::collections::HashMap;
 use std::error::Error;
 

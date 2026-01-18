@@ -1,9 +1,9 @@
  // Multi-symbol trade signal generator with parallel calibration
-use black_scholes_rust::market_data::options_json_loader::{load_options_from_json, filter_liquid_options};
-use black_scholes_rust::calibration::heston_calibrator::{calibrate_heston, CalibParams};
-use black_scholes_rust::calibration::market_option::OptionType;
-use black_scholes_rust::models::heston_analytical::{heston_call_carr_madan, heston_put_carr_madan};
-use black_scholes_rust::models::bs_mod::{black_scholes_merton_call, black_scholes_merton_put};
+use dollarbill::market_data::options_json_loader::{load_options_from_json, filter_liquid_options};
+use dollarbill::calibration::heston_calibrator::{calibrate_heston, CalibParams};
+use dollarbill::calibration::market_option::OptionType;
+use dollarbill::models::heston_analytical::{heston_call_carr_madan, heston_put_carr_madan};
+use dollarbill::models::bs_mod::{black_scholes_merton_call, black_scholes_merton_put};
 use rayon::prelude::*;
 use std::time::Instant;
 
