@@ -52,6 +52,8 @@ No traditional coding sessions. Just vibes, prompts, and Rust. 🚀
 
 ### Backtesting Framework
 - **Historical Simulation** - Run strategies on past data with full P&L tracking
+- **Black-Scholes Backtesting** - Constant volatility strategy testing
+- **Heston Stochastic Volatility Backtesting** ⭐ NEW - Advanced pricing with volatility smiles
 - **Performance Metrics** - Sharpe ratio, max drawdown, win rate, profit factor
 - **Equity Curve** - Track portfolio value over time
 - **Custom Strategies** - Flexible signal generator interface
@@ -148,6 +150,9 @@ cargo run --release --example vol_surface_analysis
 
 # Backtest strategies on historical data
 cargo run --release --example backtest_strategy
+
+# Advanced Heston stochastic volatility backtesting ⭐ NEW
+cargo run --release --example backtest_heston
 
 # Create 3D volatility visualizations (requires Python)
 python py/plot_vol_surface.py
@@ -320,7 +325,8 @@ DollarBill/
 ├── examples/
 │   ├── multi_symbol_signals.rs         # Main: Signals + Greeks + Risk
 │   ├── vol_surface_analysis.rs         # Volatility surface extraction
-│   ├── backtest_strategy.rs            # Strategy backtesting demo
+│   ├── backtest_strategy.rs            # Black-Scholes strategy backtesting
+│   ├── backtest_heston.rs              # Heston stochastic volatility backtesting ⭐ NEW
 │   ├── calibrate_live_options.rs       # Heston calibration demo
 │   ├── trade_signals.rs                # Basic signal generation
 │   ├── alpaca_demo.rs                  # Alpaca API demo
@@ -338,7 +344,8 @@ DollarBill/
 │   ├── run_multi_signals.ps1           # PowerShell: Run signals
 │   ├── run_vol_surface.ps1             # PowerShell: Vol pipeline
 │   ├── run_signals.ps1                 # PowerShell: Single symbol signals
-│   ├── run_backtest.ps1                # PowerShell: Backtesting
+│   ├── run_backtest.ps1                # PowerShell: Black-Scholes backtesting
+│   ├── run_heston_backtest.ps1         # PowerShell: Heston backtesting ⭐ NEW
 │   ├── run_paper_trading.ps1           # PowerShell: Paper trading
 │   ├── run_multi_signals.bat           # Batch: Run signals
 │   ├── run_signals.bat                 # Batch: Single symbol signals

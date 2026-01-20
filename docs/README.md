@@ -41,6 +41,7 @@ DollarBill/
 - [Run Multi-Symbol Signals](../scripts/run_multi_signals.ps1)
 - [Fetch Market Data](../py/fetch_multi_stocks.py)
 - [View Backtest Results](../scripts/run_backtest.ps1)
+- [Run Heston Backtesting](../scripts/run_heston_backtest.ps1)
 - [Generate Volatility Surfaces](../scripts/run_vol_surface.ps1)
 - [View Generated Charts](../images/)
 

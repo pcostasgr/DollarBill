@@ -9,6 +9,32 @@ use std::fs;
 
 // Configuration structures
 #[derive(Debug, Deserialize)]
+struct StockConfig {
+    stocks: Vec<StockEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StockEntry {
+    symbol: String,
+    enabled: bool,
+}
+
+// Function to load symbols from config file
+fn load_symbols_from_config() -> Result<Vec<String>, Box<dyn Error>> {
+    let config_path = "config/stocks.json";
+    let config_content = fs::read_to_string(config_path)
+        .map_err(|e| format!("Failed to read stocks config: {}", e))?;
+    let config: StockConfig = serde_json::from_str(&config_content)
+        .map_err(|e| format!("Failed to parse stocks config: {}", e))?;
+    
+    Ok(config.stocks.into_iter()
+        .filter(|stock| stock.enabled)
+        .map(|stock| stock.symbol)
+        .collect())
+}
+
+// Configuration structures
+#[derive(Debug, Deserialize)]
 struct StrategyConfig {
     backtest: BacktestCommon,
     strategies: Strategies,
@@ -212,8 +238,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     let symbols_to_test: Vec<String> = if args.len() > 1 {
         args[1..].to_vec() // Skip the program name
     } else {
-        // Default symbols if none provided
-        vec!["AAPL".to_string(), "NVDA".to_string(), "MSFT".to_string(), "AMZN".to_string()]
+        // Load enabled symbols from config
+        load_symbols_from_config().unwrap_or_else(|_| {
+            println!("Warning: Could not load stocks.json, using default symbols");
+            vec!["AAPL".to_string(), "NVDA".to_string(), "MSFT".to_string(), "AMZN".to_string()]
+        })
     };
 
     println!("🎯 Testing symbols: {:?}", symbols_to_test);
@@ -230,7 +259,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 fn backtest_symbol(symbol: &str, config: &StrategyConfig) -> Result<(), Box<dyn Error>> {
     // Load historical data
-    let csv_file = format!("data/{}_one_year.csv", symbol.to_lowercase());
+    let csv_file = format!("data/{}_five_year.csv", symbol.to_lowercase());
     let mut historical_data = load_csv_closes(&csv_file)?;
     
     // Reverse so we iterate forward through time (oldest first)

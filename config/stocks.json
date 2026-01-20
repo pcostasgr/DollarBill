@@ -26,6 +26,34 @@
       "enabled": true
     },
     {
+      "symbol": "AMD",
+      "market": "US",
+      "sector": "Technology",
+      "enabled": true,
+      "notes": "High volatility semiconductor stock, similar to NVDA"
+    },
+    {
+      "symbol": "PLTR",
+      "market": "US",
+      "sector": "Technology",
+      "enabled": true,
+      "notes": "High volatility defense tech stock"
+    },
+    {
+      "symbol": "COIN",
+      "market": "US",
+      "sector": "Financial",
+      "enabled": true,
+      "notes": "High volatility cryptocurrency exchange"
+    },
+    {
+      "symbol": "QCOM",
+      "market": "US",
+      "sector": "Technology",
+      "enabled": true,
+      "notes": "High volatility semiconductor stock"
+    },
+    {
       "symbol": "SAP.DE",
       "market": "EU",
       "sector": "Technology",
