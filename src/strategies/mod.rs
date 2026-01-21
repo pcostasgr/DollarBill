@@ -86,3 +86,7 @@ impl StrategyRegistry {
 
 // Strategy implementations
 pub mod vol_mean_reversion;
+pub mod momentum;
+pub mod ensemble;
+pub mod factory;
+pub mod matching;

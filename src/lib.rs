@@ -8,3 +8,4 @@ pub mod calibration;
 pub mod backtesting;
 pub mod alpaca;
 pub mod config;
+pub mod analysis;

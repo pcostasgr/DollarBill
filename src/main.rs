@@ -4,6 +4,10 @@ mod market_data;
 mod strategies;
 mod utils;
 mod calibration;
+mod backtesting;
+mod alpaca;
+mod config;
+mod analysis;
 
 use market_data::csv_loader::load_csv_closes;
 use models::bs_mod::{compute_historical_vol, black_scholes_call};

@@ -1,6 +1,7 @@
 // Volatility Mean Reversion Strategy
 use super::{TradingStrategy, TradeSignal, SignalAction, RiskParams};
 
+#[derive(Clone)]
 pub struct VolMeanReversion {
     pub zscore_threshold: f64,
     pub edge_threshold: f64,

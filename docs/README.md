@@ -9,6 +9,7 @@ Welcome to the DollarBill documentation! This folder contains comprehensive guid
 
 ### Trading & Strategies
 - **[Trading Guide](trading-guide.md)** - Live trading examples, paper trading setup, and strategy workflows
+- **[Strategy Deployment](trading-guide.md#strategy-deployment-system)** - Modular strategy architecture and deployment patterns
 - **[Alpaca Integration](alpaca-guide.md)** - Complete guide for Alpaca API integration and paper trading
 - **[Backtesting Guide](backtesting-guide.md)** - Methodology for testing trading strategies on historical data
 

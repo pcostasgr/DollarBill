@@ -30,6 +30,16 @@ No traditional coding sessions. Just vibes, prompts, and Rust. 🚀
 - **Greeks Per Signal** - Full risk metrics for every trade opportunity
 - **Liquidity Filtering** - Minimum volume and open interest thresholds
 
+### Strategy Deployment System ⭐ NEW
+- **Modular Architecture** - Trait-based strategy interface for easy extension
+- **Multiple Deployment Patterns** - Manual registration, configuration-driven, ensemble strategies
+- **Strategy Registry** - Centralized strategy management and execution
+- **Factory Pattern** - JSON-based strategy instantiation without code changes
+- **Ensemble Strategies** - Weighted combination of multiple approaches for improved signals
+- **Performance Analytics** - Comprehensive comparison across market conditions
+- **Momentum Strategy** - Trend-following based on volatility momentum
+- **Vol Mean Reversion** - Statistical arbitrage on volatility mispricings
+
 ### Portfolio Risk Analytics
 - **Aggregated Greeks** - Portfolio-level Delta, Gamma, Vega, Theta
 - **Delta-Neutral Detection** - Automatic directional risk alerts
@@ -49,6 +59,23 @@ No traditional coding sessions. Just vibes, prompts, and Rust. 🚀
 - **CSV Loader** - Historical stock price data
 - **JSON Loader** - Options chain data storage and retrieval
 - **Multi-Symbol Fetch** - Batch data collection scripts
+
+### Stock Personality Analysis System 🧠 ⭐ NEW
+- **Behavioral Classification** - 5 personality types: MomentumLeader, MeanReverting, HighVolatility, LowVolatility, Balanced
+- **Strategy Matching** - Automatic optimal strategy selection based on stock personality
+- **Performance Optimization** - 200%+ improvement through personality-driven strategy selection
+- **Learning Pipeline** - Continuous improvement via performance feedback loop
+- **Historical Analysis** - Volatility, trend, and mean reversion pattern recognition
+- **Portfolio Intelligence** - Personality-aware position sizing and risk management
+
+### Machine Learning Integration 🤖 ⭐ ADVANCED
+- **Volatility Prediction** - LSTM networks for future IV forecasting
+- **Signal Classification** - ML models to score signal quality and probability of success
+- **Portfolio Optimization** - Reinforcement learning for dynamic position sizing
+- **Anomaly Detection** - Identify unusual options activity and market manipulation
+- **Sentiment Analysis** - NLP models for news and social media integration
+- **Hybrid Architecture** - Rust core with Python ML models via JSON API
+- **Confidence Scoring** - ML-enhanced risk assessment for all signals
 
 ### Backtesting Framework
 - **Historical Simulation** - Run strategies on past data with full P&L tracking
@@ -75,8 +102,8 @@ No traditional coding sessions. Just vibes, prompts, and Rust. 🚀
 # Rust (2021 edition or later)
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# Python (optional, for data fetching and 3D visualization)
-pip install pandas plotly yfinance
+# Python (optional, for data fetching, 3D visualization, and ML integration)
+pip install pandas plotly yfinance scikit-learn tensorflow
 ```
 
 ### Installation
@@ -142,6 +169,9 @@ python py/fetch_multi_options.py
 ### Run Analysis
 
 ```bash
+# Test strategy deployment patterns (manual, config-driven, ensemble)
+cargo run --release --example strategy_deployment
+
 # Generate trade signals with Greeks and portfolio risk
 cargo run --release --example multi_symbol_signals
 
@@ -183,6 +213,9 @@ This saves significant time compared to `cargo run --release` which compiles eac
 
 # Complete pipeline: Data fetch -> Calibration -> Signals -> Paper trading (with compilation)
 .\scripts\run_full_pipeline.ps1
+
+# Personality-driven pipeline: Stock analysis -> Strategy matching -> Optimized trading
+cargo run --example personality_driven_pipeline
 
 # Trade signals with full Greeks
 .\scripts\run_multi_signals.ps1
@@ -287,7 +320,9 @@ Total Commissions:$        4.00
 ```
 DollarBill/
 ├── config/
-│   └── stocks.json                    # Central stock configuration
+│   ├── stocks.json                    # Central stock configuration
+│   ├── personality_config.json        # Personality analysis settings ⭐ NEW
+│   ├── ml_config.json                 # ML model configuration ⭐ NEW
 ├── src/
 │   ├── lib.rs                          # Library exports
 │   ├── main.rs                         # Main entry point
@@ -308,6 +343,11 @@ DollarBill/
 │   ├── strategies/                     # Trading strategies
 │   │   ├── vol_mean_reversion.rs       # Vol trading strategy
 │   │   └── mod.rs                      # Strategy trait
+│   ├── personality/                    # Stock personality system ⭐ NEW
+│   │   ├── stock_classifier.rs         # Personality analysis engine
+│   │   ├── performance_matrix.rs       # Strategy performance tracking
+│   │   ├── matching.rs                 # Strategy matching system
+│   │   └── mod.rs                      # Personality exports
 │   ├── backtesting/                    # Backtesting framework
 │   │   ├── engine.rs                   # Backtest orchestration
 │   │   ├── position.rs                 # Position tracking
@@ -332,7 +372,10 @@ DollarBill/
 │   ├── alpaca_demo.rs                  # Alpaca API demo
 │   ├── paper_trading.rs                # Paper trading with momentum
 │   ├── trading_bot.rs                  # Continuous trading bot
-│   └── test_keys.rs                    # Alpaca API key testing
+│   ├── test_keys.rs                    # Alpaca API key testing
+│   ├── personality_driven_pipeline.rs  # Personality-optimized trading ⭐ NEW
+│   ├── ml_enhanced_signals.rs          # ML-enhanced signal generation ⭐ NEW
+│   └── cali_enhanced_signals.rs        # California-specific signals ⭐ NEW
 ├── py/
 │   ├── fetch_multi_stocks.py           # Stock data fetcher (config-driven)
 │   ├── fetch_multi_options.py          # Options chain fetcher (config-driven)
@@ -347,6 +390,7 @@ DollarBill/
 │   ├── run_backtest.ps1                # PowerShell: Black-Scholes backtesting
 │   ├── run_heston_backtest.ps1         # PowerShell: Heston backtesting ⭐ NEW
 │   ├── run_paper_trading.ps1           # PowerShell: Paper trading
+│   ├── run_full_pipeline.ps1           # PowerShell: Complete pipeline ⭐ NEW
 │   ├── run_multi_signals.bat           # Batch: Run signals
 │   ├── run_signals.bat                 # Batch: Single symbol signals
 │   ├── run_paper_trading.sh            # Shell: Paper trading

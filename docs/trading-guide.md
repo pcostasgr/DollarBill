@@ -2,7 +2,37 @@
 
 ## ✅ What's Ready
 
-Three live trading examples using your backtested strategies:
+### Strategy Deployment System ⭐ NEW
+Test and deploy multiple trading strategies with flexible configuration.
+
+```bash
+# Test all deployment patterns
+cargo run --example strategy_deployment
+```
+
+**What it demonstrates:**
+- **Manual Strategy Registration** - Direct strategy instantiation
+- **Configuration-Driven Deployment** - JSON-based strategy loading
+- **Strategy Performance Comparison** - Side-by-side evaluation across market conditions
+- **Ensemble Strategies** - Weighted combination of multiple approaches
+
+**Available Strategies:**
+- **Vol Mean Reversion** - Statistical arbitrage on volatility mispricings
+- **Momentum** - Trend-following based on volatility momentum
+- **Ensemble** - Combines multiple strategies with configurable weights
+
+**Output Example:**
+```
+🎭 Example 4: Ensemble Strategy
+Ensemble strategy combines:
+  - Vol Mean Reversion (60% weight)
+  - Momentum (40% weight)
+
+🌍 High Vol Spike:
+  Ensemble: IronButterfly { wing_width: 50.0 }, Confidence: 83.3%, Edge: $6.00
+```
+
+### Live Paper Trading Examples
 
 ### 1. **paper_trading.rs** - Single Scan
 Run once to check signals and execute trades.

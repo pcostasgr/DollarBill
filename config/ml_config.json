@@ -1,0 +1,65 @@
+{
+  "ml_integration": {
+    "enabled": true,
+    "fallback_to_traditional": true,
+    "confidence_threshold": 0.6,
+    "risk_score_threshold": 0.5,
+    "max_signals_to_enhance": 50
+  },
+  "models": {
+    "signal_classifier": {
+      "enabled": true,
+      "model_path": "models/signal_classifier.pkl",
+      "features": [
+        "edge_percent",
+        "delta",
+        "gamma",
+        "vega",
+        "theta",
+        "volume",
+        "open_interest",
+        "days_to_expiry"
+      ],
+      "confidence_threshold": 0.7,
+      "cache_enabled": true,
+      "cache_size": 1000
+    },
+    "volatility_predictor": {
+      "enabled": true,
+      "model_path": "models/volatility_predictor.h5",
+      "sequence_length": 10,
+      "prediction_horizon": 1,
+      "features": [
+        "implied_vol",
+        "volume",
+        "moneyness"
+      ]
+    },
+    "sentiment_analyzer": {
+      "enabled": false,
+      "model": "nlptown/bert-base-multilingual-uncased-sentiment",
+      "news_sources": ["yahoo", "seeking_alpha"],
+      "sentiment_threshold": 0.1
+    }
+  },
+  "training": {
+    "auto_train_on_startup": true,
+    "retrain_interval_days": 7,
+    "validation_split": 0.2,
+    "test_split": 0.1,
+    "random_state": 42,
+    "early_stopping_patience": 10
+  },
+  "performance": {
+    "max_ml_call_timeout_seconds": 30,
+    "parallel_processing": true,
+    "batch_size": 10,
+    "memory_cache_mb": 512
+  },
+  "logging": {
+    "ml_predictions": true,
+    "model_performance": true,
+    "error_details": true,
+    "prediction_cache_hits": false
+  }
+}
