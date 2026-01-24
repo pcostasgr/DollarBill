@@ -5,6 +5,7 @@ Welcome to the DollarBill documentation! This folder contains comprehensive guid
 ## 📖 User Guides
 
 ### Getting Started
+- **[Getting Started Guide](getting-started.md)** - Quick setup for personality-driven trading ⭐ NEW
 - **[Main README](../README.md)** - Project overview, installation, and quick start guide
 
 ### Trading & Strategies
