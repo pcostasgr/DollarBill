@@ -306,6 +306,73 @@ Live Market Data → Load Models → Strategy Selection → Signal Generation �
 - **Performance Matrix**: Saved as JSON with backtest results
 - **Automatic Loading**: Models loaded at bot startup for live trading
 
+## 🧪 Testing & Validation
+
+### Recommended Testing Flow
+
+For comprehensive validation of the personality-driven trading system, follow this testing progression:
+
+#### 1. 🚀 Quick Pipeline Validation
+```bash
+cargo run --example personality_driven_pipeline
+```
+- **Purpose**: Complete personality analysis + optimized backtesting
+- **Time**: ~30 seconds
+- **Validates**: Personality classification, strategy matching, Heston backtesting
+- **Results**: Sharpe ratios, returns, drawdown metrics per strategy-stock combination
+
+#### 2. 🎯 Deep Strategy Backtesting
+```powershell
+.\scripts\run_backtest.ps1
+```
+- **Purpose**: Multi-strategy comparison on historical data
+- **Validates**: Strategy performance across different market conditions
+- **Results**: Comparative performance metrics, win rates, risk metrics
+
+#### 3. 🔬 Heston Model Validation
+```powershell
+.\scripts\run_heston_backtest.ps1
+```
+- **Purpose**: Advanced options pricing with stochastic volatility
+- **Validates**: Realistic P&L calculations, model accuracy
+- **Results**: Calibrated parameters, backtested performance with real pricing
+
+#### 4. 📊 Live Market Calibration
+```bash
+cargo run --example calibrate_live_options
+```
+- **Purpose**: Validate models against current market data
+- **Validates**: Heston parameter calibration to live options prices
+- **Results**: Model accuracy metrics vs. market prices
+
+#### 5. 🤖 Live Trading Dry Run
+```bash
+cargo run --example personality_based_bot -- --dry-run
+```
+- **Purpose**: Test live bot logic without real trades
+- **Validates**: Signal generation, risk management, position sizing
+- **Results**: Simulated trades, P&L projections, risk alerts
+
+### Key Testing Metrics
+
+Monitor these metrics during backtesting:
+
+- **Sharpe Ratio**: >1.5 excellent, >1.0 good
+- **Total Return**: Higher is better (target >200% annually)
+- **Maximum Drawdown**: <30% preferred, <20% excellent
+- **Win Rate**: >60% indicates strong edge
+- **Strategy Consistency**: Performance across bull/bear markets
+
+### Validation Checklist
+
+- [ ] Personality pipeline runs without errors
+- [ ] All stocks classified into personality types
+- [ ] Strategy recommendations generated with confidence scores
+- [ ] Heston backtests complete with realistic pricing
+- [ ] Performance matrix updated and saved
+- [ ] Live calibration matches market prices within 5%
+- [ ] Dry-run bot generates signals without errors
+
 ## 🚀 Getting Started
 
 ### Prerequisites
