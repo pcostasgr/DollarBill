@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use crate::analysis::stock_classifier::{StockClassifier, StockProfile, StockPersonality};
 use crate::analysis::performance_matrix::{PerformanceMatrix, StrategyRecommendations};
-use crate::strategies::{TradingStrategy, momentum::MomentumStrategy, vol_mean_reversion::VolMeanReversion, ensemble::EnsembleStrategy};
+use crate::strategies::{TradingStrategy, momentum::MomentumStrategy, vol_mean_reversion::VolMeanReversion, cash_secured_puts::CashSecuredPuts, ensemble::EnsembleStrategy};
 
 /// Main strategy matching engine
 pub struct StrategyMatcher {
@@ -121,6 +121,9 @@ impl StrategyMatcher {
             }
             "Volatility Mean Reversion" | "Mean Reversion" => {
                 Ok(Box::new(VolMeanReversion::new()))
+            }
+            "Cash-Secured Puts" => {
+                Ok(Box::new(CashSecuredPuts::new()))
             }
             // Add more strategies as they become available
             _ => Err(format!("Unknown strategy: {}", strategy_name).into())

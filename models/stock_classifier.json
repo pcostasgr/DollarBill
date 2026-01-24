@@ -1,106 +1,11 @@
 {
-  "TSLA": {
-    "symbol": "TSLA",
-    "personality": "StableAccumulator",
-    "avg_volatility": 0.14365979074851953,
-    "trend_strength": 2.320984159621853e-6,
-    "mean_reversion_tendency": 0.9693822429668395,
-    "momentum_sensitivity": 0.020547315163549292,
-    "best_strategies": [
-      "Cash-Secured Puts",
-      "Covered Calls",
-      "Collar Strategy"
-    ],
-    "worst_strategies": [
-      "Long Calls",
-      "Speculative Strategies",
-      "Iron Butterfly"
-    ],
-    "strategy_performance": {}
-  },
-  "NVDA": {
-    "symbol": "NVDA",
-    "personality": "StableAccumulator",
-    "avg_volatility": 0.10528023983593857,
-    "trend_strength": 8.046615718904201e-7,
-    "mean_reversion_tendency": 0.9554512006343151,
-    "momentum_sensitivity": 0.0178280538676356,
-    "best_strategies": [
-      "Cash-Secured Puts",
-      "Covered Calls",
-      "Collar Strategy"
-    ],
-    "worst_strategies": [
-      "Long Calls",
-      "Speculative Strategies",
-      "Iron Butterfly"
-    ],
-    "strategy_performance": {}
-  },
-  "COIN": {
-    "symbol": "COIN",
-    "personality": "MeanReverting",
-    "avg_volatility": 0.28881482130396335,
-    "trend_strength": 5.303302743740331e-6,
-    "mean_reversion_tendency": 0.9929864553830005,
-    "momentum_sensitivity": 0.02319223751652711,
-    "best_strategies": [
-      "Volatility Mean Reversion",
-      "Iron Butterfly",
-      "Iron Condor"
-    ],
-    "worst_strategies": [
-      "Momentum Trading",
-      "Trend Following",
-      "Breakout Trading"
-    ],
-    "strategy_performance": {}
-  },
-  "PLTR": {
-    "symbol": "PLTR",
-    "personality": "StableAccumulator",
-    "avg_volatility": 0.17407088435613916,
-    "trend_strength": 7.244821770114616e-6,
-    "mean_reversion_tendency": 0.9306212839425524,
-    "momentum_sensitivity": 0.013680953996175887,
-    "best_strategies": [
-      "Cash-Secured Puts",
-      "Covered Calls",
-      "Collar Strategy"
-    ],
-    "worst_strategies": [
-      "Long Calls",
-      "Speculative Strategies",
-      "Iron Butterfly"
-    ],
-    "strategy_performance": {}
-  },
-  "MSFT": {
-    "symbol": "MSFT",
-    "personality": "StableAccumulator",
-    "avg_volatility": 0.025997029159983177,
-    "trend_strength": 5.235813699175247e-7,
-    "mean_reversion_tendency": 0.9877351415561637,
-    "momentum_sensitivity": 0.01879448870704715,
-    "best_strategies": [
-      "Cash-Secured Puts",
-      "Covered Calls",
-      "Collar Strategy"
-    ],
-    "worst_strategies": [
-      "Long Calls",
-      "Speculative Strategies",
-      "Iron Butterfly"
-    ],
-    "strategy_performance": {}
-  },
   "AMD": {
     "symbol": "AMD",
     "personality": "StableAccumulator",
-    "avg_volatility": 0.10660013135614635,
-    "trend_strength": 1.91299131260472e-6,
-    "mean_reversion_tendency": 0.9822490927553865,
-    "momentum_sensitivity": 0.01892400071785322,
+    "avg_volatility": 0.10663573541829088,
+    "trend_strength": 2.1630130760786282e-6,
+    "mean_reversion_tendency": 0.9831246430489259,
+    "momentum_sensitivity": 0.022779640269273704,
     "best_strategies": [
       "Cash-Secured Puts",
       "Covered Calls",
@@ -116,10 +21,29 @@
   "QCOM": {
     "symbol": "QCOM",
     "personality": "StableAccumulator",
-    "avg_volatility": 0.05811702747967602,
-    "trend_strength": 8.040232278146526e-7,
-    "mean_reversion_tendency": 0.9233067126252419,
-    "momentum_sensitivity": 0.023253813560844005,
+    "avg_volatility": 0.058099081762725345,
+    "trend_strength": 7.713495119297204e-7,
+    "mean_reversion_tendency": 0.9239097622926882,
+    "momentum_sensitivity": 0.02610537243941395,
+    "best_strategies": [
+      "Cash-Secured Puts",
+      "Covered Calls",
+      "Collar Strategy"
+    ],
+    "worst_strategies": [
+      "Long Calls",
+      "Speculative Strategies",
+      "Iron Butterfly"
+    ],
+    "strategy_performance": {}
+  },
+  "PLTR": {
+    "symbol": "PLTR",
+    "personality": "StableAccumulator",
+    "avg_volatility": 0.17003420207619377,
+    "trend_strength": 8.485507555287605e-6,
+    "mean_reversion_tendency": 0.9373201036622318,
+    "momentum_sensitivity": 0.028417475568026027,
     "best_strategies": [
       "Cash-Secured Puts",
       "Covered Calls",
@@ -135,10 +59,86 @@
   "AAPL": {
     "symbol": "AAPL",
     "personality": "StableAccumulator",
-    "avg_volatility": 0.030123862399830767,
-    "trend_strength": 2.39548375276295e-7,
-    "mean_reversion_tendency": 0.9768842166452777,
-    "momentum_sensitivity": 0.022277716305574295,
+    "avg_volatility": 0.03004470240339154,
+    "trend_strength": 3.933831940007362e-7,
+    "mean_reversion_tendency": 0.9777513420073087,
+    "momentum_sensitivity": 0.025126365386066944,
+    "best_strategies": [
+      "Cash-Secured Puts",
+      "Covered Calls",
+      "Collar Strategy"
+    ],
+    "worst_strategies": [
+      "Long Calls",
+      "Speculative Strategies",
+      "Iron Butterfly"
+    ],
+    "strategy_performance": {}
+  },
+  "MSFT": {
+    "symbol": "MSFT",
+    "personality": "StableAccumulator",
+    "avg_volatility": 0.026076443902679144,
+    "trend_strength": 2.746076836264474e-7,
+    "mean_reversion_tendency": 0.9874044807549123,
+    "momentum_sensitivity": 0.021219513367108797,
+    "best_strategies": [
+      "Cash-Secured Puts",
+      "Covered Calls",
+      "Collar Strategy"
+    ],
+    "worst_strategies": [
+      "Long Calls",
+      "Speculative Strategies",
+      "Iron Butterfly"
+    ],
+    "strategy_performance": {}
+  },
+  "TSLA": {
+    "symbol": "TSLA",
+    "personality": "StableAccumulator",
+    "avg_volatility": 0.14364524042837168,
+    "trend_strength": 2.6144545420481388e-6,
+    "mean_reversion_tendency": 0.9700017688850514,
+    "momentum_sensitivity": 0.02836398885900978,
+    "best_strategies": [
+      "Cash-Secured Puts",
+      "Covered Calls",
+      "Collar Strategy"
+    ],
+    "worst_strategies": [
+      "Long Calls",
+      "Speculative Strategies",
+      "Iron Butterfly"
+    ],
+    "strategy_performance": {}
+  },
+  "COIN": {
+    "symbol": "COIN",
+    "personality": "MeanReverting",
+    "avg_volatility": 0.28842628579693974,
+    "trend_strength": 5.091708330846257e-6,
+    "mean_reversion_tendency": 0.9928214701969537,
+    "momentum_sensitivity": 0.02319223751652711,
+    "best_strategies": [
+      "Volatility Mean Reversion",
+      "Iron Butterfly",
+      "Iron Condor"
+    ],
+    "worst_strategies": [
+      "Momentum Trading",
+      "Trend Following",
+      "Breakout Trading"
+    ],
+    "strategy_performance": {}
+  },
+  "NVDA": {
+    "symbol": "NVDA",
+    "personality": "StableAccumulator",
+    "avg_volatility": 0.10526288355232484,
+    "trend_strength": 7.882335106377524e-7,
+    "mean_reversion_tendency": 0.955718286715134,
+    "momentum_sensitivity": 0.02004628452355014,
     "best_strategies": [
       "Cash-Secured Puts",
       "Covered Calls",

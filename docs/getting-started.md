@@ -1,6 +1,6 @@
 # 🚀 DollarBill Getting Started Guide
 
-**Get trading with personality-driven strategies in under 15 minutes**
+**Get trading with personality-driven strategies in under 7 minutes (fast track) or 15 minutes (step-by-step)**
 
 ## ⚡ Quick Prerequisites (2 minutes)
 
@@ -23,9 +23,28 @@ cargo build --release
 pip install pandas plotly yfinance
 ```
 
-## 🎯 Fast Track: Personality Trading (10 minutes)
+### Fast Track: Personality Trading (7 minutes)
 
-### Step 1: Configure Stocks (1 minute)
+**Quick setup combining steps 3-5:**
+```powershell
+# One-command preparation (PowerShell)
+.\scripts\heston_preparation.ps1
+```
+```batch
+# Or use batch version
+.\scripts\heston_preparation.bat
+```
+
+This script automatically:
+- Fetches market data
+- Runs Heston backtesting  
+- Trains personality models
+
+**Then proceed to testing and live trading!**
+
+### Step-by-Step Alternative
+
+#### Step 1: Configure Stocks (1 minute)
 Edit `config/stocks.json` to choose your stocks:
 ```json
 {
@@ -37,7 +56,7 @@ Edit `config/stocks.json` to choose your stocks:
 }
 ```
 
-### Step 2: Fetch Market Data (2 minutes)
+#### Step 2: Fetch Market Data (2 minutes)
 ```bash
 # Get historical stock data
 python py/fetch_multi_stocks.py
@@ -46,20 +65,27 @@ python py/fetch_multi_stocks.py
 python py/fetch_multi_options.py
 ```
 
-### Step 3: Train Personality Models (3 minutes)
+#### Step 3: Run Heston Backtesting (2 minutes)
+```powershell
+# CRITICAL: Build accurate performance data for live trading
+.\scripts\run_heston_backtest.ps1
+```
+This calibrates Heston parameters to live market data and builds the performance matrix that the bot uses for trading decisions. **Essential for realistic results!**
+
+#### Step 4: Train Personality Models (3 minutes)
 ```bash
 # Run the complete personality pipeline
 cargo run --example personality_driven_pipeline
 ```
 This analyzes stock behaviors, matches optimal strategies, and saves trained models.
 
-### Step 4: Test Live Trading (2 minutes)
+#### Step 5: Test Live Trading (2 minutes)
 ```bash
 # Test without real trades
 cargo run --example personality_based_bot -- --dry-run
 ```
 
-### Step 5: Go Live (2 minutes)
+#### Step 6: Go Live (2 minutes)
 Set up Alpaca paper trading:
 ```bash
 # Set your Alpaca credentials
@@ -72,9 +98,12 @@ cargo run --example personality_based_bot -- --continuous 5
 
 ## 📊 What Just Happened
 
+✅ **Market Data**: Historical prices and live options fetched
+✅ **Heston Calibration**: Parameters fitted to current market conditions
 ✅ **Personality Analysis**: Stocks classified as MomentumLeader, MeanReverting, etc.
 ✅ **Strategy Matching**: Each stock got its optimal trading strategy
-✅ **Backtesting**: Strategies validated with historical performance
+✅ **Backtesting**: Strategies validated with realistic Heston pricing
+✅ **Live Testing**: Dry-run confirmed signal generation works
 ✅ **Live Trading**: Automated execution with risk management
 
 ## 🎛️ Quick Configuration
@@ -121,6 +150,13 @@ Edit `config/personality_bot_config.json`:
 
 ## 🚨 Safety First
 
+### ⚠️ Critical: Heston Backtesting Required
+**Before live trading, always run Heston backtesting first:**
+```powershell
+.\scripts\run_heston_backtest.ps1
+```
+This builds accurate performance data. **Skipping this step means trading with potentially unreliable strategy performance data!**
+
 ### Start Small
 - Use **paper trading** only initially
 - **Small position sizes** (5-10 shares)
@@ -156,8 +192,11 @@ cargo run --example personality_based_bot -- --continuous 15
 
 ### Weekly (10 minutes)
 ```bash
-# Update models with new data
+# Update models with new market data
 cargo run --example personality_driven_pipeline
+
+# Refresh Heston calibration for current market conditions
+.\scripts\run_heston_backtest.ps1
 
 # Test updated strategies
 cargo run --example personality_based_bot -- --dry-run
@@ -183,6 +222,7 @@ cargo run --example personality_based_bot -- --dry-run
 - **"No Alpaca credentials"**: Set environment variables correctly
 - **"No historical data"**: Run data fetching scripts first
 - **"Strategy not found"**: Re-run personality pipeline to train models
+- **"Poor performance/unrealistic results"**: Run Heston backtesting first - `.\scripts\run_heston_backtest.ps1`
 - **Low confidence signals**: Normal - bot only trades high-confidence opportunities
 
 ### Get Support

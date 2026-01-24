@@ -36,6 +36,7 @@ pub enum SignalAction {
     SellStraddle,
     BuyStraddle,
     IronButterfly { wing_width: f64 },
+    CashSecuredPut { strike_pct: f64 },
     NoAction,
 }
 
@@ -87,6 +88,7 @@ impl StrategyRegistry {
 // Strategy implementations
 pub mod vol_mean_reversion;
 pub mod momentum;
+pub mod cash_secured_puts;
 pub mod ensemble;
 pub mod factory;
 pub mod matching;

@@ -198,6 +198,10 @@ impl PersonalityBasedBot {
                             None
                         }
                     }
+                    SignalAction::CashSecuredPut { .. } => {
+                        // Cash-secured puts are neutral/bullish - don't trade stock
+                        None
+                    }
                     SignalAction::NoAction => None,
                 };
 

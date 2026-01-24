@@ -308,6 +308,17 @@ Live Market Data → Load Models → Strategy Selection → Signal Generation �
 
 ## 🧪 Testing & Validation
 
+### ⚠️ Critical: Heston Backtesting for Production Use
+
+**For live trading with the PersonalityBasedBot, Heston backtesting is ESSENTIAL.** The bot loads performance data from `models/performance_matrix.json` to make trading decisions. Without real backtested data, you're using potentially outdated or demo results.
+
+#### Why Heston Backtesting Matters:
+- **Realistic Option Pricing**: Captures volatility smiles, skews, and market dynamics
+- **Accurate P&L**: Professional-grade pricing vs. simplified Black-Scholes
+- **Strategy Validation**: Tests strategies under real market conditions
+- **Performance Matrix**: Builds the data foundation for personality matching
+- **Risk Assessment**: Proper drawdown and volatility modeling
+
 ### Recommended Testing Flow
 
 For comprehensive validation of the personality-driven trading system, follow this testing progression:
@@ -320,22 +331,27 @@ cargo run --example personality_driven_pipeline
 - **Time**: ~30 seconds
 - **Validates**: Personality classification, strategy matching, Heston backtesting
 - **Results**: Sharpe ratios, returns, drawdown metrics per strategy-stock combination
+- **Note**: Uses demo data for speed - run Heston backtesting for production validation
 
-#### 2. 🎯 Deep Strategy Backtesting
+#### 2. 🔬 Heston Model Backtesting (CRITICAL for Live Trading)
+```powershell
+.\scripts\run_heston_backtest.ps1
+```
+- **Purpose**: Advanced options pricing with stochastic volatility
+- **Validates**: Realistic P&L calculations, model accuracy, strategy performance
+- **Results**: Calibrated parameters, backtested performance with real pricing
+- **Impact**: Updates `performance_matrix.json` with accurate data for live bot
+- **Time**: ~2-5 minutes
+- **Essential**: Required before live trading with personality bot
+
+#### 3. 🎯 Multi-Strategy Backtesting
 ```powershell
 .\scripts\run_backtest.ps1
 ```
 - **Purpose**: Multi-strategy comparison on historical data
 - **Validates**: Strategy performance across different market conditions
 - **Results**: Comparative performance metrics, win rates, risk metrics
-
-#### 3. 🔬 Heston Model Validation
-```powershell
-.\scripts\run_heston_backtest.ps1
-```
-- **Purpose**: Advanced options pricing with stochastic volatility
-- **Validates**: Realistic P&L calculations, model accuracy
-- **Results**: Calibrated parameters, backtested performance with real pricing
+- **Complements**: Heston backtesting with broader strategy analysis
 
 #### 4. 📊 Live Market Calibration
 ```bash
@@ -344,10 +360,16 @@ cargo run --example calibrate_live_options
 - **Purpose**: Validate models against current market data
 - **Validates**: Heston parameter calibration to live options prices
 - **Results**: Model accuracy metrics vs. market prices
+- **When**: Run periodically to ensure model freshness
 
 #### 5. 🤖 Live Trading Dry Run
 ```bash
 cargo run --example personality_based_bot -- --dry-run
+```
+- **Purpose**: Test live bot logic without real trades
+- **Validates**: Signal generation, risk management, position sizing
+- **Results**: Simulated trades, P&L projections, risk alerts
+- **Prerequisite**: Valid performance matrix from Heston backtesting
 ```
 - **Purpose**: Test live bot logic without real trades
 - **Validates**: Signal generation, risk management, position sizing
@@ -365,25 +387,39 @@ Monitor these metrics during backtesting:
 
 ### Validation Checklist
 
+**Pre-Live Trading Requirements:**
+- [ ] **Heston backtesting completed** - Run `.\scripts\run_heston_backtest.ps1` to build accurate performance matrix
 - [ ] Personality pipeline runs without errors
 - [ ] All stocks classified into personality types
 - [ ] Strategy recommendations generated with confidence scores
-- [ ] Heston backtests complete with realistic pricing
-- [ ] Performance matrix updated and saved
+- [ ] Performance matrix updated with real backtest data (not demo data)
 - [ ] Live calibration matches market prices within 5%
 - [ ] Dry-run bot generates signals without errors
+- [ ] Performance metrics show positive Sharpe ratios (>1.0)
+
+**Production Readiness:**
+- [ ] Recent Heston backtesting (< 1 week old)
+- [ ] Performance matrix reflects current market conditions
+- [ ] Risk management parameters tested and validated
+- [ ] Paper trading tested with small position sizes
 
 ## 🚀 Getting Started
 
 ### Prerequisites
-1. Run the personality pipeline to train models:
+1. **Run Heston backtesting to build performance matrix:**
+   ```powershell
+   .\scripts\run_heston_backtest.ps1
+   ```
+   *Essential for accurate strategy performance data*
+
+2. Run the personality pipeline to train models:
    ```bash
    cargo run --example personality_driven_pipeline
    ```
 
-2. Configure Alpaca API credentials for live trading
+3. Configure Alpaca API credentials for live trading
 
-3. Set up `config/personality_bot_config.json`
+4. Set up `config/personality_bot_config.json`
 
 ### Quick Start
 ```bash
