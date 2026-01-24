@@ -648,7 +648,8 @@ MIT License - see [LICENSE](LICENSE) file for details
 
 ## 👤 Author
 
-Costas (Built with AI assistance from Claude Sonnet 4.5 and Grok)
+Constantinos 'Costas' Papadopoulos - 720° Software
+(Built with AI assistance from Claude Sonnet 4.5 and Grok)
 
 ---
 
