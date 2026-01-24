@@ -1,5 +1,14 @@
 {
   "matrix": {
+    "TSLA_Volatility Mean Reversion": {
+      "total_return": 1.305,
+      "sharpe_ratio": 1.14,
+      "max_drawdown": 0.3605,
+      "win_rate": 62.0,
+      "profit_factor": 3.2,
+      "total_trades": 280,
+      "avg_holding_period": 10.0
+    },
     "QCOM_Default Strategy": {
       "total_return": 1.0,
       "sharpe_ratio": 0.5,
@@ -9,14 +18,14 @@
       "total_trades": 100,
       "avg_holding_period": 12.0
     },
-    "TSLA_Volatility Mean Reversion": {
-      "total_return": 1.305,
-      "sharpe_ratio": 1.14,
-      "max_drawdown": 0.3605,
-      "win_rate": 62.0,
-      "profit_factor": 3.2,
-      "total_trades": 280,
-      "avg_holding_period": 10.0
+    "PLTR_Default Strategy": {
+      "total_return": 1.0,
+      "sharpe_ratio": 0.5,
+      "max_drawdown": 0.3,
+      "win_rate": 50.0,
+      "profit_factor": 2.0,
+      "total_trades": 100,
+      "avg_holding_period": 12.0
     },
     "AAPL_Trend Following": {
       "total_return": 1.85,
@@ -27,14 +36,14 @@
       "total_trades": 245,
       "avg_holding_period": 15.0
     },
-    "COIN_Default Strategy": {
-      "total_return": 1.0,
-      "sharpe_ratio": 0.5,
-      "max_drawdown": 0.3,
-      "win_rate": 50.0,
-      "profit_factor": 2.0,
-      "total_trades": 100,
-      "avg_holding_period": 12.0
+    "NVDA_Long-Term Holding": {
+      "total_return": -1.24,
+      "sharpe_ratio": 0.0,
+      "max_drawdown": 1.33,
+      "win_rate": 38.0,
+      "profit_factor": 2.06,
+      "total_trades": 353,
+      "avg_holding_period": 10.0
     },
     "TSLA_Short-Term Momentum": {
       "total_return": -0.85,
@@ -54,24 +63,6 @@
       "total_trades": 100,
       "avg_holding_period": 12.0
     },
-    "AMD_Default Strategy": {
-      "total_return": 1.0,
-      "sharpe_ratio": 0.5,
-      "max_drawdown": 0.3,
-      "win_rate": 50.0,
-      "profit_factor": 2.0,
-      "total_trades": 100,
-      "avg_holding_period": 12.0
-    },
-    "PLTR_Default Strategy": {
-      "total_return": 1.0,
-      "sharpe_ratio": 0.5,
-      "max_drawdown": 0.3,
-      "win_rate": 50.0,
-      "profit_factor": 2.0,
-      "total_trades": 100,
-      "avg_holding_period": 12.0
-    },
     "NVDA_Short-Term Momentum": {
       "total_return": 2.43,
       "sharpe_ratio": 1.7575,
@@ -81,17 +72,58 @@
       "total_trades": 385,
       "avg_holding_period": 10.0
     },
-    "NVDA_Long-Term Holding": {
-      "total_return": -1.24,
-      "sharpe_ratio": 0.0,
-      "max_drawdown": 1.33,
-      "win_rate": 38.0,
-      "profit_factor": 2.06,
-      "total_trades": 353,
-      "avg_holding_period": 10.0
+    "COIN_Default Strategy": {
+      "total_return": 1.0,
+      "sharpe_ratio": 0.5,
+      "max_drawdown": 0.3,
+      "win_rate": 50.0,
+      "profit_factor": 2.0,
+      "total_trades": 100,
+      "avg_holding_period": 12.0
+    },
+    "AMD_Default Strategy": {
+      "total_return": 1.0,
+      "sharpe_ratio": 0.5,
+      "max_drawdown": 0.3,
+      "win_rate": 50.0,
+      "profit_factor": 2.0,
+      "total_trades": 100,
+      "avg_holding_period": 12.0
     }
   },
   "stock_summaries": {
+    "TSLA": {
+      "best_strategy": "Volatility Mean Reversion",
+      "best_sharpe": 1.14,
+      "worst_strategy": "Short-Term Momentum",
+      "worst_sharpe": 0.2,
+      "total_strategies_tested": 2,
+      "avg_performance": {
+        "total_return": 0.22749999999999998,
+        "sharpe_ratio": 0.6699999999999999,
+        "max_drawdown": 0.58025,
+        "win_rate": 52.0,
+        "profit_factor": 2.5,
+        "total_trades": 300,
+        "avg_holding_period": 10.0
+      }
+    },
+    "COIN": {
+      "best_strategy": "Default Strategy",
+      "best_sharpe": 0.5,
+      "worst_strategy": "Default Strategy",
+      "worst_sharpe": 0.5,
+      "total_strategies_tested": 1,
+      "avg_performance": {
+        "total_return": 1.0,
+        "sharpe_ratio": 0.5,
+        "max_drawdown": 0.3,
+        "win_rate": 50.0,
+        "profit_factor": 2.0,
+        "total_trades": 100,
+        "avg_holding_period": 12.0
+      }
+    },
     "NVDA": {
       "best_strategy": "Short-Term Momentum",
       "best_sharpe": 1.7575,
@@ -108,7 +140,7 @@
         "avg_holding_period": 10.0
       }
     },
-    "MSFT": {
+    "PLTR": {
       "best_strategy": "Default Strategy",
       "best_sharpe": 0.5,
       "worst_strategy": "Default Strategy",
@@ -140,55 +172,7 @@
         "avg_holding_period": 15.0
       }
     },
-    "TSLA": {
-      "best_strategy": "Volatility Mean Reversion",
-      "best_sharpe": 1.14,
-      "worst_strategy": "Short-Term Momentum",
-      "worst_sharpe": 0.2,
-      "total_strategies_tested": 2,
-      "avg_performance": {
-        "total_return": 0.22749999999999998,
-        "sharpe_ratio": 0.6699999999999999,
-        "max_drawdown": 0.58025,
-        "win_rate": 52.0,
-        "profit_factor": 2.5,
-        "total_trades": 300,
-        "avg_holding_period": 10.0
-      }
-    },
-    "AMD": {
-      "best_strategy": "Default Strategy",
-      "best_sharpe": 0.5,
-      "worst_strategy": "Default Strategy",
-      "worst_sharpe": 0.5,
-      "total_strategies_tested": 1,
-      "avg_performance": {
-        "total_return": 1.0,
-        "sharpe_ratio": 0.5,
-        "max_drawdown": 0.3,
-        "win_rate": 50.0,
-        "profit_factor": 2.0,
-        "total_trades": 100,
-        "avg_holding_period": 12.0
-      }
-    },
-    "COIN": {
-      "best_strategy": "Default Strategy",
-      "best_sharpe": 0.5,
-      "worst_strategy": "Default Strategy",
-      "worst_sharpe": 0.5,
-      "total_strategies_tested": 1,
-      "avg_performance": {
-        "total_return": 1.0,
-        "sharpe_ratio": 0.5,
-        "max_drawdown": 0.3,
-        "win_rate": 50.0,
-        "profit_factor": 2.0,
-        "total_trades": 100,
-        "avg_holding_period": 12.0
-      }
-    },
-    "PLTR": {
+    "MSFT": {
       "best_strategy": "Default Strategy",
       "best_sharpe": 0.5,
       "worst_strategy": "Default Strategy",
@@ -205,6 +189,22 @@
       }
     },
     "QCOM": {
+      "best_strategy": "Default Strategy",
+      "best_sharpe": 0.5,
+      "worst_strategy": "Default Strategy",
+      "worst_sharpe": 0.5,
+      "total_strategies_tested": 1,
+      "avg_performance": {
+        "total_return": 1.0,
+        "sharpe_ratio": 0.5,
+        "max_drawdown": 0.3,
+        "win_rate": 50.0,
+        "profit_factor": 2.0,
+        "total_trades": 100,
+        "avg_holding_period": 12.0
+      }
+    },
+    "AMD": {
       "best_strategy": "Default Strategy",
       "best_sharpe": 0.5,
       "worst_strategy": "Default Strategy",

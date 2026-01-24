@@ -25,7 +25,7 @@ pip install pandas plotly yfinance
 
 ### Fast Track: Personality Trading (7 minutes)
 
-**Quick setup combining steps 3-5:**
+**Quick setup combining steps 2-4:**
 ```powershell
 # One-command preparation (PowerShell)
 .\scripts\heston_preparation.ps1
@@ -36,13 +36,11 @@ pip install pandas plotly yfinance
 ```
 
 This script automatically:
-- Fetches market data
-- Runs Heston backtesting  
-- Trains personality models
+- **Step 2**: Fetches market data (historical stocks + live options)
+- **Step 3**: Runs Heston backtesting with live market calibration
+- **Step 4**: Trains personality models and matches optimal strategies
 
-**Then proceed to testing and live trading!**
-
-### Step-by-Step Alternative
+**Then proceed to steps 5-6 for testing and live trading!**
 
 #### Step 1: Configure Stocks (1 minute)
 Edit `config/stocks.json` to choose your stocks:

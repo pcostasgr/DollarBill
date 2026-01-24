@@ -3,7 +3,7 @@
   "spot_price": 169.60000610351562,
   "expiration_date": "2026-02-13",
   "time_to_expiry": 0.052054794520547946,
-  "fetched_at": "2026-01-24T09:28:54.129903",
+  "fetched_at": "2026-01-24T09:39:30.013260",
   "options": [
     {
       "strike": 90.0,
