@@ -8,6 +8,7 @@ Welcome to the DollarBill documentation! This folder contains comprehensive guid
 - **[Main README](../README.md)** - Project overview, installation, and quick start guide
 
 ### Trading & Strategies
+- **[Personality Guide](personality-guide.md)** - Personality-driven trading system and live bot ⭐ NEW
 - **[Trading Guide](trading-guide.md)** - Live trading examples, paper trading setup, and strategy workflows
 - **[Strategy Deployment](trading-guide.md#strategy-deployment-system)** - Modular strategy architecture and deployment patterns
 - **[Alpaca Integration](alpaca-guide.md)** - Complete guide for Alpaca API integration and paper trading

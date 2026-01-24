@@ -142,6 +142,11 @@ Portfolio Performance: +217.3% vs +127.1% traditional (+90% improvement!)
 # Run personality-driven pipeline
 cargo run --example personality_driven_pipeline
 
+# Personality-based live trading bot
+cargo run --example personality_based_bot -- --dry-run  # Test without trading
+cargo run --example personality_based_bot               # Single live iteration
+cargo run --example personality_based_bot -- --continuous 5  # Continuous trading
+
 # Full pipeline with personality optimization
 .\scripts\run_full_pipeline.ps1
 ```

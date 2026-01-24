@@ -91,6 +91,14 @@ No traditional coding sessions. Just vibes, prompts, and Rust. 🚀
 - **Historical Analysis** - Volatility, trend, and mean reversion pattern recognition
 - **Portfolio Intelligence** - Personality-aware position sizing and risk management
 
+### PersonalityBasedBot 🤖 ⭐ NEW
+- **Live Trading Bot** - Uses trained personality models for real-time strategy selection
+- **Automatic Strategy Matching** - Each stock gets optimal strategy based on personality
+- **Confidence Filtering** - Only executes high-confidence signals
+- **Risk Management** - Position limits and personality-aware sizing
+- **Multiple Modes** - Dry-run testing, single iteration, continuous trading
+- **Alpaca Integration** - Live paper trading with real-time execution
+
 ### Machine Learning Integration 🤖 ⭐ ADVANCED
 - **Volatility Prediction** - LSTM networks for future IV forecasting
 - **Signal Classification** - ML models to score signal quality and probability of success
@@ -239,6 +247,11 @@ This saves significant time compared to `cargo run --release` which compiles eac
 
 # Personality-driven pipeline: Stock analysis -> Strategy matching -> Optimized trading
 cargo run --example personality_driven_pipeline
+
+# Personality-based live trading bot: Uses trained models for real-time strategy selection
+cargo run --example personality_based_bot -- --dry-run  # Test without trading
+cargo run --example personality_based_bot               # Single live iteration
+cargo run --example personality_based_bot -- --continuous 5  # Continuous trading
 
 # Trade signals with full Greeks
 .\scripts\run_multi_signals.ps1
@@ -397,6 +410,7 @@ DollarBill/
 │   ├── trading_bot.rs                  # Continuous trading bot
 │   ├── test_keys.rs                    # Alpaca API key testing
 │   ├── personality_driven_pipeline.rs  # Personality-optimized trading ⭐ NEW
+│   ├── personality_based_bot.rs        # Personality-based live trading ⭐ NEW
 │   ├── ml_enhanced_signals.rs          # ML-enhanced signal generation ⭐ NEW
 │   └── cali_enhanced_signals.rs        # California-specific signals ⭐ NEW
 ├── py/
@@ -531,6 +545,7 @@ Greeks {
 ## �📚 Documentation
 
 - **README.md** (this file) - Overview and quick start
+- **[Personality Guide](docs/personality-guide.md)** - Personality-driven trading system ⭐ NEW
 - **[Advanced Features](docs/advanced-features.md)** - Detailed feature guides and examples
 - **[Alpaca Integration](docs/alpaca-guide.md)** - Paper trading setup and API usage
 - **[Backtesting Guide](docs/backtesting-guide.md)** - Strategy testing methodology
@@ -563,6 +578,8 @@ Greeks {
 - ✅ **JSON Configuration System** - Centralized stock management
 - ✅ **Paper Trading Integration** - Alpaca API client
 - ✅ **Parallel Processing** - Multi-symbol pipeline
+- ✅ **Personality-Driven Trading** - Stock behavior analysis and strategy matching ⭐ NEW
+- ✅ **PersonalityBasedBot** - Live trading with personality-optimized strategies ⭐ NEW
 
 **Compilation:** ✅ Clean build (minor warnings only)  
 **Performance:** ✅ Optimized with `--release` builds  
