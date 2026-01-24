@@ -231,3 +231,5 @@ cargo run --example personality_based_bot -- --dry-run
 ---
 
 **🎉 You're now running an AI-powered trading system that adapts strategies to each stock's personality. Welcome to the future of automated trading!**
+
+> **Note:** ML integration features are currently experimental and under active development. The core personality-driven strategy system is production-ready, but advanced ML enhancements should be used cautiously.

@@ -100,6 +100,9 @@ No traditional coding sessions. Just vibes, prompts, and Rust. 🚀
 - **Alpaca Integration** - Live paper trading with real-time execution
 
 ### Machine Learning Integration 🤖 ⭐ ADVANCED
+
+> **Note:** ML integration features are currently experimental and under active development. The core personality-driven strategy system is production-ready, but advanced ML enhancements should be used cautiously.
+
 - **Volatility Prediction** - LSTM networks for future IV forecasting
 - **Signal Classification** - ML models to score signal quality and probability of success
 - **Portfolio Optimization** - Reinforcement learning for dynamic position sizing
