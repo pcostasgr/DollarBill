@@ -28,13 +28,14 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 /// Demonstrate manual strategy registration
 fn demo_manual_registration() -> Result<(), Box<dyn Error>> {
-    use dollarbill::strategies::{vol_mean_reversion::VolMeanReversion, momentum::MomentumStrategy};
+    use dollarbill::strategies::{vol_mean_reversion::VolMeanReversion, momentum::MomentumStrategy, cash_secured_puts::CashSecuredPuts};
 
     let mut registry = StrategyRegistry::new();
 
     // Register strategies manually
     registry.register(Box::new(VolMeanReversion::new()));
     registry.register(Box::new(MomentumStrategy::new()));
+    registry.register(Box::new(CashSecuredPuts::new()));
 
     println!("Registered strategies:");
     for (i, name) in registry.list_strategies().iter().enumerate() {
@@ -167,17 +168,19 @@ fn demo_strategy_comparison() -> Result<(), Box<dyn Error>> {
 
 /// Demonstrate ensemble strategy
 fn demo_ensemble_strategy() -> Result<(), Box<dyn Error>> {
-    use dollarbill::strategies::{vol_mean_reversion::VolMeanReversion, momentum::MomentumStrategy, ensemble::EnsembleStrategy};
+    use dollarbill::strategies::{vol_mean_reversion::VolMeanReversion, momentum::MomentumStrategy, cash_secured_puts::CashSecuredPuts, ensemble::EnsembleStrategy};
 
     let mut ensemble = EnsembleStrategy::new();
 
     // Add individual strategies with weights
-    ensemble.add_strategy(Box::new(VolMeanReversion::new()), 0.6);
-    ensemble.add_strategy(Box::new(MomentumStrategy::new()), 0.4);
+    ensemble.add_strategy(Box::new(VolMeanReversion::new()), 0.5);
+    ensemble.add_strategy(Box::new(MomentumStrategy::new()), 0.3);
+    ensemble.add_strategy(Box::new(CashSecuredPuts::new()), 0.2);
 
     println!("Ensemble strategy combines:");
-    println!("  - Vol Mean Reversion (60% weight)");
-    println!("  - Momentum (40% weight)");
+    println!("  - Vol Mean Reversion (50% weight)");
+    println!("  - Momentum (30% weight)");
+    println!("  - Cash-Secured Puts (20% weight)");
 
     // Test ensemble in different conditions
     let test_conditions = vec![
@@ -205,6 +208,7 @@ fn demo_ensemble_strategy() -> Result<(), Box<dyn Error>> {
         // Compare with individual strategies
         let vol_signals = VolMeanReversion::new().generate_signals("AAPL", spot, market_iv, model_iv, hist_vol);
         let mom_signals = MomentumStrategy::new().generate_signals("AAPL", spot, market_iv, model_iv, hist_vol);
+        let csp_signals = CashSecuredPuts::new().generate_signals("AAPL", spot, market_iv, model_iv, hist_vol);
 
         println!("  Individual strategies:");
         if !vol_signals.is_empty() {
@@ -216,6 +220,11 @@ fn demo_ensemble_strategy() -> Result<(), Box<dyn Error>> {
             println!("    Momentum: {:?}", mom_signals[0].action);
         } else {
             println!("    Momentum: No signal");
+        }
+        if !csp_signals.is_empty() {
+            println!("    Cash-Secured Puts: {:?}", csp_signals[0].action);
+        } else {
+            println!("    Cash-Secured Puts: No signal");
         }
     }
 

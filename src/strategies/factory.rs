@@ -1,5 +1,5 @@
 // src/strategies/factory.rs
-use super::{TradingStrategy, StrategyRegistry, vol_mean_reversion::VolMeanReversion, momentum::MomentumStrategy};
+use super::{TradingStrategy, StrategyRegistry, vol_mean_reversion::VolMeanReversion, momentum::MomentumStrategy, cash_secured_puts::CashSecuredPuts};
 use serde_json::Value;
 use std::error::Error;
 use std::fs;
@@ -23,6 +23,12 @@ impl StrategyFactory {
                 let threshold = config["threshold"].as_f64().unwrap_or(0.05);
                 let min_volume = config["min_volume"].as_u64().unwrap_or(100000);
                 Ok(Box::new(MomentumStrategy::with_config(period, threshold, min_volume)))
+            },
+            "cash_secured_puts" => {
+                let premium_thresh = config["premium_threshold"].as_f64().unwrap_or(0.02);
+                let strike_otm = config["strike_otm_pct"].as_f64().unwrap_or(0.05);
+                let iv_edge = config["min_iv_edge"].as_f64().unwrap_or(0.03);
+                Ok(Box::new(CashSecuredPuts::with_config(premium_thresh, strike_otm, iv_edge)))
             },
             _ => Err(format!("Unknown strategy type: {}", strategy_type).into())
         }
@@ -55,6 +61,7 @@ impl StrategyFactory {
         let mut registry = StrategyRegistry::new();
         registry.register(Box::new(VolMeanReversion::new()));
         registry.register(Box::new(MomentumStrategy::new()));
+        registry.register(Box::new(CashSecuredPuts::new()));
         registry
     }
 }

@@ -1,7 +1,7 @@
 {
   "deployment": {
     "mode": "backtest",
-    "active_strategies": ["vol_mean_reversion", "momentum"],
+    "active_strategies": ["vol_mean_reversion", "momentum", "cash_secured_puts"],
     "risk_limits": {
       "max_portfolio_var": 0.02,
       "max_single_position": 0.05,
@@ -26,6 +26,16 @@
         "momentum_period": 15,
         "threshold": 0.04,
         "min_volume": 50000
+      }
+    },
+    {
+      "type": "cash_secured_puts",
+      "enabled": true,
+      "weight": 0.5,
+      "parameters": {
+        "premium_threshold": 0.02,
+        "strike_otm_pct": 0.05,
+        "min_iv_edge": 0.03
       }
     }
   ]
