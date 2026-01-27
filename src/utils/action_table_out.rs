@@ -1,7 +1,6 @@
 // src/utils/action_table_out.rs
 // Shows the Action table (BUY/SELL/HOLD) for last N days using real closes as ATM strikes
 
-use std::cmp::Ordering;
 use crate::models::bs_mod::{black_scholes_merton_call, Greeks};
 use crate::market_data::csv_loader::HistoricalDay;
 

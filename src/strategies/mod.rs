@@ -1,5 +1,4 @@
 // Trading strategies module
-use crate::models::heston::HestonParams;
 
 /// Core trait all strategies must implement
 pub trait TradingStrategy: Send + Sync {
@@ -41,6 +40,7 @@ pub enum SignalAction {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Part of strategy API
 pub struct RiskParams {
     pub max_position_size: f64,
     pub max_delta: f64,

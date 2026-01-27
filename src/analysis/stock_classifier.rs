@@ -1,12 +1,14 @@
 // Stock personality classification system
 // Analyzes historical performance to match optimal strategies to stocks
+// Enhanced with advanced multi-dimensional feature analysis
 
 use std::collections::HashMap;
 use std::error::Error;
 use serde::{Deserialize, Serialize};
+use crate::analysis::advanced_classifier::AdvancedStockClassifier;
 
 /// Stock personality types based on historical behavior patterns
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum StockPersonality {
     /// High momentum, trend-following stocks (NVDA, PLTR)
     /// Best: Short-term momentum strategies
@@ -59,20 +61,61 @@ pub struct StockProfile {
     pub strategy_performance: HashMap<String, StrategyPerformance>,
 }
 
-/// Main stock classification engine
+/// Enhanced stock classification engine with advanced multi-dimensional analysis
 pub struct StockClassifier {
     profiles: HashMap<String, StockProfile>,
+    advanced_classifier: AdvancedStockClassifier,
 }
 
 impl StockClassifier {
-    /// Create new classifier with empty profiles
+    /// Create new classifier with advanced features
     pub fn new() -> Self {
         Self {
             profiles: HashMap::new(),
+            advanced_classifier: AdvancedStockClassifier::new(),
         }
     }
 
-    /// Classify a stock based on historical metrics
+    /// Enhanced stock classification using advanced features
+    pub fn classify_stock_enhanced(
+        &mut self,
+        symbol: &str,
+        sector: &str,
+    ) -> Result<StockProfile, Box<dyn Error>> {
+        // Use advanced classifier for features
+        let features = self.advanced_classifier.analyze_stock_advanced_optimized(symbol, sector)?;
+        
+        // Get personality with confidence score
+        let (personality, confidence) = self.advanced_classifier.classify_personality_advanced(&features);
+        
+        let (best_strategies, worst_strategies) = self.get_strategy_recommendations(&personality);
+
+        let profile = StockProfile {
+            symbol: symbol.to_string(),
+            personality: personality.clone(),
+            avg_volatility: features.volatility_percentile,
+            trend_strength: features.trend_strength,
+            mean_reversion_tendency: features.mean_reversion_strength,
+            momentum_sensitivity: features.momentum_acceleration,
+            best_strategies,
+            worst_strategies,
+            strategy_performance: HashMap::new(),
+        };
+
+        println!("🧠 Advanced Classification for {}:", symbol);
+        println!("   📊 Personality: {:?} (confidence: {:.1}%)", personality, confidence * 100.0);
+        println!("   📈 Vol Percentile: {:.1}% | Trend: {:.1}% | Reversion: {:.1}%", 
+                 features.volatility_percentile * 100.0,
+                 features.trend_strength * 100.0, 
+                 features.mean_reversion_strength * 100.0);
+        println!("   🎯 Market Regime: {:?} | Beta: {:.2} | Sector: {}", 
+                 features.vol_regime, features.market_beta, features.sector);
+
+        self.profiles.insert(symbol.to_string(), profile.clone());
+        Ok(profile)
+    }
+
+    /// Legacy classification method (for backward compatibility)
     pub fn classify_stock(
         &mut self,
         symbol: &str,
@@ -81,7 +124,7 @@ impl StockClassifier {
         mean_reversion_tendency: f64,
         momentum_sensitivity: f64,
     ) -> StockProfile {
-        let personality = self.determine_personality(
+        let personality = self.determine_personality_legacy(
             avg_volatility,
             trend_strength,
             mean_reversion_tendency,
@@ -106,14 +149,20 @@ impl StockClassifier {
         profile
     }
 
-    /// Determine stock personality based on metrics
-    fn determine_personality(
+    /// Legacy personality determination (replaced by advanced system)
+    fn determine_personality_legacy(
         &self,
         volatility: f64,
         trend_strength: f64,
         reversion_tendency: f64,
         momentum_sensitivity: f64,
     ) -> StockPersonality {
+        // DEPRECATED: This is the old broken logic with fixed thresholds
+        // Use classify_stock_enhanced() instead for proper analysis
+        
+        println!("⚠️  WARNING: Using legacy classification with fixed thresholds!");
+        println!("   📊 For better results, use classify_stock_enhanced() instead");
+        
         // High volatility threshold (>50%)
         if volatility > 0.5 {
             if momentum_sensitivity > 0.7 {
@@ -232,7 +281,10 @@ impl StockClassifier {
         let content = std::fs::read_to_string(filepath)?;
         let profiles: HashMap<String, StockProfile> = serde_json::from_str(&content)?;
 
-        Ok(Self { profiles })
+        Ok(Self { 
+            profiles,
+            advanced_classifier: AdvancedStockClassifier::new(),
+        })
     }
 
     /// Save profiles to JSON file

@@ -4,6 +4,7 @@ use crate::backtesting::position::Position;
 use crate::backtesting::trade::Trade;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Used by external examples and may be expanded
 pub struct EquityCurve {
     pub dates: Vec<String>,
     pub equity: Vec<f64>,
@@ -35,6 +36,7 @@ impl EquityCurve {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)] // Used by external examples and may be expanded
 pub struct PerformanceMetrics {
     pub total_trades: usize,
     pub winning_trades: usize,
@@ -155,7 +157,7 @@ impl PerformanceMetrics {
         }
     }
     
-    fn calculate_sharpe_ratio(equity_curve: &[f64], initial_capital: f64) -> f64 {
+    fn calculate_sharpe_ratio(equity_curve: &[f64], _initial_capital: f64) -> f64 {
         if equity_curve.len() < 2 {
             return 0.0;
         }
@@ -216,6 +218,7 @@ impl PerformanceMetrics {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)] // Used by external examples and may be expanded
 pub struct BacktestResult {
     pub symbol: String,
     pub start_date: String,

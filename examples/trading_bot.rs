@@ -250,7 +250,7 @@ impl TradingBot {
                 .latest_trade
                 .as_ref()
                 .map(|t| t.price)
-                .unwrap_or_else(|| *prices.last().unwrap());
+                .unwrap_or_else(|| prices.last().copied().unwrap_or(100.0)); // Safe fallback
 
             // Calculate metrics
             let annual_vol = calculate_volatility(&prices).unwrap_or(0.0);

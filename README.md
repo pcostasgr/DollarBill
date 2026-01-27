@@ -21,10 +21,12 @@ No traditional coding sessions. Just vibes, prompts, and Rust. 🚀
 - **Zero-cost abstractions** with Rust's ownership system
 
 ### Unique Intelligence 🧠
-- **Personality-driven strategy matching** - analyzes stock behavior patterns for optimal strategy selection
+- **Advanced Multi-Dimensional Personality System** - 15+ sophisticated features with percentile-based volatility analysis, market regime detection, and sector normalization
+- **Intelligent Strategy Matching** - weighted scoring system with confidence levels (20-70%) replacing broken fixed thresholds
+- **Market Regime Awareness** - LowVol/HighVol/Trending/MeanReverting classification for context-aware trading
 - **Complete data-to-signals pipeline** - from market data to trade execution in one command
-- **Hybrid ML architecture** - Rust performance + Python flexibility
-- **Real-time model calibration** - fits to live market data
+- **Hybrid ML architecture** - Rust performance + Python flexibility with advanced analytics
+- **Real-time model calibration** - fits to live market data with sophisticated feature extraction
 
 ### Market Position
 - **vs Thinkorswim/IBKR**: Moves beyond execution to intelligent optimization
@@ -83,13 +85,15 @@ No traditional coding sessions. Just vibes, prompts, and Rust. 🚀
 - **JSON Loader** - Options chain data storage and retrieval
 - **Multi-Symbol Fetch** - Batch data collection scripts
 
-### Stock Personality Analysis System 🧠 ⭐ NEW
-- **Behavioral Classification** - 5 personality types: MomentumLeader, MeanReverting, HighVolatility, LowVolatility, Balanced
-- **Strategy Matching** - Automatic optimal strategy selection based on stock personality
-- **Performance Optimization** - 200%+ improvement through personality-driven strategy selection
-- **Learning Pipeline** - Continuous improvement via performance feedback loop
-- **Historical Analysis** - Volatility, trend, and mean reversion pattern recognition
-- **Portfolio Intelligence** - Personality-aware position sizing and risk management
+### Advanced Stock Personality Analysis System 🧠 ⭐ ENHANCED
+- **Multi-Dimensional Classification** - 5 personality types using 15+ sophisticated features: volatility percentiles, market regime detection, trend persistence, momentum acceleration
+- **Intelligent Scoring System** - Weighted analysis with 20-70% confidence levels replacing broken fixed thresholds
+- **Market Regime Detection** - LowVol/HighVol/Trending/MeanReverting classification for context-aware strategy selection
+- **Sector Normalization** - Relative analysis vs sector peers with sector-aware position sizing
+- **Time-Weighted Analysis** - Momentum acceleration, trend persistence, volatility persistence for dynamic classification
+- **Performance Validation** - Dramatic improvement over legacy 25%/50% threshold system with diverse, intelligent classification
+- **Confidence-Based Risk Management** - Position sizing and strategy selection based on classification confidence scores
+- **Portfolio Intelligence** - Personality-aware position sizing with regime-adaptive risk management
 
 ### PersonalityBasedBot 🤖 ⭐ NEW
 - **Live Trading Bot** - Uses trained personality models for real-time strategy selection
@@ -141,6 +145,11 @@ No traditional coding sessions. Just vibes, prompts, and Rust. 🚀
 ```bash
 # Complete setup in one command
 cargo run --example personality_driven_pipeline
+
+# See the enhanced personality system in action
+cargo run --example enhanced_personality_analysis
+
+# Live trading with advanced personality matching
 cargo run --example personality_based_bot -- --continuous 5
 ```
 
@@ -217,6 +226,9 @@ python py/fetch_multi_options.py
 ### Run Analysis
 
 ```bash
+# Test advanced multi-dimensional personality analysis ⭐ ENHANCED
+cargo run --release --example enhanced_personality_analysis
+
 # Test strategy deployment patterns (manual, config-driven, ensemble)
 cargo run --release --example strategy_deployment
 
@@ -278,6 +290,27 @@ cargo run --example personality_based_bot -- --continuous 5  # Continuous tradin
 ```
 
 ## 📊 Example Output
+
+### Enhanced Personality Analysis Output
+
+```
+🚀 DollarBill Enhanced Stock Personality Analysis
+===============================================
+
+🧠 Advanced Classification for TSLA:
+   📊 Personality: VolatileBreaker (confidence: 30.0%)
+   📈 Vol Percentile: 91.7% | Trend: 45.2% | Reversion: 62.1%
+   🎯 Market Regime: HighVol | Beta: 1.23 | Sector: Automotive
+   🎯 Best strategies: ["Iron Butterfly", "Volatility Harvesting", "Short Straddles"]
+   ❌ Avoid strategies: ["Directional Bets", "Long Options", "Momentum Strategies"]
+
+🧠 Advanced Classification for PLTR:
+   📊 Personality: MomentumLeader (confidence: 50.0%)
+   📈 Vol Percentile: 97.2% | Trend: 98.5% | Reversion: 23.4%
+   🎯 Market Regime: HighVol | Beta: 2.14 | Sector: Software
+   🎯 Best strategies: ["Short-Term Momentum", "Breakout Trading", "Trend Following"]
+   ❌ Avoid strategies: ["Long-Term Holding", "Mean Reversion", "Iron Butterflies"]
+```
 
 ### Trade Signals with Greeks
 
@@ -396,11 +429,11 @@ DollarBill/
 │   ├── strategies/                     # Trading strategies
 │   │   ├── vol_mean_reversion.rs       # Vol trading strategy
 │   │   └── mod.rs                      # Strategy trait
-│   ├── personality/                    # Stock personality system ⭐ NEW
-│   │   ├── stock_classifier.rs         # Personality analysis engine
-│   │   ├── performance_matrix.rs       # Strategy performance tracking
-│   │   ├── matching.rs                 # Strategy matching system
-│   │   └── mod.rs                      # Personality exports
+   ├── analysis/                       # Advanced analytics system ⭐ ENHANCED
+   │   ├── stock_classifier.rs         # Enhanced personality analysis with legacy compatibility
+   │   ├── advanced_classifier.rs      # Multi-dimensional feature analysis engine ⭐ NEW
+   │   ├── performance_matrix.rs       # Strategy performance tracking
+   │   └── mod.rs                      # Analysis exports
 │   ├── backtesting/                    # Backtesting framework
 │   │   ├── engine.rs                   # Backtest orchestration
 │   │   ├── position.rs                 # Position tracking
@@ -428,6 +461,7 @@ DollarBill/
 │   ├── test_keys.rs                    # Alpaca API key testing
 │   ├── personality_driven_pipeline.rs  # Personality-optimized trading ⭐ NEW
 │   ├── personality_based_bot.rs        # Personality-based live trading ⭐ NEW
+│   ├── enhanced_personality_analysis.rs # Advanced multi-dimensional personality analysis ⭐ ENHANCED
 │   ├── ml_enhanced_signals.rs          # ML-enhanced signal generation ⭐ NEW
 │   └── cali_enhanced_signals.rs        # California-specific signals ⭐ NEW
 ├── py/
@@ -453,6 +487,7 @@ DollarBill/
 │   ├── advanced-features.md            # Advanced features guide
 │   ├── alpaca-guide.md                 # Alpaca API integration
 │   ├── backtesting-guide.md            # Backtesting methodology
+│   ├── enhanced-personality-implementation.md # Enhanced personality system implementation ⭐ NEW
 │   ├── implementation-summary.md       # Technical implementation details
 │   └── trading-guide.md                # Trading strategies guide
 ├── images/                             # Generated charts and visualizations
@@ -564,6 +599,7 @@ Greeks {
 - **[Getting Started Guide](docs/getting-started.md)** - Quick setup for personality trading ⭐ NEW
 - **README.md** (this file) - Overview and quick start
 - **[Personality Guide](docs/personality-guide.md)** - Personality-driven trading system ⭐ NEW
+- **[Enhanced Personality Implementation](docs/enhanced-personality-implementation.md)** - Advanced multi-dimensional personality system ⭐ ENHANCED
 - **[Advanced Features](docs/advanced-features.md)** - Detailed feature guides and examples
 - **[Alpaca Integration](docs/alpaca-guide.md)** - Paper trading setup and API usage
 - **[Backtesting Guide](docs/backtesting-guide.md)** - Strategy testing methodology
@@ -596,8 +632,9 @@ Greeks {
 - ✅ **JSON Configuration System** - Centralized stock management
 - ✅ **Paper Trading Integration** - Alpaca API client
 - ✅ **Parallel Processing** - Multi-symbol pipeline
-- ✅ **Personality-Driven Trading** - Stock behavior analysis and strategy matching ⭐ NEW
-- ✅ **PersonalityBasedBot** - Live trading with personality-optimized strategies ⭐ NEW
+- ✅ **Advanced Personality-Driven Trading** - Multi-dimensional stock behavior analysis with market regime detection and sector normalization ⭐ ENHANCED
+- ✅ **Intelligent Strategy Matching** - Confidence-based strategy selection with 20-70% confidence scoring ⭐ ENHANCED
+- ✅ **PersonalityBasedBot** - Live trading with advanced personality-optimized strategies ⭐ NEW
 
 **Compilation:** ✅ Clean build (minor warnings only)  
 **Performance:** ✅ Optimized with `--release` builds  

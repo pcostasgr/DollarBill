@@ -2,6 +2,7 @@
 use super::{TradingStrategy, TradeSignal, SignalAction, RiskParams};
 
 #[derive(Clone)]
+#[allow(dead_code)] // Part of strategy API, may be used by external code
 pub struct CashSecuredPuts {
     pub premium_threshold: f64,
     pub strike_otm_pct: f64,
@@ -37,7 +38,7 @@ impl TradingStrategy for CashSecuredPuts {
         spot: f64,
         market_iv: f64,
         model_iv: f64,
-        historical_vol: f64,
+        _historical_vol: f64,
     ) -> Vec<TradeSignal> {
         let mut signals = vec![];
 

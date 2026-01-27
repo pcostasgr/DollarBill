@@ -18,11 +18,16 @@ if (!(Test-Path "Cargo.toml")) {
 $venvPath = ".\.venv\Scripts\Activate.ps1"
 if (Test-Path $venvPath) {
     Write-Host "Activating Python virtual environment..." -ForegroundColor Yellow
-    & $venvPath
-    Write-Host "Virtual environment activated" -ForegroundColor Green
+    try {
+        & $venvPath
+        Write-Host "Virtual environment activated" -ForegroundColor Green
+    } catch {
+        Write-Host "Warning: Failed to activate virtual environment, continuing anyway" -ForegroundColor Yellow
+    }
     Write-Host ""
 } else {
     Write-Host "Virtual environment not found, proceeding without activation" -ForegroundColor Yellow
+    Write-Host "  Consider running: python -m venv .venv" -ForegroundColor Gray
     Write-Host ""
 }
 
@@ -33,12 +38,21 @@ Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host ""
 
 Write-Host "Fetching historical stock data..." -ForegroundColor Yellow
-python py/fetch_multi_stocks.py
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "X Error fetching historical stock data" -ForegroundColor Red
+try {
+    python py/fetch_multi_stocks.py
+    if ($LASTEXITCODE -ne 0) {
+        throw "Python script exited with code $LASTEXITCODE"
+    }
+    # Verify some data was actually fetched
+    if (!(Get-ChildItem "data" -Filter "*_five_year.csv" -ErrorAction SilentlyContinue)) {
+        Write-Host "Warning: No CSV files found in data directory" -ForegroundColor Yellow
+    }
+    Write-Host "Historical stock data fetched" -ForegroundColor Green
+} catch {
+    Write-Host "X Error fetching historical stock data: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "  This might be due to network issues or missing Python packages" -ForegroundColor Gray
     exit 1
 }
-Write-Host "Historical stock data fetched" -ForegroundColor Green
 Write-Host ""
 
 Write-Host "Fetching live options data..." -ForegroundColor Yellow

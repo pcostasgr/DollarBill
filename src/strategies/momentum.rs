@@ -4,6 +4,7 @@ use super::{TradingStrategy, TradeSignal, SignalAction, RiskParams};
 /// Momentum-based trading strategy
 /// Buys when momentum is strong, sells when momentum weakens
 #[derive(Clone)]
+#[allow(dead_code)] // Part of strategy API, may be used by external code
 pub struct MomentumStrategy {
     pub momentum_period: usize,
     pub threshold: f64,
@@ -56,8 +57,8 @@ impl TradingStrategy for MomentumStrategy {
         symbol: &str,
         spot: f64,
         market_iv: f64,
-        model_iv: f64,
-        historical_vol: f64,
+        _model_iv: f64,
+        _historical_vol: f64,
     ) -> Vec<TradeSignal> {
         let momentum_score = self.calculate_momentum(symbol);
 

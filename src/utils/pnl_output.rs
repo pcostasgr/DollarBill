@@ -1,8 +1,7 @@
 // src/utils/pnl_output.rs
 // P&L post-mortem attribution for rolling ATM call over last N days
 
-use std::cmp::Ordering;
-use crate::models::bs_mod::{black_scholes_merton_call, pnl_attribution, Greeks};
+use crate::models::bs_mod::{black_scholes_merton_call, pnl_attribution};
 use crate::market_data::csv_loader::HistoricalDay;
 
 pub fn show_pnl_post_mortem(history: &[HistoricalDay], n_days: usize, sigma: f64) {

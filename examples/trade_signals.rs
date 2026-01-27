@@ -152,7 +152,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     
     // Sort by edge (best opportunities first)
-    signals.sort_by(|a, b| b.edge_pct.abs().partial_cmp(&a.edge_pct.abs()).unwrap());
+    signals.sort_by(|a, b| {
+        b.edge_pct.abs().partial_cmp(&a.edge_pct.abs()).unwrap_or(std::cmp::Ordering::Equal)
+    });
     
     let buy_signals: Vec<_> = signals.iter().filter(|s| s.action == "BUY").collect();
     let sell_signals: Vec<_> = signals.iter().filter(|s| s.action == "SELL").collect();

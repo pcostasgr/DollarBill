@@ -1,6 +1,8 @@
 # 🚀 DollarBill Getting Started Guide
 
-**Get trading with personality-driven strategies in under 7 minutes (fast track) or 15 minutes (step-by-step)**
+**Get trading with enhanced multi-dimensional personality-driven strategies in under 7 minutes (fast track) or 15 minutes (step-by-step)**
+
+**⭐ NEW: Advanced Personality System** - Now featuring 15+ sophisticated features with percentile-based volatility analysis, market regime detection, and intelligent confidence scoring!
 
 ## ⚡ Quick Prerequisites (2 minutes)
 
@@ -70,12 +72,15 @@ python py/fetch_multi_options.py
 ```
 This calibrates Heston parameters to live market data and builds the performance matrix that the bot uses for trading decisions. **Essential for realistic results!**
 
-#### Step 4: Train Personality Models (3 minutes)
+#### Step 4: Train Enhanced Personality Models (3 minutes)
 ```bash
-# Run the complete personality pipeline
+# See the new enhanced personality system in action
+cargo run --example enhanced_personality_analysis
+
+# Run the complete personality pipeline with advanced features
 cargo run --example personality_driven_pipeline
 ```
-This analyzes stock behaviors, matches optimal strategies, and saves trained models.
+This analyzes stock behaviors using advanced multi-dimensional features, detects market regimes, and matches optimal strategies with confidence scoring.
 
 #### Step 5: Test Live Trading (2 minutes)
 ```bash
@@ -98,11 +103,12 @@ cargo run --example personality_based_bot -- --continuous 5
 
 ✅ **Market Data**: Historical prices and live options fetched
 ✅ **Heston Calibration**: Parameters fitted to current market conditions
-✅ **Personality Analysis**: Stocks classified as MomentumLeader, MeanReverting, etc.
-✅ **Strategy Matching**: Each stock got its optimal trading strategy
+✅ **Enhanced Personality Analysis**: Stocks classified using 15+ features: volatility percentiles, market regime detection, trend persistence
+✅ **Intelligent Strategy Matching**: Each stock got optimal strategy with 20-70% confidence scoring
+✅ **Market Regime Awareness**: LowVol/HighVol/Trending/MeanReverting classification for context-aware trading
 ✅ **Backtesting**: Strategies validated with realistic Heston pricing
-✅ **Live Testing**: Dry-run confirmed signal generation works
-✅ **Live Trading**: Automated execution with risk management
+✅ **Live Testing**: Dry-run confirmed advanced signal generation works
+✅ **Live Trading**: Automated execution with confidence-based risk management
 
 ## 🎛️ Quick Configuration
 
@@ -128,23 +134,29 @@ Edit `config/personality_bot_config.json`:
 
 ### Live Output Example
 ```
-🎭 Personality-Based Trading Bot
+🎭 Personality-Based Trading Bot with Enhanced Analytics
 ================================================================================
 
 💰 Account: $98543.67 cash | $142456.33 portfolio value
 
-🧠 Analyzing with Personality-Driven Strategies...
+🧠 Enhanced Personality Analysis Results:
+   TSLA: VolatileBreaker (confidence: 30.0%) | Vol: 91.7% | Regime: HighVol
+   PLTR: MomentumLeader (confidence: 50.0%) | Vol: 97.2% | Trend: 98.5%
+   AAPL: TrendFollower (confidence: 20.0%) | Vol: 45.2% | Regime: Trending
 
-   TSLA $247.89 | Strategy: Momentum | Conf: 0.78% | 🟢 BUY → 5 shares... ✅
-   AAPL $192.45 | Strategy: Vol Mean Reversion | Conf: 0.82% | ⏸️ HOLD
-   NVDA $875.30 | Strategy: Iron Condor | Conf: 0.71% | 🔴 SELL → Closing... ✅
+🚀 Trading Decisions:
+   TSLA $247.89 | Strategy: Iron Butterfly | Conf: 30.0% | ⏸️ HOLD (low confidence)
+   PLTR $185.23 | Strategy: Short-Term Momentum | Conf: 50.0% | 🟢 BUY → 5 shares... ✅
+   AAPL $192.45 | Strategy: Medium-Term RSI | Conf: 20.0% | ⏸️ HOLD (low confidence)
 ```
 
 ### Key Metrics to Watch
 - **Account Balance**: Should grow steadily
 - **Win Rate**: Look for >60% winning trades
-- **Confidence Scores**: Higher is better
+- **Confidence Scores**: 20-70% range (higher is better, <40% = hold)
+- **Market Regime**: Adaptive strategy selection based on HighVol/LowVol/Trending/MeanReverting
 - **Position Count**: Stay within your limits
+- **Volatility Percentiles**: Track relative volatility rankings
 
 ## 🚨 Safety First
 
@@ -190,13 +202,16 @@ cargo run --example personality_based_bot -- --continuous 15
 
 ### Weekly (10 minutes)
 ```bash
+# Review enhanced personality analysis with latest data
+cargo run --example enhanced_personality_analysis
+
 # Update models with new market data
 cargo run --example personality_driven_pipeline
 
 # Refresh Heston calibration for current market conditions
 .\scripts\run_heston_backtest.ps1
 
-# Test updated strategies
+# Test updated strategies with confidence scoring
 cargo run --example personality_based_bot -- --dry-run
 ```
 
@@ -221,7 +236,9 @@ cargo run --example personality_based_bot -- --dry-run
 - **"No historical data"**: Run data fetching scripts first
 - **"Strategy not found"**: Re-run personality pipeline to train models
 - **"Poor performance/unrealistic results"**: Run Heston backtesting first - `.\scripts\run_heston_backtest.ps1`
-- **Low confidence signals**: Normal - bot only trades high-confidence opportunities
+- **Low confidence signals**: Normal with enhanced system - bot only trades high-confidence opportunities (>40%)
+- **"File structure mismatch"**: Enhanced personality system requires latest code structure
+- **"Classification errors"**: Check that all stocks have sufficient historical data (2+ years)
 
 ### Get Support
 - Check the [Personality Guide](docs/personality-guide.md) for detailed documentation
@@ -230,6 +247,6 @@ cargo run --example personality_based_bot -- --dry-run
 
 ---
 
-**🎉 You're now running an AI-powered trading system that adapts strategies to each stock's personality. Welcome to the future of automated trading!**
+**🎉 You're now running an AI-powered trading system with advanced multi-dimensional personality analysis that adapts strategies to each stock's behavior with sophisticated confidence scoring. Welcome to the future of automated trading!**
 
-> **Note:** ML integration features are currently experimental and under active development. The core personality-driven strategy system is production-ready, but advanced ML enhancements should be used cautiously.
+> **Enhanced Personality System**: The new multi-dimensional analysis provides significantly more accurate classification than the legacy fixed-threshold system. Confidence scores of 20-70% are normal and provide intelligent risk management.

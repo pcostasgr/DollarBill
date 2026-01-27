@@ -1,8 +1,9 @@
 // src/strategies/ensemble.rs
-use super::{TradingStrategy, TradeSignal, SignalAction, RiskParams};
+use super::{TradingStrategy, TradeSignal, RiskParams};
 use std::collections::HashMap;
 
 /// Ensemble strategy that combines multiple strategies with weights
+#[allow(dead_code)] // Part of strategy API, may be used by external code
 pub struct EnsembleStrategy {
     strategies: Vec<Box<dyn TradingStrategy>>,
     weights: HashMap<String, f64>,

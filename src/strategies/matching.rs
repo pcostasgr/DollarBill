@@ -3,9 +3,9 @@
 
 use std::collections::HashMap;
 use std::error::Error;
-use crate::analysis::stock_classifier::{StockClassifier, StockProfile, StockPersonality};
+use crate::analysis::stock_classifier::{StockClassifier, StockPersonality};
 use crate::analysis::performance_matrix::{PerformanceMatrix, StrategyRecommendations};
-use crate::strategies::{TradingStrategy, momentum::MomentumStrategy, vol_mean_reversion::VolMeanReversion, cash_secured_puts::CashSecuredPuts, ensemble::EnsembleStrategy};
+use crate::strategies::{TradingStrategy, momentum::MomentumStrategy, vol_mean_reversion::VolMeanReversion, cash_secured_puts::CashSecuredPuts};
 
 /// Main strategy matching engine
 pub struct StrategyMatcher {
