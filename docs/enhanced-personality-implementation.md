@@ -53,25 +53,27 @@ if features.trend_persistence > 0.7 {
 
 ### 3. **Live Results from Implementation**
 
-#### Enhanced Classification Results:
-- **AAPL**: MomentumLeader (87.4% vol percentile, trending regime)
-- **TSLA**: VolatileBreaker (91.7% vol percentile, high vol regime) 
-- **META**: StableAccumulator (32.3% vol percentile, mean reverting)
-- **PLTR**: MomentumLeader (97.2% vol percentile, 98.5% trend strength)
-- **COIN**: StableAccumulator (39.9% vol percentile, 95% trend but stable regime)
+#### Current Enhanced Classification Results (January 2026):
+- **PLTR**: MomentumLeader (75.0% confidence, 96.3% vol percentile, HighVol regime, Software sector)
+- **COIN**: StableAccumulator (70.0% confidence, 38.8% vol percentile, HighVol regime, Financial Services)
+- **AMD**: TrendFollower (65.0% confidence, 46.8% vol percentile, MeanReverting regime, Semiconductors)
+- **QCOM**: TrendFollower (65.0% confidence, 78.4% vol percentile, HighVol regime, Semiconductors)
+- **AAPL**: MomentumLeader (45.0% confidence, 85.6% vol percentile, Trending regime, Technology)
 
-#### Legacy vs Enhanced Accuracy:
-- **Only 2/10 stocks** matched between systems (TSLA, PLTR)
-- **Enhanced system shows diversity**: 5 different personalities assigned
-- **Legacy system showed bias**: 6/10 classified as VolatileBreaker
+#### Enhanced vs Legacy System Accuracy:
+- **Only 2/15 stocks** matched between systems (AMD, PLTR)
+- **Enhanced system shows intelligent diversity**: 3 distinct personalities with confidence scoring (20-75%)
+- **Legacy system showed bias**: Most stocks incorrectly classified as VolatileBreaker
+- **Current system**: MomentumLeader (7 stocks), TrendFollower (6 stocks), StableAccumulator (2 stocks)
 
-### 4. **Sector Intelligence**
+### 4. **Current Sector Intelligence (Enhanced System)**
 ```
-🏢 Technology: AAPL=MomentumLeader, MSFT=TrendFollower, GOOGL=TrendFollower, META=StableAccumulator
-🏢 Semiconductors: NVDA=TrendFollower, AMD=StableAccumulator, QCOM=MomentumLeader  
+🏢 Technology: AAPL=MomentumLeader, MSFT=TrendFollower, GOOGL=MomentumLeader, META=TrendFollower
+🏢 Semiconductors: NVDA=TrendFollower, AMD=TrendFollower, QCOM=TrendFollower  
 🏢 Financial Services: COIN=StableAccumulator
-🏢 Automotive: TSLA=VolatileBreaker
+🏢 Automotive: TSLA=TrendFollower
 🏢 Software: PLTR=MomentumLeader
+🏢 ETF: SPY=TrendFollower, QQQ=MomentumLeader, GLD=MomentumLeader, IWM=MomentumLeader, TLT=StableAccumulator
 ```
 
 ## 🔬 Technical Implementation Details

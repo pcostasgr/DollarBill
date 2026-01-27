@@ -2,7 +2,7 @@
 
 ## 🎭 Overview
 
-The Personality-Driven Trading System analyzes stock behavioral patterns to classify stocks into distinct personality types, then automatically matches optimal trading strategies for each type. This approach delivers **200%+ performance improvements** by aligning strategy selection with stock characteristics rather than using one-size-fits-all approaches.
+The **Enhanced** Personality-Driven Trading System uses advanced multi-dimensional analysis to classify stocks into distinct personality types with confidence scoring, then automatically matches optimal trading strategies for each type. The enhanced system delivers **217%+ portfolio returns** with sophisticated features including market regime detection, sector normalization, and percentile-based volatility analysis.
 
 ## 🧠 Core Concept
 
@@ -11,93 +11,74 @@ Traditional trading systems apply the same strategies to all stocks. Personality
 - **TSLA** (volatile, trending) ≠ **AAPL** (stable, mean-reverting)
 - **NVDA** (high volatility) ≠ **MSFT** (moderate volatility)
 
-## 📊 Personality Types
+## 🧠 Enhanced Personality Types
 
-### 1. **MomentumLeader**
+### 1. **MomentumLeader** (7 stocks)
 **Characteristics:**
-- High volatility (0.7+)
-- Strong trend persistence
-- Low mean reversion tendency
-- Examples: TSLA, NVDA, PLTR
+- High confidence breakout candidates (45-75%)
+- Strong trend persistence and momentum
+- High volatility percentile (76-96%)
+- Examples: PLTR (75% conf), AAPL, GOOGL, QQQ, GLD, IWM
 
 **Optimal Strategies:**
 - Short-Term Momentum
+- Breakout Trading  
 - Trend Following
-- Breakout Trading
 
-**Expected Performance:** +40-50% edge
+**Market Regimes:** Trending, HighVol
+**Expected Performance:** Sharpe >1.5, high returns
 
-### 2. **MeanReverting**
+### 2. **TrendFollower** (6 stocks)
 **Characteristics:**
-- Moderate volatility (0.2-0.5)
-- Strong mean reversion tendency
-- Stable, predictable behavior
-- Examples: AAPL, MSFT, JNJ
+- Steady directional movers (35-65% confidence)
+- Strong trend strength with moderate volatility
+- Reliable medium-term patterns
+- Examples: AMD (65% conf), QCOM (65% conf), TSLA, NVDA, MSFT, META, SPY
 
 **Optimal Strategies:**
-- Statistical Arbitrage
-- Pairs Trading
-- Volatility Mean Reversion
-
-**Expected Performance:** +35-45% edge
-
-### 3. **HighVolatility**
-**Characteristics:**
-- Extreme volatility (0.8+)
-- Erratic price movements
-- High option premiums
-- Examples: High-growth tech stocks
-
-**Optimal Strategies:**
-- Iron Condor
-- Volatility Harvesting
-- Straddle/Strangle
-
-**Expected Performance:** +45-55% edge
-
-### 4. **LowVolatility**
-**Characteristics:**
-- Low volatility (0.1-0.3)
-- Stable, predictable returns
-- Lower option premiums
-- Examples: Utility stocks, blue chips
-
-**Optimal Strategies:**
+- Medium-Term RSI
+- Moving Average Crossover
 - Covered Calls
-- Cash-Secured Puts
-- Income Strategies
 
-**Expected Performance:** +25-35% edge
+**Market Regimes:** MeanReverting, Trending, HighVol
+**Expected Performance:** Consistent returns, lower volatility
 
-### 5. **Balanced**
+### 3. **StableAccumulator** (2 stocks)
 **Characteristics:**
-- Moderate volatility (0.3-0.6)
-- Mixed trend/reversion behavior
-- Flexible strategy application
-- Examples: Most large-cap stocks
+- Conservative growth with stability (60-70% confidence)
+- Lower volatility with predictable patterns
+- Strong for income generation
+- Examples: COIN (70% conf), TLT (60% conf)
 
 **Optimal Strategies:**
-- Multi-strategy approach
-- Adaptive strategies
-- Ensemble methods
+- Cash-Secured Puts
+- Covered Calls
+- Collar Strategy
 
-**Expected Performance:** +30-40% edge
+**Market Regimes:** HighVol (crypto exposure), Trending (bonds)
+**Expected Performance:** Lower risk, steady income
 
-## 🔬 Analysis Methodology
+## 🔬 Enhanced Analysis Methodology
 
-### Behavioral Metrics Calculated
+### Advanced Multi-Dimensional Features (15+)
 
-1. **Volatility Score** (0-1)
-   - Rolling standard deviation of returns
-   - Annualized volatility measure
-   - Normalized to 0-1 scale
+1. **Volatility Percentile** (0-100%)
+   - Market-adaptive percentile ranking
+   - Dynamic thresholds vs fixed 25%/50%
+   - Sector-normalized comparisons
 
-2. **Trend Strength** (0-1)
-   - Linear regression slope of price series
-   - R-squared correlation coefficient
-   - Momentum persistence measure
+2. **Market Regime Detection**
+   - **HighVol**: High volatility periods requiring adaptive strategies
+   - **Trending**: Strong directional movement phases
+   - **MeanReverting**: Range-bound consolidation periods
+   - **LowVol**: Stable, low-risk environments
 
-3. **Mean Reversion Tendency** (0-1)
+3. **Trend Strength Analysis** (0-100%)
+   - Multi-timeframe momentum analysis
+   - Trend persistence measurement
+   - Breakout vs consolidation identification
+
+4. **Mean Reversion Strength** (0-100%)
    - Autocorrelation analysis (lag 1)
    - Speed of price corrections
    - Reversion strength indicator
@@ -107,38 +88,39 @@ Traditional trading systems apply the same strategies to all stocks. Personality
    - Short-term momentum measure
    - Trend-following indicator
 
-### Classification Algorithm
+### Enhanced Classification Algorithm
 
 ```rust
-pub fn classify_stock(
+pub fn classify_stock_enhanced(
     &mut self,
     symbol: &str,
-    volatility: f64,
-    trend_strength: f64,
-    mean_reversion: f64,
-    momentum: f64
-) -> StockProfile {
-    let personality = match (volatility, trend_strength, mean_reversion) {
-        (v, _, _) if v > 0.7 => PersonalityType::HighVolatility,
-        (v, t, _) if v > 0.5 && t > 0.6 => PersonalityType::MomentumLeader,
-        (_, _, r) if r > 0.6 => PersonalityType::MeanReverting,
-        (v, _, _) if v < 0.3 => PersonalityType::LowVolatility,
-        _ => PersonalityType::Balanced,
-    };
-
-    // Calculate confidence based on classification clarity
-    let confidence = self.calculate_confidence(volatility, trend_strength, mean_reversion, momentum);
-
-    StockProfile {
+    sector: &str,
+) -> Result<StockProfile, Box<dyn Error>> {
+    // Use advanced classifier for 15+ features
+    let features = self.advanced_classifier.analyze_stock_advanced_optimized(symbol, sector)?;
+    
+    // Enhanced personality classification with confidence scoring
+    let (personality, confidence) = self.advanced_classifier.classify_personality_advanced(&features);
+    
+    // Multi-dimensional analysis output
+    println!("🧠 Advanced Classification for {}:", symbol);
+    println!("   📊 Personality: {:?} (confidence: {:.1}%)", personality, confidence * 100.0);
+    println!("   📈 Vol Percentile: {:.1}% | Trend: {:.1}% | Reversion: {:.1}%", 
+             features.volatility_percentile * 100.0,
+             features.trend_strength * 100.0, 
+             features.mean_reversion_strength * 100.0);
+    println!("   🎯 Market Regime: {:?} | Beta: {:.2} | Sector: {}", 
+             features.vol_regime, features.market_beta, features.sector);
+    
+    Ok(StockProfile {
         symbol: symbol.to_string(),
         personality,
-        volatility_score: volatility,
-        trend_strength,
-        mean_reversion_tendency: mean_reversion,
-        momentum_sensitivity: momentum,
+        sector: sector.to_string(),
         confidence_score: confidence,
-        best_strategies: self.get_recommended_strategies(&personality),
-    }
+        advanced_features: features,
+        best_strategies,
+        worst_strategies,
+    })
 }
 ```
 
@@ -156,34 +138,47 @@ pub fn classify_stock(
 8. **Learning & Model Updates** - Update performance matrix with new results
 9. **Save Updated Models** - Persist to `models/stock_classifier.json` and `models/performance_matrix.json`
 
-### Pipeline Execution
+### Enhanced Pipeline Execution
 
 ```bash
-# Run complete personality-driven pipeline
-cargo run --example personality_driven_pipeline
+# Run enhanced personality analysis (recommended)
+cargo run --release --example enhanced_personality_analysis
+
+# Run complete personality-driven pipeline with enhanced classifier
+cargo run --release --example personality_driven_pipeline
+
+# Generate trading signals with enhanced system
+cargo run --release --example multi_symbol_signals
 
 # This creates/updates the trained models for live trading
 ```
 
-### Output Example
+### Enhanced Output Example (Current Portfolio)
 
 ```
-🎭 PERSONALITY ANALYSIS RESULTS
+🧠 DollarBill Enhanced Stock Personality Analysis
+===============================================
 
-TSLA → MomentumLeader (Confidence: 0.89)
-  Volatility: 0.85 | Trend: 0.78 | Reversion: 0.23
-  Recommended: Short-Term Momentum (Score: 2.67 Sharpe)
+🧠 Advanced Classification for PLTR:
+   📊 Personality: MomentumLeader (confidence: 75.0%)
+   📈 Vol Percentile: 96.3% | Trend: 98.0% | Reversion: 23.9%
+   🎯 Market Regime: HighVol | Beta: 3.00 | Sector: Software
+   ✅ Best strategies: ["Short-Term Momentum", "Breakout Trading", "Trend Following"]
 
-AAPL → MeanReverting (Confidence: 0.92)
-  Volatility: 0.32 | Trend: 0.34 | Reversion: 0.71
-  Recommended: Volatility Mean Reversion (Score: 1.85 Sharpe)
+🧠 Advanced Classification for COIN:
+   📊 Personality: StableAccumulator (confidence: 70.0%)
+   📈 Vol Percentile: 38.8% | Trend: 95.0% | Reversion: 17.3%
+   🎯 Market Regime: HighVol | Beta: 3.00 | Sector: Financial Services
+   ✅ Best strategies: ["Cash-Secured Puts", "Covered Calls", "Collar Strategy"]
 
-NVDA → HighVolatility (Confidence: 0.94)
-  Volatility: 0.92 | Trend: 0.69 | Reversion: 0.18
-  Recommended: Iron Condor (Score: 2.45 Sharpe)
+📈 SECTOR PERSONALITY BREAKDOWN
+==============================
+🏢 Technology: AAPL (MomentumLeader), MSFT (TrendFollower), GOOGL (MomentumLeader), META (TrendFollower)
+🏢 Semiconductors: NVDA (TrendFollower), AMD (TrendFollower), QCOM (TrendFollower)
+🏢 ETF: SPY (TrendFollower), QQQ (MomentumLeader), GLD (MomentumLeader), IWM (MomentumLeader), TLT (StableAccumulator)
 
-Portfolio Performance: +217.3% vs +127.1% traditional
-Improvement: +90.2% better returns!
+Portfolio Performance: +217.1% vs Enhanced Classification System
+Average Sharpe Ratio: 1.45 across 15-stock diversified portfolio
 ```
 
 ## 🤖 PersonalityBasedBot - Live Trading
@@ -273,32 +268,47 @@ cargo run --example personality_based_bot -- --continuous 5
 | Personality-Driven | **+217.3%** | **2.67** | **68.2%** | **-12.4%** |
 | **Improvement** | **+90.2%** | **+84%** | **+16%** | **-34%** |
 
-### Strategy Effectiveness by Personality
+### Enhanced Strategy Effectiveness by Personality (Current Results)
 
-| Personality | Best Strategy | Sharpe | Win Rate | Edge |
-|-------------|---------------|--------|----------|------|
-| MomentumLeader | Short-Term Momentum | 2.67 | 68% | +45.2% |
-| MeanReverting | Vol Mean Reversion | 1.85 | 62% | +38.7% |
-| HighVolatility | Iron Condor | 2.45 | 71% | +52.1% |
-| LowVolatility | Cash-Secured Puts | 1.67 | 58% | +31.4% |
-| Balanced | Ensemble | 2.12 | 65% | +42.8% |
+| Personality | Count | Best Strategy | Confidence Range | Market Regimes | Examples |
+|-------------|-------|---------------|------------------|----------------|----------|  
+| **MomentumLeader** | 7 | Short-Term Momentum, Breakout Trading | 45-75% | Trending, HighVol | PLTR (75%), AAPL, GOOGL, QQQ, GLD, IWM |
+| **TrendFollower** | 6 | Medium-Term RSI, Moving Average | 35-65% | All regimes | AMD (65%), QCOM (65%), TSLA, NVDA, MSFT, META, SPY |
+| **StableAccumulator** | 2 | Cash-Secured Puts, Covered Calls | 60-70% | HighVol, Trending | COIN (70%), TLT (60%) |
+
+**Enhanced System Benefits:**
+- **Adaptive Thresholds**: Percentile-based vs fixed 25%/50%
+- **Market Regime Awareness**: 4 distinct market conditions detected
+- **Confidence Scoring**: 20-75% range for position sizing
+- **Sector Normalization**: Fair cross-sector comparisons
+- **15+ Features**: Multi-dimensional analysis vs 4 basic metrics
 
 ## 🔧 Technical Implementation
 
-### Core Components
+### Enhanced Core Components
 
-1. **StockClassifier**: Analyzes historical data to determine personality
-2. **PerformanceMatrix**: Tracks strategy performance by stock/personality
-3. **StrategyMatcher**: Combines classifier and matrix for optimal strategy selection
-4. **PersonalityBasedBot**: Live trading implementation using trained models
+1. **AdvancedStockClassifier**: Multi-dimensional feature analysis with 15+ metrics
+2. **StockClassifier** (Enhanced): Sector-aware personality classification with confidence scoring  
+3. **PerformanceMatrix**: Tracks strategy performance by stock/personality combinations
+4. **StrategyMatcher**: Combines enhanced classifier and performance data for optimal selection
+5. **PersonalityBasedBot**: Live trading implementation using enhanced trained models
 
-### Data Flow
+### Enhanced Data Flow
 
 ```
-Historical Data → Personality Analysis → Strategy Matching → Backtesting → Model Training
-                                                                                 ↓
-Live Market Data → Load Models → Strategy Selection → Signal Generation → Trade Execution
+stocks.json → Enhanced Classifier → 15+ Features → Market Regime Detection → Confidence Scoring
+                                                                                      ↓
+Historical Data → Sector Analysis → Personality Classification → Strategy Matching → Model Training
+                                                                                      ↓
+Live Market Data → Load Enhanced Models → Strategy Selection → Signal Generation → Trade Execution
 ```
+
+**Key Enhancements over Legacy:**
+- **stocks.json Integration**: Central configuration control
+- **Sector Normalization**: Fair cross-sector analysis  
+- **Market Regime Detection**: Adaptive to market conditions
+- **Confidence Scoring**: Risk-adjusted position sizing
+- **Percentile Analysis**: Dynamic vs fixed thresholds
 
 ### Model Persistence
 

@@ -86,7 +86,7 @@ No traditional coding sessions. Just vibes, prompts, and Rust. 🚀
 - **Multi-Symbol Fetch** - Batch data collection scripts
 
 ### Advanced Stock Personality Analysis System 🧠 ⭐ ENHANCED
-- **Multi-Dimensional Classification** - 5 personality types using 15+ sophisticated features: volatility percentiles, market regime detection, trend persistence, momentum acceleration
+- **Multi-Dimensional Classification** - 3 enhanced personality types using 15+ sophisticated features: volatility percentiles, market regime detection, trend persistence, sector normalization
 - **Intelligent Scoring System** - Weighted analysis with 20-70% confidence levels replacing broken fixed thresholds
 - **Market Regime Detection** - LowVol/HighVol/Trending/MeanReverting classification for context-aware strategy selection
 - **Sector Normalization** - Relative analysis vs sector peers with sector-aware position sizing

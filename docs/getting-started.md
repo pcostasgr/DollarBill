@@ -166,7 +166,7 @@ Edit `config/personality_bot_config.json`:
 💰 Account: $98543.67 cash | $142456.33 portfolio value
 
 🧠 Enhanced Personality Analysis Results:
-   TSLA: VolatileBreaker (confidence: 30.0%) | Vol: 91.7% | Regime: HighVol
+   TSLA: TrendFollower (confidence: 45.0%) | Vol: 91.8% | Regime: HighVol
    PLTR: MomentumLeader (confidence: 50.0%) | Vol: 97.2% | Trend: 98.5%
    AAPL: TrendFollower (confidence: 20.0%) | Vol: 45.2% | Regime: Trending
 
