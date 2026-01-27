@@ -171,45 +171,118 @@ cd DollarBill
 cargo build --release
 ```
 
-### Configure Stocks
+### Configure Diversified Portfolio
 
-Edit `config/stocks.json` to specify which stocks to analyze and trade:
+Edit `config/stocks.json` to build a comprehensive options portfolio across sectors:
 
 ```json
 {
   "stocks": [
     {
+      "symbol": "SPY",
+      "market": "US",
+      "sector": "ETF",
+      "enabled": true,
+      "weight": 0.15,
+      "notes": "S&P 500 ETF - Core holding, highest liquidity"
+    },
+    {
+      "symbol": "QQQ",
+      "market": "US",
+      "sector": "ETF",
+      "enabled": true,
+      "weight": 0.12,
+      "notes": "Tech ETF - Growth exposure, momentum strategies"
+    },
+    {
       "symbol": "TSLA",
       "market": "US",
-      "sector": "Technology",
+      "sector": "Automotive",
       "enabled": true,
-      "notes": "High volatility, good for options"
+      "weight": 0.08,
+      "notes": "High volatility leader - Premium selling opportunities"
     },
     {
       "symbol": "AAPL",
       "market": "US",
       "sector": "Technology",
-      "enabled": true
+      "enabled": true,
+      "weight": 0.10,
+      "notes": "Large-cap stability - Covered calls, defensive"
     },
     {
-      "symbol": "NVDA",
+      "symbol": "AMD",
       "market": "US",
       "sector": "Technology",
-      "enabled": true
+      "enabled": true,
+      "weight": 0.07,
+      "notes": "High-beta semiconductor - Trend following"
     },
     {
-      "symbol": "MSFT",
+      "symbol": "JPM",
       "market": "US",
-      "sector": "Technology",
-      "enabled": true
+      "sector": "Financials",
+      "enabled": true,
+      "weight": 0.08,
+      "notes": "Banking sector - Rate sensitivity, earnings plays"
+    },
+    {
+      "symbol": "JNJ",
+      "market": "US",
+      "sector": "Healthcare",
+      "enabled": true,
+      "weight": 0.06,
+      "notes": "Defensive healthcare - Low volatility, steady income"
+    },
+    {
+      "symbol": "GLD",
+      "market": "US",
+      "sector": "Commodities",
+      "enabled": true,
+      "weight": 0.05,
+      "notes": "Gold ETF - Inflation hedge, portfolio diversifier"
     }
-  ]
+  ],
+  "portfolio_settings": {
+    "max_sector_concentration": 0.40,
+    "min_options_volume": 1000,
+    "target_portfolio_beta": 1.0,
+    "max_single_position": 0.15,
+    "correlation_limit": 0.70
+  }
 }
 ```
 
+**Strategic Portfolio Allocation:**
+- **40% Core Markets** (SPY, QQQ) - Liquidity and market exposure
+- **30% Growth Tech** (AAPL, TSLA, AMD) - Momentum and volatility capture  
+- **20% Diversification** (JPM, JNJ) - Sector balance and defense
+- **10% Alternatives** (GLD) - Hedging and uncorrelated returns
+
 - Set `"enabled": true` to include a stock in the pipeline
-- Add/remove stocks as needed
-- The pipeline automatically uses enabled stocks
+- Configure `"weight"` for target portfolio allocation  
+- Add/remove stocks based on market conditions
+- The pipeline automatically uses enabled stocks for analysis
+- Portfolio rebalancing alerts when weights drift beyond thresholds
+
+### 🚀 Quick Expansion Guide
+
+**Next Priority Adds:**
+```bash
+# Essential ETFs for any serious options portfolio
+SPY, QQQ, IWM  # The "big three" for liquidity
+GLD, TLT       # Diversification and hedging
+
+# High-beta momentum plays  
+AMD, COIN      # Semiconductor and crypto exposure
+PLTR, ARKK     # Meme stocks and innovation
+```
+
+**Sector Diversification:**
+```bash
+JPM, JNJ, XOM  # Finance, Healthcare, Energy
+DIS, WMT, UNH  # Entertainment, Retail, Healthcare
+```
 
 ### Fetch Market Data
 
@@ -611,12 +684,23 @@ Greeks {
 
 ## 🎯 Use Cases
 
-✅ **Options Trading** - Identify mispriced options  
-✅ **Risk Management** - Monitor portfolio Greeks  
-✅ **Volatility Analysis** - Study IV surfaces and skew  
+### Core Trading Applications
+✅ **Options Trading** - Identify mispriced options across diverse asset classes  
+✅ **Risk Management** - Monitor portfolio Greeks with sector diversification  
+✅ **Volatility Analysis** - Study IV surfaces and skew patterns across markets  
 ✅ **Strategy Backtesting** - Evaluate historical performance with realistic P&L  
-✅ **Market Making** - Fair value pricing  
-✅ **Research** - Model calibration and comparison  
+✅ **Market Making** - Fair value pricing with correlation adjustments  
+✅ **Research** - Model calibration and cross-asset comparison  
+
+### Advanced Portfolio Applications ⭐ NEW
+✅ **Multi-Asset Portfolio Construction** - Build diversified options portfolios across 8+ sectors  
+✅ **Sector Rotation Strategies** - Identify cyclical opportunities and defensive positioning  
+✅ **Cross-Asset Volatility Arbitrage** - Exploit IV discrepancies between correlated assets  
+✅ **Currency Hedging** - Manage international exposure with FX-sensitive positions  
+✅ **Event-Driven Trading** - Capitalize on earnings, splits, and corporate actions  
+✅ **Tail Risk Management** - VIX-based hedging strategies for black swan protection  
+✅ **Correlation Trading** - Exploit mean reversion in asset correlations  
+✅ **Regime-Based Allocation** - Adapt portfolio weights to volatility regimes  
 
 ## 🚦 Current Status
 
@@ -652,13 +736,81 @@ Greeks {
 - [ ] Database persistence (PostgreSQL/SQLite)
 - [ ] Unit and integration tests
 
-## 📊 Data Coverage
+## 📊 Data Coverage & Portfolio Expansion
 
+### 📈 Current Core Holdings
 **Symbols with Live Options Data:**
 - TSLA, AAPL, NVDA, MSFT (JSON options chains available)
 
 **Symbols with Historical Data:**
 - TSLA, AAPL, GOOGL, NVDA, MSFT, AMZN, META (CSV files)
+
+### 🎯 Recommended Portfolio Expansion
+
+#### **Tier 1: High-Volume ETF Leaders** 🔥
+*Essential building blocks for any options portfolio*
+- **SPY** - S&P 500 ETF (Highest options volume globally, tight spreads)
+- **QQQ** - Nasdaq 100 ETF (Tech concentration, high volatility)
+- **IWM** - Russell 2000 ETF (Small-cap exposure, higher premiums)
+- **GLD** - Gold ETF (Safe haven, inflation hedge, negative correlation)
+- **TLT** - 20+ Year Treasury ETF (Interest rate sensitivity, recession hedge)
+
+#### **Tier 2: High-Beta Momentum Plays** ⚡
+*Perfect for volatility strategies and breakout trading*
+- **AMD** - Advanced Micro Devices (High-beta semiconductor leader)
+- **COIN** - Coinbase (Crypto proxy, extreme volatility)
+- **PLTR** - Palantir (Meme stock favorite, retail sentiment)
+- **ARKK** - ARK Innovation ETF (Disruptive tech, high growth)
+- **RBLX** - Roblox (Gaming, metaverse exposure)
+
+#### **Tier 3: Sector Diversification** 🏭
+*Essential for balanced portfolio exposure*
+- **JPM** - JPMorgan Chase (Banking leader, rate sensitivity)
+- **JNJ** - Johnson & Johnson (Defensive healthcare, dividend yield)
+- **XOM** - ExxonMobil (Energy giant, commodity exposure)
+- **DIS** - Disney (Entertainment, reopening beneficiary)
+- **WMT** - Walmart (Consumer staples, recession-resistant)
+- **UNH** - UnitedHealth (Healthcare services, aging demographics)
+
+#### **Tier 4: Specialized Strategies** 🎯
+*Advanced trading opportunities and hedging*
+- **VIX** - Volatility Index (Pure volatility play, tail risk hedging)
+- **UVXY** - VIX Short-Term Futures ETN (Leveraged volatility)
+- **SQQQ** - ProShares UltraPro Short QQQ (3x inverse, market hedging)
+- **FXI** - China Large-Cap ETF (Emerging market exposure)
+- **EWZ** - Brazil ETF (Latin America, commodities)
+
+### 📊 Strategic Portfolio Matrix
+
+| Tier | Allocation | Purpose | Vol Level | Liquidity | Strategy Focus |
+|------|------------|---------|-----------|-----------|---------------|
+| **Core ETFs** | 40% | Market exposure | Medium | Highest | Spreads, covered calls |
+| **Tech Growth** | 30% | Momentum capture | High | High | Breakouts, straddles |
+| **Diversification** | 20% | Risk reduction | Low-Med | Medium | Income, defense |
+| **Specialized** | 10% | Alpha/hedging | Extreme | Variable | Vol arb, tail risk |
+
+### 💡 Implementation Roadmap
+
+**Phase 1: Core Foundation (Week 1)**
+```
+Immediate Adds: SPY, QQQ, GLD
+Focus: High liquidity, diversification
+Strategies: Market neutral spreads, covered calls
+```
+
+**Phase 2: Growth Enhancement (Week 2)**
+```
+Growth Adds: AMD, COIN, JPM
+Focus: Volatility capture, sector exposure
+Strategies: Momentum plays, earnings straddles
+```
+
+**Phase 3: Advanced Strategies (Week 3)**
+```
+Advanced Adds: VIX, UVXY, FXI
+Focus: Hedging, international exposure
+Strategies: Volatility arbitrage, tail risk management
+```
 
 ## 🤝 Contributing
 
