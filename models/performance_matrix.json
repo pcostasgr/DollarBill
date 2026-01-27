@@ -1,15 +1,6 @@
 {
   "matrix": {
-    "NVDA_Short-Term Momentum": {
-      "total_return": 2.43,
-      "sharpe_ratio": 1.7575,
-      "max_drawdown": 0.2575,
-      "win_rate": 68.0,
-      "profit_factor": 5.51,
-      "total_trades": 385,
-      "avg_holding_period": 10.0
-    },
-    "MSFT_Default Strategy": {
+    "QCOM_Default Strategy": {
       "total_return": 1.0,
       "sharpe_ratio": 0.5,
       "max_drawdown": 0.3,
@@ -17,44 +8,8 @@
       "profit_factor": 2.0,
       "total_trades": 100,
       "avg_holding_period": 12.0
-    },
-    "AAPL_Trend Following": {
-      "total_return": 1.85,
-      "sharpe_ratio": 1.4,
-      "max_drawdown": 0.22,
-      "win_rate": 65.0,
-      "profit_factor": 4.2,
-      "total_trades": 245,
-      "avg_holding_period": 15.0
-    },
-    "TSLA_Short-Term Momentum": {
-      "total_return": -0.85,
-      "sharpe_ratio": 0.2,
-      "max_drawdown": 0.8,
-      "win_rate": 42.0,
-      "profit_factor": 1.8,
-      "total_trades": 320,
-      "avg_holding_period": 10.0
     },
     "COIN_Default Strategy": {
-      "total_return": 1.0,
-      "sharpe_ratio": 0.5,
-      "max_drawdown": 0.3,
-      "win_rate": 50.0,
-      "profit_factor": 2.0,
-      "total_trades": 100,
-      "avg_holding_period": 12.0
-    },
-    "PLTR_Default Strategy": {
-      "total_return": 1.0,
-      "sharpe_ratio": 0.5,
-      "max_drawdown": 0.3,
-      "win_rate": 50.0,
-      "profit_factor": 2.0,
-      "total_trades": 100,
-      "avg_holding_period": 12.0
-    },
-    "QCOM_Default Strategy": {
       "total_return": 1.0,
       "sharpe_ratio": 0.5,
       "max_drawdown": 0.3,
@@ -72,13 +27,31 @@
       "total_trades": 100,
       "avg_holding_period": 12.0
     },
-    "NVDA_Long-Term Holding": {
-      "total_return": -1.24,
-      "sharpe_ratio": 0.0,
-      "max_drawdown": 1.33,
-      "win_rate": 38.0,
-      "profit_factor": 2.06,
-      "total_trades": 353,
+    "PLTR_Default Strategy": {
+      "total_return": 1.0,
+      "sharpe_ratio": 0.5,
+      "max_drawdown": 0.3,
+      "win_rate": 50.0,
+      "profit_factor": 2.0,
+      "total_trades": 100,
+      "avg_holding_period": 12.0
+    },
+    "TSLA_Short-Term Momentum": {
+      "total_return": -0.85,
+      "sharpe_ratio": 0.2,
+      "max_drawdown": 0.8,
+      "win_rate": 42.0,
+      "profit_factor": 1.8,
+      "total_trades": 320,
+      "avg_holding_period": 10.0
+    },
+    "NVDA_Short-Term Momentum": {
+      "total_return": 2.43,
+      "sharpe_ratio": 1.7575,
+      "max_drawdown": 0.2575,
+      "win_rate": 68.0,
+      "profit_factor": 5.51,
+      "total_trades": 385,
       "avg_holding_period": 10.0
     },
     "TSLA_Volatility Mean Reversion": {
@@ -89,26 +62,69 @@
       "profit_factor": 3.2,
       "total_trades": 280,
       "avg_holding_period": 10.0
+    },
+    "NVDA_Long-Term Holding": {
+      "total_return": -1.24,
+      "sharpe_ratio": 0.0,
+      "max_drawdown": 1.33,
+      "win_rate": 38.0,
+      "profit_factor": 2.06,
+      "total_trades": 353,
+      "avg_holding_period": 10.0
+    },
+    "AAPL_Trend Following": {
+      "total_return": 1.85,
+      "sharpe_ratio": 1.4,
+      "max_drawdown": 0.22,
+      "win_rate": 65.0,
+      "profit_factor": 4.2,
+      "total_trades": 245,
+      "avg_holding_period": 15.0
+    },
+    "MSFT_Default Strategy": {
+      "total_return": 1.0,
+      "sharpe_ratio": 0.5,
+      "max_drawdown": 0.3,
+      "win_rate": 50.0,
+      "profit_factor": 2.0,
+      "total_trades": 100,
+      "avg_holding_period": 12.0
     }
   },
   "stock_summaries": {
-    "AAPL": {
-      "best_strategy": "Trend Following",
-      "best_sharpe": 1.4,
-      "worst_strategy": "Trend Following",
-      "worst_sharpe": 1.4,
+    "QCOM": {
+      "best_strategy": "Default Strategy",
+      "best_sharpe": 0.5,
+      "worst_strategy": "Default Strategy",
+      "worst_sharpe": 0.5,
       "total_strategies_tested": 1,
       "avg_performance": {
-        "total_return": 1.85,
-        "sharpe_ratio": 1.4,
-        "max_drawdown": 0.22,
-        "win_rate": 65.0,
-        "profit_factor": 4.2,
-        "total_trades": 245,
-        "avg_holding_period": 15.0
+        "total_return": 1.0,
+        "sharpe_ratio": 0.5,
+        "max_drawdown": 0.3,
+        "win_rate": 50.0,
+        "profit_factor": 2.0,
+        "total_trades": 100,
+        "avg_holding_period": 12.0
       }
     },
-    "MSFT": {
+    "PLTR": {
+      "best_strategy": "Default Strategy",
+      "best_sharpe": 0.5,
+      "worst_strategy": "Default Strategy",
+      "worst_sharpe": 0.5,
+      "total_strategies_tested": 1,
+      "avg_performance": {
+        "total_return": 1.0,
+        "sharpe_ratio": 0.5,
+        "max_drawdown": 0.3,
+        "win_rate": 50.0,
+        "profit_factor": 2.0,
+        "total_trades": 100,
+        "avg_holding_period": 12.0
+      }
+    },
+    "AMD": {
       "best_strategy": "Default Strategy",
       "best_sharpe": 0.5,
       "worst_strategy": "Default Strategy",
@@ -140,36 +156,20 @@
         "avg_holding_period": 10.0
       }
     },
-    "QCOM": {
-      "best_strategy": "Default Strategy",
-      "best_sharpe": 0.5,
-      "worst_strategy": "Default Strategy",
-      "worst_sharpe": 0.5,
+    "AAPL": {
+      "best_strategy": "Trend Following",
+      "best_sharpe": 1.4,
+      "worst_strategy": "Trend Following",
+      "worst_sharpe": 1.4,
       "total_strategies_tested": 1,
       "avg_performance": {
-        "total_return": 1.0,
-        "sharpe_ratio": 0.5,
-        "max_drawdown": 0.3,
-        "win_rate": 50.0,
-        "profit_factor": 2.0,
-        "total_trades": 100,
-        "avg_holding_period": 12.0
-      }
-    },
-    "COIN": {
-      "best_strategy": "Default Strategy",
-      "best_sharpe": 0.5,
-      "worst_strategy": "Default Strategy",
-      "worst_sharpe": 0.5,
-      "total_strategies_tested": 1,
-      "avg_performance": {
-        "total_return": 1.0,
-        "sharpe_ratio": 0.5,
-        "max_drawdown": 0.3,
-        "win_rate": 50.0,
-        "profit_factor": 2.0,
-        "total_trades": 100,
-        "avg_holding_period": 12.0
+        "total_return": 1.85,
+        "sharpe_ratio": 1.4,
+        "max_drawdown": 0.22,
+        "win_rate": 65.0,
+        "profit_factor": 4.2,
+        "total_trades": 245,
+        "avg_holding_period": 15.0
       }
     },
     "TSLA": {
@@ -188,7 +188,7 @@
         "avg_holding_period": 10.0
       }
     },
-    "AMD": {
+    "COIN": {
       "best_strategy": "Default Strategy",
       "best_sharpe": 0.5,
       "worst_strategy": "Default Strategy",
@@ -204,7 +204,7 @@
         "avg_holding_period": 12.0
       }
     },
-    "PLTR": {
+    "MSFT": {
       "best_strategy": "Default Strategy",
       "best_sharpe": 0.5,
       "worst_strategy": "Default Strategy",

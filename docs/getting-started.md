@@ -22,8 +22,14 @@ cargo build --release
 
 ### 3. Install Python (Optional, for data fetching)
 ```bash
+# One-command Python setup (Recommended)
+cmd /c ".\scripts\setup_python.bat"
+
+# Or manual installation
 pip install pandas plotly yfinance
 ```
+
+**✅ Python Environment Fixed**: Automated setup resolves all dependency issues!
 
 ### Fast Track: Personality Trading (7 minutes)
 
@@ -57,12 +63,29 @@ Edit `config/stocks.json` to choose your stocks:
 ```
 
 #### Step 2: Fetch Market Data (2 minutes)
+
+**Option 1: Automated Pipeline (Recommended)**
+```bash
+# Complete data collection pipeline - handles everything automatically
+cmd /c ".\scripts\collect_data_fixed.bat"
+```
+
+**Option 2: Manual Python Scripts**
 ```bash
 # Get historical stock data
 python py/fetch_multi_stocks.py
 
 # Get live options data
 python py/fetch_multi_options.py
+```
+
+**Troubleshooting**: If Python issues occur:
+```bash
+# Test and diagnose Python environment
+cmd /c ".\scripts\test_python.bat"
+
+# Fix Python environment from scratch
+cmd /c ".\scripts\setup_python.bat"
 ```
 
 #### Step 3: Run Heston Backtesting (2 minutes)
@@ -74,7 +97,10 @@ This calibrates Heston parameters to live market data and builds the performance
 
 #### Step 4: Train Enhanced Personality Models (3 minutes)
 ```bash
-# See the new enhanced personality system in action
+# Quick enhanced personality analysis (batch script)
+cmd /c ".\scripts\run_enhanced_personality.bat"
+
+# Or run manually with detailed output
 cargo run --example enhanced_personality_analysis
 
 # Run the complete personality pipeline with advanced features

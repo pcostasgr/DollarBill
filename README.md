@@ -286,6 +286,19 @@ DIS, WMT, UNH  # Entertainment, Retail, Healthcare
 
 ### Fetch Market Data
 
+**Option 1: Automated Pipeline (Recommended)**
+```bash
+# Complete data collection and analysis pipeline
+cmd /c ".\scripts\collect_data_fixed.bat"
+
+# Test Python environment first (if issues)
+cmd /c ".\scripts\test_python.bat"
+
+# Setup Python environment from scratch (if needed)
+cmd /c ".\scripts\setup_python.bat"
+```
+
+**Option 2: Manual Python Scripts**
 The Python scripts automatically read enabled stocks from `config/stocks.json`:
 
 ```bash
@@ -295,6 +308,8 @@ python py/fetch_multi_stocks.py
 # Fetch live options chains for enabled stocks
 python py/fetch_multi_options.py
 ```
+
+**✅ Python Environment Fixed**: All environment issues resolved with automated setup scripts.
 
 ### Run Analysis
 
@@ -338,6 +353,11 @@ This saves significant time compared to `cargo run --release` which compiles eac
 ### PowerShell Quick Scripts
 
 ```powershell
+# Python Environment Management ⭐ NEW
+cmd /c ".\scripts\setup_python.bat"        # Setup Python environment from scratch
+cmd /c ".\scripts\test_python.bat"         # Test and diagnose Python issues
+cmd /c ".\scripts\collect_data_fixed.bat"  # Complete data collection pipeline
+
 # Build release binaries once for fast execution
 .\scripts\build_release.ps1
 
@@ -545,6 +565,10 @@ DollarBill/
 │   ├── get_tesla_quotes.py             # Tesla quotes fetcher
 │   └── get_tesla_stock_csv.py          # Tesla CSV downloader
 ├── scripts/
+│   ├── setup_python.bat                # Batch: Python environment setup ⭐ NEW
+│   ├── test_python.bat                 # Batch: Python environment testing ⭐ NEW
+│   ├── collect_data_fixed.bat          # Batch: Complete data collection pipeline ⭐ NEW
+│   ├── run_enhanced_personality.bat    # Batch: Enhanced personality analysis ⭐ NEW
 │   ├── run_multi_signals.ps1           # PowerShell: Run signals
 │   ├── run_vol_surface.ps1             # PowerShell: Vol pipeline
 │   ├── run_signals.ps1                 # PowerShell: Single symbol signals
@@ -716,6 +740,8 @@ Greeks {
 - ✅ **JSON Configuration System** - Centralized stock management
 - ✅ **Paper Trading Integration** - Alpaca API client
 - ✅ **Parallel Processing** - Multi-symbol pipeline
+- ✅ **Python Environment Automation** - Automated setup, testing, and data collection scripts ⭐ FIXED
+- ✅ **Complete Data Pipeline** - Fresh market data with 653+ live options and 10+ stock analysis ⭐ NEW
 - ✅ **Advanced Personality-Driven Trading** - Multi-dimensional stock behavior analysis with market regime detection and sector normalization ⭐ ENHANCED
 - ✅ **Intelligent Strategy Matching** - Confidence-based strategy selection with 20-70% confidence scoring ⭐ ENHANCED
 - ✅ **PersonalityBasedBot** - Live trading with advanced personality-optimized strategies ⭐ NEW
