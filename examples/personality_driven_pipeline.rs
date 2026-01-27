@@ -4,12 +4,10 @@
 
 use std::collections::HashMap;
 use std::error::Error;
-use dollarbill::analysis::stock_classifier::{StockClassifier, StockPersonality};
+use dollarbill::analysis::stock_classifier::StockClassifier;
 use dollarbill::analysis::performance_matrix::{PerformanceMatrix, PerformanceMetrics};
 use dollarbill::strategies::matching::StrategyMatcher;
-use dollarbill::backtesting::{BacktestEngine, BacktestConfig};
-use dollarbill::market_data::csv_loader::load_csv_closes;
-use dollarbill::market_data::symbols::load_enabled_stocks;
+use dollarbill::market_data::symbols::load_stocks_with_sectors;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🚀 DollarBill - Personality-Driven Trading Pipeline");
@@ -24,23 +22,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Step 1: Load stock universe from config
     println!("📋 Step 1: Loading Stock Universe");
     println!("----------------------------------");
-    let enabled_stocks = load_enabled_stocks()?;
+    let stocks = load_stocks_with_sectors()?;
 
-    println!("✅ Loaded {} enabled stocks: {:?}", enabled_stocks.len(), enabled_stocks);
+    println!("✅ Loaded {} enabled stocks with sectors", stocks.len());
     println!("");
 
-    // Step 2: Analyze stock personalities
+    // Step 2: Analyze stock personalities using enhanced classifier
     println!("🧠 Step 2: Analyzing Stock Personalities");
     println!("----------------------------------------");
     let mut classifier = StockClassifier::new();
     let mut stock_profiles = HashMap::new();
 
-    for symbol in &enabled_stocks {
-        // Load historical data for analysis
-        match load_csv_closes(&format!("data/{}_five_year.csv", symbol.to_lowercase())) {
-            Ok(historical_data) => {
-                // Analyze personality from historical data
-                let profile = analyze_stock_personality(&mut classifier, symbol, &historical_data)?;
+    for (symbol, sector) in &stocks {
+        // Use enhanced personality classification with sector information
+        match classifier.classify_stock_enhanced(symbol, sector) {
+            Ok(profile) => {
                 stock_profiles.insert(symbol.clone(), profile.clone());
 
                 println!("  {}: {:?} - Recommended: {:?}",
@@ -49,14 +45,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     profile.best_strategies.first().unwrap_or(&"Unknown".to_string())
                 );
             }
-            Err(_) => {
-                println!("  {}: ⚠️  No historical data available", symbol);
-                // Use default personality analysis
+            Err(e) => {
+                println!("  ❌ Error analyzing {}: {}", symbol, e);
+                // Fallback to legacy for this stock
                 let profile = classifier.classify_stock(symbol, 0.5, 0.5, 0.5, 0.5);
-                stock_profiles.insert(symbol.clone(), profile);
+                stock_profiles.insert(symbol.clone(), profile.clone());
+                println!("  {} (fallback): {:?} - Recommended: {:?}",
+                    symbol,
+                    profile.personality,
+                    profile.best_strategies.first().unwrap_or(&"Unknown".to_string())
+                );
             }
         }
     }
+
+    let enabled_stocks: Vec<String> = stocks.iter().map(|(s, _): &(String, String)| s.clone()).collect();
     println!("");
 
     // Step 3: Build performance matrix from historical backtests
@@ -234,95 +237,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Analyze stock personality from historical data
-fn analyze_stock_personality(
-    classifier: &mut StockClassifier,
-    symbol: &str,
-    historical_data: &[dollarbill::market_data::csv_loader::HistoricalDay]
-) -> Result<dollarbill::analysis::stock_classifier::StockProfile, Box<dyn Error>> {
+// Legacy analyze_stock_personality function removed - now using enhanced classifier directly
 
-    if historical_data.len() < 100 {
-        return Err(format!("Insufficient historical data for {}", symbol).into());
-    }
-
-    // Calculate personality metrics from historical data
-    let returns: Vec<f64> = historical_data.windows(2)
-        .map(|window| (window[1].close - window[0].close) / window[0].close)
-        .collect();
-
-    // Volatility: Standard deviation of returns
-    let volatility = returns.iter().map(|r| r * r).sum::<f64>() / returns.len() as f64;
-    let volatility_score = (volatility * 100.0).min(1.0); // Normalize to 0-1
-
-    // Trend strength: Linear regression slope
-    let trend_strength = calculate_trend_strength(&returns);
-
-    // Mean reversion tendency: Autocorrelation analysis
-    let mean_reversion = calculate_mean_reversion_tendency(&returns);
-
-    // Momentum sensitivity: Recent vs. long-term performance
-    let momentum = calculate_momentum_sensitivity(&returns);
-
-    // Classify stock based on calculated metrics
-    let profile = classifier.classify_stock(
-        symbol,
-        volatility_score,
-        trend_strength,
-        mean_reversion,
-        momentum
-    );
-
-    Ok(profile)
-}
-
-/// Calculate trend strength using linear regression
-fn calculate_trend_strength(returns: &[f64]) -> f64 {
-    let n = returns.len() as f64;
-    let x_sum: f64 = (0..returns.len()).map(|i| i as f64).sum();
-    let y_sum: f64 = returns.iter().sum();
-    let xy_sum: f64 = returns.iter().enumerate()
-        .map(|(i, &r)| i as f64 * r).sum();
-    let x_squared_sum: f64 = (0..returns.len())
-        .map(|i| (i * i) as f64).sum();
-
-    let slope = (n * xy_sum - x_sum * y_sum) / (n * x_squared_sum - x_sum * x_sum);
-    let r_squared = slope.abs().min(1.0); // Normalize to 0-1
-
-    r_squared
-}
-
-/// Calculate mean reversion tendency using autocorrelation
-fn calculate_mean_reversion_tendency(returns: &[f64]) -> f64 {
-    if returns.len() < 20 {
-        return 0.5;
-    }
-
-    // Calculate autocorrelation at lag 1
-    let mean = returns.iter().sum::<f64>() / returns.len() as f64;
-    let variance = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / returns.len() as f64;
-
-    let autocorr: f64 = returns.windows(2)
-        .map(|w| (w[0] - mean) * (w[1] - mean))
-        .sum::<f64>() / (returns.len() - 1) as f64 / variance;
-
-    // Convert to 0-1 scale (negative autocorrelation = mean reversion)
-    (1.0 - autocorr.abs()).max(0.0).min(1.0)
-}
-
-/// Calculate momentum sensitivity
-fn calculate_momentum_sensitivity(returns: &[f64]) -> f64 {
-    if returns.len() < 60 {
-        return 0.5;
-    }
-
-    let short_term = returns[returns.len() - 20..].iter().sum::<f64>() / 20.0;
-    let long_term = returns[returns.len() - 60..].iter().sum::<f64>() / 60.0;
-
-    // Momentum score based on recent vs. long-term performance
-    let momentum_score = (short_term - long_term + 0.02).max(0.0).min(1.0); // Add small bias
-
-    momentum_score
-}
+// Legacy helper functions removed - enhanced classifier handles all calculations internally
 
 /// Load baseline performance data (fallback when no real data exists)
 fn load_baseline_performance_data(

@@ -33,6 +33,19 @@ pub fn load_enabled_stocks() -> Result<Vec<String>, Box<dyn std::error::Error>> 
         .collect())
 }
 
+/// Load enabled stocks with sectors from config/stocks.json
+pub fn load_stocks_with_sectors() -> Result<Vec<(String, String)>, Box<dyn std::error::Error>> {
+    let config_path = "config/stocks.json";
+    let content = fs::read_to_string(config_path)?;
+    let config: StockConfig = serde_json::from_str(&content)?;
+    
+    Ok(config.stocks
+        .into_iter()
+        .filter(|stock| stock.enabled)
+        .map(|stock| (stock.symbol, stock.sector))
+        .collect())
+}
+
 /// Load all stocks (enabled and disabled) from config/stocks.json
 pub fn load_all_stocks() -> Result<Vec<Stock>, Box<dyn std::error::Error>> {
     let config_path = "config/stocks.json";

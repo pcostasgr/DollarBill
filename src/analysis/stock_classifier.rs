@@ -115,7 +115,8 @@ impl StockClassifier {
         Ok(profile)
     }
 
-    /// Legacy classification method (for backward compatibility)
+    /// Legacy classification method (DEPRECATED - use classify_stock_enhanced instead)
+    #[deprecated(since = "0.2.0", note = "Use classify_stock_enhanced for better accuracy")]
     pub fn classify_stock(
         &mut self,
         symbol: &str,
