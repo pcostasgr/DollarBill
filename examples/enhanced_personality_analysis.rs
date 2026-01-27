@@ -13,19 +13,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create enhanced classifier
     let mut classifier = StockClassifier::new();
     
-    // Define our stocks with sectors
-    let stocks = vec![
-        ("AAPL", "Technology"),
-        ("TSLA", "Automotive"), 
-        ("MSFT", "Technology"),
-        ("NVDA", "Semiconductors"),
-        ("GOOGL", "Technology"),
-        ("META", "Technology"),
-        ("AMD", "Semiconductors"),
-        ("PLTR", "Software"),
-        ("QCOM", "Semiconductors"),
-        ("COIN", "Financial Services"),
-    ];
+    // Load stocks from configuration file
+    let config_content = std::fs::read_to_string("config/stocks.json")?;
+    let config: serde_json::Value = serde_json::from_str(&config_content)?;
+    
+    let mut stocks = Vec::new();
+    if let Some(stock_array) = config["stocks"].as_array() {
+        for stock in stock_array {
+            if let (Some(symbol), Some(sector), Some(enabled)) = (
+                stock["symbol"].as_str(),
+                stock["sector"].as_str(), 
+                stock["enabled"].as_bool()
+            ) {
+                if enabled {
+                    stocks.push((symbol, sector));
+                }
+            }
+        }
+    }
     
     println!("🧠 Analyzing {} stocks with advanced multi-dimensional features...", stocks.len());
     println!();

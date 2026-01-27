@@ -3,7 +3,7 @@
     {
       "symbol": "TSLA",
       "market": "US",
-      "sector": "Technology",
+      "sector": "Automotive",
       "enabled": true,
       "notes": "High volatility, good for options"
     },
@@ -16,7 +16,7 @@
     {
       "symbol": "NVDA",
       "market": "US",
-      "sector": "Technology",
+      "sector": "Semiconductors",
       "enabled": true
     },
     {
@@ -28,30 +28,94 @@
     {
       "symbol": "AMD",
       "market": "US",
-      "sector": "Technology",
+      "sector": "Semiconductors",
       "enabled": true,
       "notes": "High volatility semiconductor stock, similar to NVDA"
     },
     {
       "symbol": "PLTR",
       "market": "US",
-      "sector": "Technology",
+      "sector": "Software",
       "enabled": true,
       "notes": "High volatility defense tech stock"
     },
     {
       "symbol": "COIN",
       "market": "US",
-      "sector": "Financial",
+      "sector": "Financial Services",
       "enabled": true,
       "notes": "High volatility cryptocurrency exchange"
     },
     {
       "symbol": "QCOM",
       "market": "US",
-      "sector": "Technology",
+      "sector": "Semiconductors",
       "enabled": true,
       "notes": "High volatility semiconductor stock"
+    },
+    {
+      "symbol": "SPY",
+      "market": "US",
+      "sector": "ETF",
+      "enabled": true,
+      "weight": 0.20,
+      "notes": "S&P 500 ETF - Highest options liquidity globally, core holding"
+    },
+    {
+      "symbol": "QQQ",
+      "market": "US",
+      "sector": "ETF",
+      "enabled": true,
+      "weight": 0.15,
+      "notes": "Nasdaq 100 ETF - Tech concentration, high volatility, momentum strategies"
+    },
+    {
+      "symbol": "GLD",
+      "market": "US",
+      "sector": "ETF",
+      "enabled": true,
+      "weight": 0.08,
+      "notes": "Gold ETF - Safe haven, inflation hedge, negative correlation to stocks"
+    },
+    {
+      "symbol": "IWM",
+      "market": "US",
+      "sector": "ETF",
+      "enabled": true,
+      "weight": 0.10,
+      "notes": "Russell 2000 Small-cap ETF - Higher premiums, small-cap exposure"
+    },
+    {
+      "symbol": "TLT",
+      "market": "US",
+      "sector": "ETF",
+      "enabled": true,
+      "weight": 0.07,
+      "notes": "20+ Year Treasury ETF - Interest rate sensitivity, recession hedge"
+    },
+    {
+      "symbol": "GOOGL",
+      "market": "US",
+      "sector": "Technology",
+      "enabled": true,
+      "weight": 0.08,
+      "notes": "Alphabet/Google - Search and cloud dominance, AI leader"
+    },
+    {
+      "symbol": "META",
+      "market": "US",
+      "sector": "Technology",
+      "enabled": true,
+      "weight": 0.06,
+      "notes": "Meta Platforms - Social media and VR/AR, metaverse exposure"
+    },
+    {
+      "symbol": "AMZN",
+      "market": "US",
+      "sector": "Technology",
+      "enabled": false,
+      "weight": 0.05,
+      "notes": "Amazon - E-commerce and AWS cloud leader (disabled - high price)"
     },
     {
       "symbol": "SAP.DE",
