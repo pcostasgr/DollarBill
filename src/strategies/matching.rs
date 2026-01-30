@@ -125,8 +125,29 @@ impl StrategyMatcher {
             "Cash-Secured Puts" => {
                 Ok(Box::new(CashSecuredPuts::new()))
             }
+            // Map personality-recommended strategies to existing implementations
+            "Medium-Term RSI" | "Moving Average Crossover" | "Trend Following" => {
+                // RSI and moving averages are momentum-based, map to momentum strategy
+                Ok(Box::new(MomentumStrategy::new()))
+            }
+            "Iron Butterfly" | "Calendar Spreads" | "Volatility Harvesting" => {
+                // Volatility strategies map to mean reversion
+                Ok(Box::new(VolMeanReversion::new()))
+            }
+            "Covered Calls" | "Cash-Secured Put" => {
+                // Income strategies map to cash-secured puts
+                Ok(Box::new(CashSecuredPuts::new()))
+            }
+            "Breakout Trading" | "Short-Term Scalping" | "High-Frequency Trading" => {
+                // Fast trading strategies map to momentum
+                Ok(Box::new(MomentumStrategy::new()))
+            }
             // Add more strategies as they become available
-            _ => Err(format!("Unknown strategy: {}", strategy_name).into())
+            _ => {
+                // Default fallback to momentum strategy for unknown strategies
+                println!("⚠️  Unknown strategy '{}', defaulting to Momentum Strategy", strategy_name);
+                Ok(Box::new(MomentumStrategy::new()))
+            }
         }
     }
 

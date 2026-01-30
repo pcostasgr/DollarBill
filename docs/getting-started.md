@@ -261,6 +261,15 @@ cargo run --example personality_based_bot -- --dry-run
 - **"No Alpaca credentials"**: Set environment variables correctly
 - **"No historical data"**: Run data fetching scripts first
 - **"Strategy not found"**: Re-run personality pipeline to train models
+- **"No latest trade available"**: Normal during market closures or low-volume periods - bot uses backup price sources (quotes, daily bars)
+- **"No price data available anywhere"**: Severe data issue - check symbol validity, market status, or try different symbols
+  - May indicate invalid/delisted stocks, trading halts, or API connectivity issues
+  - Bot tries: latest trade → quote mid-price → daily close → previous close → historical data
+- **"Unknown strategy" warnings**: Normal - personality analysis recommends strategies that are mapped to existing implementations
+  - "Medium-Term RSI" → Momentum Strategy
+  - "Moving Average Crossover" → Momentum Strategy  
+  - "Iron Butterfly" → Volatility Mean Reversion
+  - "Covered Calls" → Cash-Secured Puts
 - **"Poor performance/unrealistic results"**: Run Heston backtesting first - `.\scripts\run_heston_backtest.ps1`
 - **Low confidence signals**: Normal with enhanced system - bot only trades high-confidence opportunities (>40%)
 - **"File structure mismatch"**: Enhanced personality system requires latest code structure

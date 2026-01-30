@@ -130,11 +130,46 @@ impl PersonalityBasedBot {
                 }
             };
 
-            let current_price = match snapshot.latest_trade.as_ref().map(|t| t.price) {
-                Some(price) => price,
-                None => {
-                    println!("   {} | ⚠️  No latest trade available, skipping", symbol);
-                    continue;
+            // Debug: Log what data sources are available
+            let trade_avail = snapshot.latest_trade.is_some();
+            let quote_avail = snapshot.latest_quote.is_some();
+            let daily_avail = snapshot.daily_bar.is_some();
+            let prev_avail = snapshot.prev_daily_bar.is_some();
+            
+            if !trade_avail && !quote_avail && !daily_avail && !prev_avail {
+                println!("   {} | 🔍 DEBUG: No data in snapshot (trade:{} quote:{} daily:{} prev:{})", 
+                         symbol, trade_avail, quote_avail, daily_avail, prev_avail);
+            }
+
+            // Try multiple price sources in order of preference
+            let current_price = if let Some(trade) = &snapshot.latest_trade {
+                trade.price
+            } else if let Some(quote) = &snapshot.latest_quote {
+                // Use mid-price from quote if no trade available
+                (quote.bid + quote.ask) / 2.0
+            } else if let Some(daily_bar) = &snapshot.daily_bar {
+                // Use daily close price as fallback
+                daily_bar.c
+            } else if let Some(prev_bar) = &snapshot.prev_daily_bar {
+                // Use previous day's close as last resort
+                println!("   {} | ⚠️  Using previous day's close (no current data)", symbol);
+                prev_bar.c
+            } else {
+                // Last resort: Try to get recent historical data
+                let end_time = chrono::Utc::now();
+                let start_time = end_time - chrono::Duration::days(5); // Look back 5 days
+                let start_str = start_time.format("%Y-%m-%d").to_string();
+                let end_str = end_time.format("%Y-%m-%d").to_string();
+                
+                match client.get_bars(symbol, "1Day", &start_str, Some(&end_str), Some(5)).await {
+                    Ok(bars) if !bars.is_empty() => {
+                        println!("   {} | ⚠️  Using historical data (snapshot unavailable)", symbol);
+                        bars.last().unwrap().c // Use most recent close price
+                    }
+                    _ => {
+                        println!("   {} | ❌ No price data available anywhere, skipping", symbol);
+                        continue;
+                    }
                 }
             };
 
