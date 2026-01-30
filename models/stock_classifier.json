@@ -1,68 +1,11 @@
 {
-  "COIN": {
-    "symbol": "COIN",
-    "personality": "StableAccumulator",
-    "avg_volatility": 0.38822525597269625,
-    "trend_strength": 0.95013645669758,
-    "mean_reversion_tendency": 0.17298294473302905,
-    "momentum_sensitivity": 0.6203317327289697,
-    "best_strategies": [
-      "Cash-Secured Puts",
-      "Covered Calls",
-      "Collar Strategy"
-    ],
-    "worst_strategies": [
-      "Long Calls",
-      "Speculative Strategies",
-      "Iron Butterfly"
-    ],
-    "strategy_performance": {}
-  },
-  "AAPL": {
-    "symbol": "AAPL",
-    "personality": "MomentumLeader",
-    "avg_volatility": 0.856326530612245,
-    "trend_strength": 0.5919445462438878,
-    "mean_reversion_tendency": 0.1969462011108484,
-    "momentum_sensitivity": 0.566487230707309,
-    "best_strategies": [
-      "Short-Term Momentum",
-      "Breakout Trading",
-      "Trend Following"
-    ],
-    "worst_strategies": [
-      "Long-Term Holding",
-      "Mean Reversion",
-      "Cash-Secured Puts"
-    ],
-    "strategy_performance": {}
-  },
-  "GOOGL": {
-    "symbol": "GOOGL",
-    "personality": "MomentumLeader",
-    "avg_volatility": 0.763265306122449,
-    "trend_strength": 0.24030824559371472,
-    "mean_reversion_tendency": 0.11338038285402897,
-    "momentum_sensitivity": 0.4424684945402704,
-    "best_strategies": [
-      "Short-Term Momentum",
-      "Breakout Trading",
-      "Trend Following"
-    ],
-    "worst_strategies": [
-      "Long-Term Holding",
-      "Mean Reversion",
-      "Cash-Secured Puts"
-    ],
-    "strategy_performance": {}
-  },
-  "QCOM": {
-    "symbol": "QCOM",
+  "NVDA": {
+    "symbol": "NVDA",
     "personality": "TrendFollower",
-    "avg_volatility": 0.7836734693877551,
-    "trend_strength": 0.7514606222875346,
-    "mean_reversion_tendency": 0.2270532058014333,
-    "momentum_sensitivity": 0.588728639510805,
+    "avg_volatility": 0.6408163265306123,
+    "trend_strength": 0.34956467225386534,
+    "mean_reversion_tendency": 0.14990965369145542,
+    "momentum_sensitivity": 0.5403034855224274,
     "best_strategies": [
       "Medium-Term RSI",
       "Moving Average Crossover",
@@ -75,13 +18,51 @@
     ],
     "strategy_performance": {}
   },
+  "TSLA": {
+    "symbol": "TSLA",
+    "personality": "TrendFollower",
+    "avg_volatility": 0.9012244897959184,
+    "trend_strength": 0.7985848279750134,
+    "mean_reversion_tendency": 0.15146850880583787,
+    "momentum_sensitivity": 0.5607652152966129,
+    "best_strategies": [
+      "Medium-Term RSI",
+      "Moving Average Crossover",
+      "Covered Calls"
+    ],
+    "worst_strategies": [
+      "Short-Term Scalping",
+      "High-Frequency Trading",
+      "Iron Butterfly"
+    ],
+    "strategy_performance": {}
+  },
+  "AAPL": {
+    "symbol": "AAPL",
+    "personality": "MomentumLeader",
+    "avg_volatility": 0.8497959183673469,
+    "trend_strength": 0.5172419906336045,
+    "mean_reversion_tendency": 0.1943088877681151,
+    "momentum_sensitivity": 0.5440098655829925,
+    "best_strategies": [
+      "Short-Term Momentum",
+      "Breakout Trading",
+      "Trend Following"
+    ],
+    "worst_strategies": [
+      "Long-Term Holding",
+      "Mean Reversion",
+      "Cash-Secured Puts"
+    ],
+    "strategy_performance": {}
+  },
   "PLTR": {
     "symbol": "PLTR",
     "personality": "MomentumLeader",
-    "avg_volatility": 0.963265306122449,
-    "trend_strength": 0.9804078502691767,
+    "avg_volatility": 0.9444897959183673,
+    "trend_strength": 0.9621946931244574,
     "mean_reversion_tendency": 0.23922499054689086,
-    "momentum_sensitivity": 0.7752928885438037,
+    "momentum_sensitivity": 0.6643892353250879,
     "best_strategies": [
       "Short-Term Momentum",
       "Breakout Trading",
@@ -96,30 +77,11 @@
   },
   "GLD": {
     "symbol": "GLD",
-    "personality": "MomentumLeader",
-    "avg_volatility": 0.7648979591836734,
-    "trend_strength": 0.6113577723955176,
-    "mean_reversion_tendency": 0.2608726631311201,
-    "momentum_sensitivity": 0.5258431454074138,
-    "best_strategies": [
-      "Short-Term Momentum",
-      "Breakout Trading",
-      "Trend Following"
-    ],
-    "worst_strategies": [
-      "Long-Term Holding",
-      "Mean Reversion",
-      "Cash-Secured Puts"
-    ],
-    "strategy_performance": {}
-  },
-  "MSFT": {
-    "symbol": "MSFT",
     "personality": "TrendFollower",
-    "avg_volatility": 0.6236734693877551,
-    "trend_strength": 0.3548005920597358,
-    "mean_reversion_tendency": 0.19891605396183273,
-    "momentum_sensitivity": 0.4814944792817658,
+    "avg_volatility": 0.7420408163265306,
+    "trend_strength": 0.5779461534526494,
+    "mean_reversion_tendency": 0.26841236516942385,
+    "momentum_sensitivity": 0.5298753409763515,
     "best_strategies": [
       "Medium-Term RSI",
       "Moving Average Crossover",
@@ -135,10 +97,10 @@
   "QQQ": {
     "symbol": "QQQ",
     "personality": "MomentumLeader",
-    "avg_volatility": 0.8106122448979591,
-    "trend_strength": 0.4465819338165132,
-    "mean_reversion_tendency": 0.25958209480733296,
-    "momentum_sensitivity": 0.49792899709815575,
+    "avg_volatility": 0.7689795918367347,
+    "trend_strength": 0.42919064179642513,
+    "mean_reversion_tendency": 0.251440936337895,
+    "momentum_sensitivity": 0.5081557896168883,
     "best_strategies": [
       "Short-Term Momentum",
       "Breakout Trading",
@@ -151,13 +113,32 @@
     ],
     "strategy_performance": {}
   },
-  "META": {
-    "symbol": "META",
+  "IWM": {
+    "symbol": "IWM",
+    "personality": "MomentumLeader",
+    "avg_volatility": 0.8179591836734694,
+    "trend_strength": 0.4778327520092092,
+    "mean_reversion_tendency": 0.4029432336222658,
+    "momentum_sensitivity": 0.43761189182398313,
+    "best_strategies": [
+      "Short-Term Momentum",
+      "Breakout Trading",
+      "Trend Following"
+    ],
+    "worst_strategies": [
+      "Long-Term Holding",
+      "Mean Reversion",
+      "Cash-Secured Puts"
+    ],
+    "strategy_performance": {}
+  },
+  "GOOGL": {
+    "symbol": "GOOGL",
     "personality": "TrendFollower",
-    "avg_volatility": 0.4220408163265306,
-    "trend_strength": 0.17632168256658093,
-    "mean_reversion_tendency": 0.17749719167688402,
-    "momentum_sensitivity": 0.5120408059055078,
+    "avg_volatility": 0.673469387755102,
+    "trend_strength": 0.26129384483153817,
+    "mean_reversion_tendency": 0.11268478619924949,
+    "momentum_sensitivity": 0.45404952543108046,
     "best_strategies": [
       "Medium-Term RSI",
       "Moving Average Crossover",
@@ -170,13 +151,32 @@
     ],
     "strategy_performance": {}
   },
+  "QCOM": {
+    "symbol": "QCOM",
+    "personality": "MomentumLeader",
+    "avg_volatility": 0.7673469387755102,
+    "trend_strength": 0.6955536916202081,
+    "mean_reversion_tendency": 0.2300408524394777,
+    "momentum_sensitivity": 0.6041097209259685,
+    "best_strategies": [
+      "Short-Term Momentum",
+      "Breakout Trading",
+      "Trend Following"
+    ],
+    "worst_strategies": [
+      "Long-Term Holding",
+      "Mean Reversion",
+      "Cash-Secured Puts"
+    ],
+    "strategy_performance": {}
+  },
   "TLT": {
     "symbol": "TLT",
     "personality": "StableAccumulator",
-    "avg_volatility": 0.5722448979591837,
-    "trend_strength": 0.6969968531705482,
-    "mean_reversion_tendency": 0.20927913680347915,
-    "momentum_sensitivity": 0.5843751426257401,
+    "avg_volatility": 0.5926530612244898,
+    "trend_strength": 0.6575352144315578,
+    "mean_reversion_tendency": 0.23934092862317868,
+    "momentum_sensitivity": 0.5839418225486115,
     "best_strategies": [
       "Cash-Secured Puts",
       "Covered Calls",
@@ -189,13 +189,13 @@
     ],
     "strategy_performance": {}
   },
-  "TSLA": {
-    "symbol": "TSLA",
+  "AMD": {
+    "symbol": "AMD",
     "personality": "TrendFollower",
-    "avg_volatility": 0.9183673469387755,
-    "trend_strength": 0.8559340571606542,
-    "mean_reversion_tendency": 0.14101380976118683,
-    "momentum_sensitivity": 0.5359485959569217,
+    "avg_volatility": 0.4204081632653061,
+    "trend_strength": 0.7332807962123926,
+    "mean_reversion_tendency": 0.15145674229002087,
+    "momentum_sensitivity": 0.5535842602119158,
     "best_strategies": [
       "Medium-Term RSI",
       "Moving Average Crossover",
@@ -208,32 +208,32 @@
     ],
     "strategy_performance": {}
   },
-  "IWM": {
-    "symbol": "IWM",
-    "personality": "MomentumLeader",
-    "avg_volatility": 0.8383673469387755,
-    "trend_strength": 0.45109851730975237,
-    "mean_reversion_tendency": 0.4113376407609149,
-    "momentum_sensitivity": 0.4395708455466602,
+  "MSFT": {
+    "symbol": "MSFT",
+    "personality": "TrendFollower",
+    "avg_volatility": 0.47183673469387755,
+    "trend_strength": 0.3269166591303979,
+    "mean_reversion_tendency": 0.19542158438375096,
+    "momentum_sensitivity": 0.5125535562722138,
     "best_strategies": [
-      "Short-Term Momentum",
-      "Breakout Trading",
-      "Trend Following"
+      "Medium-Term RSI",
+      "Moving Average Crossover",
+      "Covered Calls"
     ],
     "worst_strategies": [
-      "Long-Term Holding",
-      "Mean Reversion",
-      "Cash-Secured Puts"
+      "Short-Term Scalping",
+      "High-Frequency Trading",
+      "Iron Butterfly"
     ],
     "strategy_performance": {}
   },
   "SPY": {
     "symbol": "SPY",
     "personality": "TrendFollower",
-    "avg_volatility": 0.7257142857142858,
-    "trend_strength": 0.3187718929278105,
-    "mean_reversion_tendency": 0.13613242214929838,
-    "momentum_sensitivity": 0.4639456531937719,
+    "avg_volatility": 0.6302040816326531,
+    "trend_strength": 0.31731466798780705,
+    "mean_reversion_tendency": 0.13654932511717902,
+    "momentum_sensitivity": 0.47141308627194883,
     "best_strategies": [
       "Medium-Term RSI",
       "Moving Average Crossover",
@@ -246,32 +246,32 @@
     ],
     "strategy_performance": {}
   },
-  "NVDA": {
-    "symbol": "NVDA",
-    "personality": "TrendFollower",
-    "avg_volatility": 0.6448979591836734,
-    "trend_strength": 0.37278783688789063,
-    "mean_reversion_tendency": 0.14521181807216696,
-    "momentum_sensitivity": 0.5284177463628922,
+  "COIN": {
+    "symbol": "COIN",
+    "personality": "StableAccumulator",
+    "avg_volatility": 0.38978723404255317,
+    "trend_strength": 0.95013645669758,
+    "mean_reversion_tendency": 0.17298294473302905,
+    "momentum_sensitivity": 0.6203317327289697,
     "best_strategies": [
-      "Medium-Term RSI",
-      "Moving Average Crossover",
-      "Covered Calls"
+      "Cash-Secured Puts",
+      "Covered Calls",
+      "Collar Strategy"
     ],
     "worst_strategies": [
-      "Short-Term Scalping",
-      "High-Frequency Trading",
+      "Long Calls",
+      "Speculative Strategies",
       "Iron Butterfly"
     ],
     "strategy_performance": {}
   },
-  "AMD": {
-    "symbol": "AMD",
+  "META": {
+    "symbol": "META",
     "personality": "TrendFollower",
-    "avg_volatility": 0.46775510204081633,
-    "trend_strength": 0.7666394977501818,
-    "mean_reversion_tendency": 0.15421401068428459,
-    "momentum_sensitivity": 0.5831332489491237,
+    "avg_volatility": 0.4048979591836735,
+    "trend_strength": 0.16816976874834855,
+    "mean_reversion_tendency": 0.17843257753165867,
+    "momentum_sensitivity": 0.49432031543499877,
     "best_strategies": [
       "Medium-Term RSI",
       "Moving Average Crossover",
