@@ -23,6 +23,9 @@ Welcome to the DollarBill documentation! This folder contains comprehensive guid
 ### Development
 - **[Implementation Summary](implementation-summary.md)** - Technical details, architecture, and implementation notes
 - **[Parameter Atlas](parameter_atlas.md)** - Complete reference for all configuration parameters
+- **[Testing Strategies](testing-strategies.md)** - Comprehensive test plan and test categories
+- **[Test Implementation Summary](test-implementation-summary.md)** - Test results and coverage (97 tests, 100% passing) ⭐ NEW
+- **[Failed Tests Analysis](failed-tests-analysis.md)** - Resolved test issues and mathematical explanations ⭐ NEW
 
 ## 📂 Project Structure
 
