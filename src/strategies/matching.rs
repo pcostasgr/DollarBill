@@ -262,6 +262,7 @@ impl StrategyMatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::stock_classifier::StockPersonality;
 
     #[test]
     fn test_strategy_matching() {
