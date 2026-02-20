@@ -1,0 +1,16 @@
+{
+  "trading": {
+    "position_size_shares": 10,
+    "max_positions": 5,
+    "risk_management": {
+      "stop_loss_pct": 0.15,
+      "take_profit_pct": 0.30,
+      "max_daily_trades": 10
+    },
+    "min_confidence": 0.30
+  },
+  "execution": {
+    "continuous_mode_interval_minutes": 60,
+    "data_lookback_days": 252
+  }
+}
