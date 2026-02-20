@@ -78,8 +78,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("📋 Loaded signals configuration from config/signals_config.json");
 
     // 1. Load live options
-    let json_file = "tsla_options_live.json";
-    let symbol = json_file.split('_').next().unwrap_or("UNKNOWN").to_uppercase();
+    let json_file = "data/tsla_options_live.json";
+    let symbol = json_file.split('/').last().unwrap_or("tsla_options_live.json").split('_').next().unwrap_or("UNKNOWN").to_uppercase();
     let (spot, all_options) = load_options_from_json(json_file)?;
     let liquid_options = filter_liquid_options(all_options, config.analysis.liquidity_filters.min_volume, config.analysis.liquidity_filters.max_spread_pct);
     println!();
