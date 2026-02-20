@@ -92,3 +92,7 @@ pub mod cash_secured_puts;
 pub mod ensemble;
 pub mod factory;
 pub mod matching;
+pub mod mean_reversion;
+pub mod breakout;
+pub mod vol_arbitrage;
+pub mod tests;

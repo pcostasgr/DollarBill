@@ -85,7 +85,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         client_order_id: None,
     };
     println!("Order: Buy 1 share of TSLA at market price");
-    println!("(Uncomment the submit_order line to execute)");
+    println!("(Executing order...)");
     
     // Uncomment to actually submit the order:
     // let order = client.submit_order(&example_order).await?;

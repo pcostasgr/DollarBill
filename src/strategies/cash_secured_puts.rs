@@ -73,7 +73,7 @@ impl TradingStrategy for CashSecuredPuts {
                 action: SignalAction::CashSecuredPut { strike_pct: self.strike_otm_pct },
                 strike: strike,
                 expiry_days: 30,
-                confidence: (iv_edge / 0.1).min(1.0), // Scale confidence by edge
+                confidence: ((iv_edge / 0.05) * 0.7 + 0.3).min(1.0), // Scale confidence: 4% edge = 86% confidence
                 edge: estimated_premium,
                 strategy_name: self.name().to_string(),
             });

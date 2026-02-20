@@ -103,6 +103,51 @@ impl PersonalityBasedBot {
             }
         }
 
+        // 🔥 ACTIVE POSITION MANAGEMENT - Check stop-losses and take-profits
+        println!("\n🔍 Checking Position Management (Stop-Loss/Take-Profit)...");
+        for pos in &positions {
+            let symbol = &pos.symbol;
+            let entry_price: f64 = pos.avg_entry_price.parse().unwrap_or(0.0);
+            let current_price: f64 = pos.current_price.parse().unwrap_or(entry_price);
+            let unrealized_pl: f64 = pos.unrealized_pl.parse().unwrap_or(0.0);
+            let pl_pct = if entry_price > 0.0 { 
+                (current_price - entry_price) / entry_price 
+            } else { 
+                0.0 
+            };
+
+            let stop_loss_threshold = -self.config.trading.risk_management.stop_loss_pct;
+            let take_profit_threshold = self.config.trading.risk_management.take_profit_pct;
+
+            if pl_pct <= stop_loss_threshold {
+                // STOP LOSS TRIGGERED
+                print!("   🛑 STOP LOSS: {} | Entry: ${:.2} → Current: ${:.2} | Loss: {:.1}% | ",
+                    symbol, entry_price, current_price, pl_pct * 100.0);
+                
+                match client.close_position(symbol).await {
+                    Ok(_) => println!("✅ Position closed"),
+                    Err(e) => println!("❌ Failed to close: {}", e),
+                }
+                continue; // Skip further analysis for this symbol
+            } else if pl_pct >= take_profit_threshold {
+                // TAKE PROFIT TRIGGERED
+                print!("   💰 TAKE PROFIT: {} | Entry: ${:.2} → Current: ${:.2} | Gain: {:.1}% | ",
+                    symbol, entry_price, current_price, pl_pct * 100.0);
+                
+                match client.close_position(symbol).await {
+                    Ok(_) => println!("✅ Position closed"),
+                    Err(e) => println!("❌ Failed to close: {}", e),
+                }
+                continue; // Skip further analysis for this symbol
+            } else {
+                // Position within acceptable range
+                println!("   ✅ {} | P&L: {:.1}% (Target: +{:.0}% / Stop: -{:.0}%)", 
+                    symbol, pl_pct * 100.0, 
+                    take_profit_threshold * 100.0,
+                    stop_loss_threshold.abs() * 100.0);
+            }
+        }
+
         println!("\n🧠 Analyzing with Personality-Driven Strategies...\n");
 
         // Analyze each symbol using personality-matched strategies
@@ -217,6 +262,9 @@ impl PersonalityBasedBot {
 
             // Process signals - convert options signals to stock actions
             for signal in signals {
+                println!("   {} | 🔍 SIGNAL: {} - Confidence: {:.1}% (min: {:.1}%)", 
+                    symbol, signal.strategy_name, signal.confidence * 100.0, self.config.trading.min_confidence * 100.0);
+                
                 // Convert options signals to stock buy/sell actions
                 let stock_action = match signal.action {
                     SignalAction::BuyStraddle | SignalAction::IronButterfly { .. } => {
@@ -234,8 +282,13 @@ impl PersonalityBasedBot {
                         }
                     }
                     SignalAction::CashSecuredPut { .. } => {
-                        // Cash-secured puts are neutral/bullish - don't trade stock
-                        None
+                        if signal.confidence >= self.config.trading.min_confidence {
+                            println!("💰 EXECUTING CASH-SECURED PUT: {} - Strike: {:.1}% OTM",
+                                symbol, 5.0);
+                            Some("CASH_PUT")
+                        } else {
+                            None
+                        }
                     }
                     SignalAction::NoAction => None,
                 };
@@ -266,11 +319,79 @@ impl PersonalityBasedBot {
                                 Err(e) => println!(" ❌ {}", e),
                             }
                         }
+                        ("CASH_PUT", false) => {
+                            // Execute cash-secured put strategy
+                            if let SignalAction::CashSecuredPut { strike_pct } = &signal.action {
+                                let strike_price = current_price * (1.0 - strike_pct);
+                                let estimated_premium = current_price * 0.02; // Estimate 2% premium
+                                print!("🔥 CASH-SECURED PUT → Strike: ${:.2} ({:.1}% OTM), Est. Premium: ${:.2}...", 
+                                    strike_price, strike_pct * 100.0, estimated_premium);
+                                
+                                // For cash-secured puts, we sell a put option and reserve cash
+                                // Since Alpaca may not support options directly in paper trading,
+                                // we'll simulate by buying the underlying stock as equivalent exposure
+                                let cash_required = strike_price * 100.0; // 100 shares per contract
+                                let shares_equiv = (cash_required / current_price).floor() as i32;
+                                
+                                if shares_equiv > 0 {
+                                    let order = OrderRequest {
+                                        symbol: symbol.clone(),
+                                        qty: shares_equiv as f64,
+                                        side: OrderSide::Buy,
+                                        r#type: OrderType::Market,
+                                        time_in_force: TimeInForce::Day,
+                                        limit_price: None,
+                                        stop_price: None,
+                                        extended_hours: None,
+                                        client_order_id: Some(format!("CSP_{}_{}", symbol, chrono::Utc::now().timestamp())),
+                                    };
+
+                                    match client.submit_order(&order).await {
+                                        Ok(order_result) => {
+                                            println!(" ✅ Order ID: {} | {} shares @ ${:.2}", 
+                                                order_result.id, shares_equiv, current_price);
+                                            println!("   📊 Simulating Cash-Secured Put: ${:.2} est. premium ({:.1}% return)", 
+                                                estimated_premium, (estimated_premium / strike_price) * 100.0);
+                                        },
+                                        Err(e) => println!(" ❌ {}", e),
+                                    }
+                                } else {
+                                    println!(" ❌ Insufficient capital for trade");
+                                }
+                            }
+                        }
                         ("SELL", true) => {
                             print!("🔴 SELL → Closing position...");
                             match client.close_position(symbol).await {
                                 Ok(_) => println!(" ✅"),
                                 Err(e) => println!(" ❌ {}", e),
+                            }
+                        }
+                        ("SELL", false) => {
+                            println!("⚪ SELL SIGNAL but no position to close");
+                        }
+                        ("BUY", true) => {
+                            // Add to existing position if signal is strong enough (>20% confidence)
+                            if signal.confidence > 0.20 {
+                                print!("🟢 ADD TO POSITION → +{} shares...", self.config.trading.position_size_shares);
+                                let order = OrderRequest {
+                                    symbol: symbol.clone(),
+                                    qty: self.config.trading.position_size_shares as f64,
+                                    side: OrderSide::Buy,
+                                    r#type: OrderType::Market,
+                                    time_in_force: TimeInForce::Day,
+                                    limit_price: None,
+                                    stop_price: None,
+                                    extended_hours: None,
+                                    client_order_id: None,
+                                };
+
+                                match client.submit_order(&order).await {
+                                    Ok(_) => println!(" ✅"),
+                                    Err(e) => println!(" ❌ {}", e),
+                                }
+                            } else {
+                                println!("⏭️  SKIP (have position) - Buy signal not strong enough ({:.1}% < 20%)", signal.confidence * 100.0);
                             }
                         }
                         _ => {

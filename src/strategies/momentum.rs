@@ -31,7 +31,7 @@ impl MomentumStrategy {
     /// Calculate momentum as percentage change over period
     fn calculate_momentum(&self, symbol: &str) -> f64 {
         // In a real implementation, this would fetch historical prices
-        // For demo purposes, we'll simulate momentum calculation
+        // For demo purposes, we'll simulate momentum calculation with more volatility
         use std::time::{SystemTime, UNIX_EPOCH};
 
         let now = SystemTime::now()
@@ -39,10 +39,17 @@ impl MomentumStrategy {
             .unwrap()
             .as_secs() as f64;
 
-        // Simulate momentum based on symbol hash and time
+        // Create more dynamic momentum that can be negative
         let symbol_hash = symbol.chars().map(|c| c as u32).sum::<u32>() as f64;
-        let momentum = ((symbol_hash * 0.001 + now * 0.0001).sin() + 1.0) * 0.1;
-
+        
+        // Use multiple frequency components to create realistic oscillation
+        let fast_cycle = (now * 0.001).sin();  // Fast oscillation
+        let slow_cycle = (now * 0.0001).sin(); // Slow trend
+        let symbol_bias = ((symbol_hash * 0.01).sin() - 0.5) * 0.3; // Per-symbol bias
+        
+        // Combine cycles to create momentum between -0.3 and +0.3
+        let momentum = fast_cycle * 0.15 + slow_cycle * 0.1 + symbol_bias;
+        
         momentum
     }
 }

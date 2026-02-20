@@ -1,5 +1,5 @@
 // src/strategies/factory.rs
-use super::{TradingStrategy, StrategyRegistry, vol_mean_reversion::VolMeanReversion, momentum::MomentumStrategy, cash_secured_puts::CashSecuredPuts};
+use super::{TradingStrategy, StrategyRegistry, vol_mean_reversion::VolMeanReversion, momentum::MomentumStrategy, cash_secured_puts::CashSecuredPuts, mean_reversion::MeanReversionStrategy, breakout::BreakoutStrategy, vol_arbitrage::VolatilityArbitrageStrategy};
 use serde_json::Value;
 use std::error::Error;
 use std::fs;
@@ -29,6 +29,27 @@ impl StrategyFactory {
                 let strike_otm = config["strike_otm_pct"].as_f64().unwrap_or(0.05);
                 let iv_edge = config["min_iv_edge"].as_f64().unwrap_or(0.03);
                 Ok(Box::new(CashSecuredPuts::with_config(premium_thresh, strike_otm, iv_edge)))
+            },
+            "mean_reversion" => {
+                let lookback = config["lookback_period"].as_u64().unwrap_or(20) as usize;
+                let oversold = config["oversold_threshold"].as_f64().unwrap_or(-2.0);
+                let overbought = config["overbought_threshold"].as_f64().unwrap_or(2.0);
+                let min_vol = config["min_volatility"].as_f64().unwrap_or(0.15);
+                Ok(Box::new(MeanReversionStrategy::with_config(lookback, oversold, overbought, min_vol)))
+            },
+            "breakout" => {
+                let period = config["consolidation_period"].as_u64().unwrap_or(15) as usize;
+                let threshold = config["breakout_threshold"].as_f64().unwrap_or(0.03);
+                let volume = config["volume_threshold"].as_f64().unwrap_or(1.5);
+                let range = config["min_range"].as_f64().unwrap_or(0.02);
+                Ok(Box::new(BreakoutStrategy::with_config(period, threshold, volume, range)))
+            },
+            "vol_arbitrage" => {
+                let iv_thresh = config["iv_threshold"].as_f64().unwrap_or(0.02);
+                let lookback = config["lookback_days"].as_u64().unwrap_or(30) as usize;
+                let edge = config["min_edge"].as_f64().unwrap_or(0.015);
+                let dte = config["max_dte"].as_i64().unwrap_or(45) as i32;
+                Ok(Box::new(VolatilityArbitrageStrategy::with_config(iv_thresh, lookback, edge, dte)))
             },
             _ => Err(format!("Unknown strategy type: {}", strategy_type).into())
         }
@@ -62,6 +83,9 @@ impl StrategyFactory {
         registry.register(Box::new(VolMeanReversion::new()));
         registry.register(Box::new(MomentumStrategy::new()));
         registry.register(Box::new(CashSecuredPuts::new()));
+        registry.register(Box::new(MeanReversionStrategy::new()));
+        registry.register(Box::new(BreakoutStrategy::new()));
+        registry.register(Box::new(VolatilityArbitrageStrategy::new()));
         registry
     }
 }

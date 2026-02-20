@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use crate::analysis::stock_classifier::StockClassifier;
 use crate::analysis::performance_matrix::{PerformanceMatrix, StrategyRecommendations};
-use crate::strategies::{TradingStrategy, momentum::MomentumStrategy, vol_mean_reversion::VolMeanReversion, cash_secured_puts::CashSecuredPuts};
+use crate::strategies::{TradingStrategy, momentum::MomentumStrategy, vol_mean_reversion::VolMeanReversion, cash_secured_puts::CashSecuredPuts, mean_reversion::MeanReversionStrategy, breakout::BreakoutStrategy, vol_arbitrage::VolatilityArbitrageStrategy};
 
 /// Main strategy matching engine
 pub struct StrategyMatcher {
@@ -125,28 +125,45 @@ impl StrategyMatcher {
             "Cash-Secured Puts" => {
                 Ok(Box::new(CashSecuredPuts::new()))
             }
+            "Mean Reversion" | "Statistical Arbitrage" => {
+                Ok(Box::new(MeanReversionStrategy::new()))
+            }
+            "Breakout Trading" | "Breakout" => {
+                Ok(Box::new(BreakoutStrategy::new()))
+            }
+            "Vol Arbitrage" | "Volatility Arbitrage" | "Volatility Trading" => {
+                Ok(Box::new(VolatilityArbitrageStrategy::new()))
+            }
             // Map personality-recommended strategies to existing implementations
             "Medium-Term RSI" | "Moving Average Crossover" | "Trend Following" => {
                 // RSI and moving averages are momentum-based, map to momentum strategy
                 Ok(Box::new(MomentumStrategy::new()))
             }
             "Iron Butterfly" | "Calendar Spreads" | "Volatility Harvesting" => {
-                // Volatility strategies map to mean reversion
-                Ok(Box::new(VolMeanReversion::new()))
+                // Volatility strategies map to vol arbitrage for more sophisticated approach
+                Ok(Box::new(VolatilityArbitrageStrategy::new()))
             }
             "Covered Calls" | "Cash-Secured Put" => {
                 // Income strategies map to cash-secured puts
                 Ok(Box::new(CashSecuredPuts::new()))
             }
-            "Breakout Trading" | "Short-Term Scalping" | "High-Frequency Trading" => {
-                // Fast trading strategies map to momentum
-                Ok(Box::new(MomentumStrategy::new()))
+            "Short-Term Scalping" | "High-Frequency Trading" => {
+                // Fast trading strategies map to breakout
+                Ok(Box::new(BreakoutStrategy::new()))
             }
             // Add more strategies as they become available
             _ => {
-                // Default fallback to momentum strategy for unknown strategies
-                println!("⚠️  Unknown strategy '{}', defaulting to Momentum Strategy", strategy_name);
-                Ok(Box::new(MomentumStrategy::new()))
+                // Default fallback with variety rotation
+                let strategies = ["Momentum", "Mean Reversion", "Breakout", "Vol Arbitrage"];
+                let hash = strategy_name.chars().map(|c| c as usize).sum::<usize>();
+                let idx = hash % strategies.len();
+                
+                match strategies[idx] {
+                    "Mean Reversion" => Ok(Box::new(MeanReversionStrategy::new())),
+                    "Breakout" => Ok(Box::new(BreakoutStrategy::new())),
+                    "Vol Arbitrage" => Ok(Box::new(VolatilityArbitrageStrategy::new())),
+                    _ => Ok(Box::new(MomentumStrategy::new())),
+                }
             }
         }
     }
