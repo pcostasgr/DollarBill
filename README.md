@@ -353,9 +353,6 @@ python py/fetch_multi_options.py
 # Analyze stock personalities
 cargo run --release --example enhanced_personality_analysis
 
-# Test strategy deployment patterns (manual, config-driven, ensemble)
-cargo run --release --example strategy_deployment
-
 # Generate trade signals with Greeks and portfolio risk
 cargo run --release --example multi_symbol_signals
 
@@ -535,9 +532,7 @@ Total Commissions:$        4.00
 ```
 DollarBill/
 ├── config/
-│   ├── stocks.json                    # Central stock configuration
-│   ├── personality_config.json        # Personality analysis settings
-│   └── ml_config.json                 # ML model configuration (not integrated)
+│   └── stocks.json                    # Central stock configuration
 ├── src/
 │   ├── lib.rs                          # Library exports
 │   ├── main.rs                         # Main entry point
@@ -590,9 +585,7 @@ DollarBill/
 │   ├── test_keys.rs                    # Alpaca API key testing
 │   ├── personality_driven_pipeline.rs  # Personality-optimized trading
 │   ├── personality_based_bot.rs        # Personality-based live trading
-│   ├── enhanced_personality_analysis.rs # Multi-dimensional personality analysis
-│   ├── ml_enhanced_signals.rs          # ML-enhanced signal generation (experimental)
-│   └── cali_enhanced_signals.rs        # California-specific signals (experimental)
+│   └── enhanced_personality_analysis.rs # Multi-dimensional personality analysis
 ├── py/
 │   ├── fetch_multi_stocks.py           # Stock data fetcher (config-driven)
 │   ├── fetch_multi_options.py          # Options chain fetcher (config-driven)
@@ -620,7 +613,7 @@ DollarBill/
 │   ├── advanced-features.md            # Advanced features guide
 │   ├── alpaca-guide.md                 # Alpaca API integration
 │   ├── backtesting-guide.md            # Backtesting methodology
-│   ├── enhanced-personality-implementation.md # Personality system documentation
+│   ├── personality-guide-experimental.md # Personality system (experimental)
 │   ├── implementation-summary.md       # Technical implementation details
 │   └── trading-guide.md                # Trading strategies guide
 ├── images/                             # Generated charts and visualizations
