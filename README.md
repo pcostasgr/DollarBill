@@ -292,8 +292,8 @@ Built through AI pair programming with Claude Sonnet 4.5
 # Rust (2021 edition or later)
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# Python (optional, for data fetching, 3D visualization, and ML integration)
-pip install pandas plotly yfinance scikit-learn tensorflow
+# Python (optional, for data fetching and visualization)
+pip install pandas plotly yfinance
 ```
 
 ### Installation
@@ -304,135 +304,40 @@ cd DollarBill
 cargo build --release
 ```
 
-### Configure Diversified Portfolio
+### Configure Stocks
 
-Edit `config/stocks.json` to build a comprehensive options portfolio across sectors:
+Edit `config/stocks.json` to select symbols for analysis:
 
 ```json
 {
   "stocks": [
     {
-      "symbol": "SPY",
-      "market": "US",
-      "sector": "ETF",
-      "enabled": true,
-      "weight": 0.15,
-      "notes": "S&P 500 ETF - Core holding, highest liquidity"
-    },
-    {
-      "symbol": "QQQ",
-      "market": "US",
-      "sector": "ETF",
-      "enabled": true,
-      "weight": 0.12,
-      "notes": "Tech ETF - Growth exposure, momentum strategies"
-    },
-    {
       "symbol": "TSLA",
       "market": "US",
       "sector": "Automotive",
-      "enabled": true,
-      "weight": 0.08,
-      "notes": "High volatility leader - Premium selling opportunities"
+      "enabled": true
     },
     {
       "symbol": "AAPL",
       "market": "US",
       "sector": "Technology",
-      "enabled": true,
-      "weight": 0.10,
-      "notes": "Large-cap stability - Covered calls, defensive"
+      "enabled": true
     },
     {
-      "symbol": "AMD",
+      "symbol": "NVDA",
       "market": "US",
       "sector": "Technology",
-      "enabled": true,
-      "weight": 0.07,
-      "notes": "High-beta semiconductor - Trend following"
-    },
-    {
-      "symbol": "JPM",
-      "market": "US",
-      "sector": "Financials",
-      "enabled": true,
-      "weight": 0.08,
-      "notes": "Banking sector - Rate sensitivity, earnings plays"
-    },
-    {
-      "symbol": "JNJ",
-      "market": "US",
-      "sector": "Healthcare",
-      "enabled": true,
-      "weight": 0.06,
-      "notes": "Defensive healthcare - Low volatility, steady income"
-    },
-    {
-      "symbol": "GLD",
-      "market": "US",
-      "sector": "Commodities",
-      "enabled": true,
-      "weight": 0.05,
-      "notes": "Gold ETF - Inflation hedge, portfolio diversifier"
+      "enabled": true
     }
-  ],
-  "portfolio_settings": {
-    "max_sector_concentration": 0.40,
-    "min_options_volume": 1000,
-    "target_portfolio_beta": 1.0,
-    "max_single_position": 0.15,
-    "correlation_limit": 0.70
-  }
+  ]
 }
 ```
 
-**Strategic Portfolio Allocation:**
-- **40% Core Markets** (SPY, QQQ) - Liquidity and market exposure
-- **30% Growth Tech** (AAPL, TSLA, AMD) - Momentum and volatility capture  
-- **20% Diversification** (JPM, JNJ) - Sector balance and defense
-- **10% Alternatives** (GLD) - Hedging and uncorrelated returns
-
-- Set `"enabled": true` to include a stock in the pipeline
-- Configure `"weight"` for target portfolio allocation  
-- Add/remove stocks based on market conditions
-- The pipeline automatically uses enabled stocks for analysis
-- Portfolio rebalancing alerts when weights drift beyond thresholds
-
-### 🚀 Quick Expansion Guide
-
-**Next Priority Adds:**
-```bash
-# Essential ETFs for any serious options portfolio
-SPY, QQQ, IWM  # The "big three" for liquidity
-GLD, TLT       # Diversification and hedging
-
-# High-beta momentum plays  
-AMD, COIN      # Semiconductor and crypto exposure
-PLTR, ARKK     # Meme stocks and innovation
-```
-
-**Sector Diversification:**
-```bash
-JPM, JNJ, XOM  # Finance, Healthcare, Energy
-DIS, WMT, UNH  # Entertainment, Retail, Healthcare
-```
+- Set `"enabled": true` to include a stock in analysis
+- Add/remove stocks as needed
+- The pipeline automatically processes enabled stocks
 
 ### Fetch Market Data
-
-**Option 1: Automated Pipeline (Recommended)**
-```bash
-# Complete data collection and analysis pipeline
-cmd /c ".\scripts\collect_data_fixed.bat"
-
-# Test Python environment first (if issues)
-cmd /c ".\scripts\test_python.bat"
-
-# Setup Python environment from scratch (if needed)
-cmd /c ".\scripts\setup_python.bat"
-```
-
-**Option 2: Manual Python Scripts**
-The Python scripts automatically read enabled stocks from `config/stocks.json`:
 
 ```bash
 # Fetch historical stock data for enabled stocks
@@ -442,12 +347,10 @@ python py/fetch_multi_stocks.py
 python py/fetch_multi_options.py
 ```
 
-**✅ Python Environment Fixed**: All environment issues resolved with automated setup scripts.
-
 ### Run Analysis
 
 ```bash
-# Test advanced multi-dimensional personality analysis ⭐ ENHANCED
+# Analyze stock personalities
 cargo run --release --example enhanced_personality_analysis
 
 # Test strategy deployment patterns (manual, config-driven, ensemble)
@@ -462,7 +365,7 @@ cargo run --release --example vol_surface_analysis
 # Backtest strategies on historical data
 cargo run --release --example backtest_strategy
 
-# Advanced Heston stochastic volatility backtesting ⭐ NEW
+# Backtest with Heston model
 cargo run --release --example backtest_heston
 
 # Create 3D volatility visualizations (requires Python)
@@ -486,10 +389,10 @@ This saves significant time compared to `cargo run --release` which compiles eac
 ### PowerShell Quick Scripts
 
 ```powershell
-# Python Environment Management ⭐ NEW
-cmd /c ".\scripts\setup_python.bat"        # Setup Python environment from scratch
-cmd /c ".\scripts\test_python.bat"         # Test and diagnose Python issues
-cmd /c ".\scripts\collect_data_fixed.bat"  # Complete data collection pipeline
+# Python Environment Management
+cmd /c ".\scripts\setup_python.bat"        # Setup Python environment
+cmd /c ".\scripts\test_python.bat"         # Test Python setup
+cmd /c ".\scripts\collect_data_fixed.bat"  # Fetch market data
 
 # Build release binaries once for fast execution
 .\scripts\build_release.ps1
@@ -517,20 +420,20 @@ cargo run --example personality_based_bot -- --continuous 5  # Continuous tradin
 
 ## 📊 Example Output
 
-### Enhanced Personality Analysis Output
+### Personality Analysis Output
 
 ```
-🚀 DollarBill Enhanced Stock Personality Analysis
+🚀 DollarBill Stock Personality Analysis
 ===============================================
 
-🧠 Advanced Classification for TSLA:
+🧠 Classification for TSLA:
    📊 Personality: VolatileBreaker (confidence: 30.0%)
    📈 Vol Percentile: 91.7% | Trend: 45.2% | Reversion: 62.1%
    🎯 Market Regime: HighVol | Beta: 1.23 | Sector: Automotive
    🎯 Best strategies: ["Iron Butterfly", "Volatility Harvesting", "Short Straddles"]
    ❌ Avoid strategies: ["Directional Bets", "Long Options", "Momentum Strategies"]
 
-🧠 Advanced Classification for PLTR:
+🧠 Classification for PLTR:
    📊 Personality: MomentumLeader (confidence: 50.0%)
    📈 Vol Percentile: 97.2% | Trend: 98.5% | Reversion: 23.4%
    🎯 Market Regime: HighVol | Beta: 2.14 | Sector: Software
@@ -633,8 +536,8 @@ Total Commissions:$        4.00
 DollarBill/
 ├── config/
 │   ├── stocks.json                    # Central stock configuration
-│   ├── personality_config.json        # Personality analysis settings ⭐ NEW
-│   ├── ml_config.json                 # ML model configuration ⭐ NEW
+│   ├── personality_config.json        # Personality analysis settings
+│   └── ml_config.json                 # ML model configuration (not integrated)
 ├── src/
 │   ├── lib.rs                          # Library exports
 │   ├── main.rs                         # Main entry point
@@ -655,9 +558,9 @@ DollarBill/
 │   ├── strategies/                     # Trading strategies
 │   │   ├── vol_mean_reversion.rs       # Vol trading strategy
 │   │   └── mod.rs                      # Strategy trait
-   ├── analysis/                       # Advanced analytics system ⭐ ENHANCED
-   │   ├── stock_classifier.rs         # Enhanced personality analysis with legacy compatibility
-   │   ├── advanced_classifier.rs      # Multi-dimensional feature analysis engine ⭐ NEW
+   ├── analysis/                       # Stock analysis system
+   │   ├── stock_classifier.rs         # Personality classification
+   │   ├── advanced_classifier.rs      # Multi-dimensional feature analysis (rarely used)
    │   ├── performance_matrix.rs       # Strategy performance tracking
    │   └── mod.rs                      # Analysis exports
 │   ├── backtesting/                    # Backtesting framework
@@ -678,18 +581,18 @@ DollarBill/
 │   ├── multi_symbol_signals.rs         # Main: Signals + Greeks + Risk
 │   ├── vol_surface_analysis.rs         # Volatility surface extraction
 │   ├── backtest_strategy.rs            # Black-Scholes strategy backtesting
-│   ├── backtest_heston.rs              # Heston stochastic volatility backtesting ⭐ NEW
+│   ├── backtest_heston.rs              # Heston model backtesting
 │   ├── calibrate_live_options.rs       # Heston calibration demo
 │   ├── trade_signals.rs                # Basic signal generation
 │   ├── alpaca_demo.rs                  # Alpaca API demo
 │   ├── paper_trading.rs                # Paper trading with momentum
 │   ├── trading_bot.rs                  # Continuous trading bot
 │   ├── test_keys.rs                    # Alpaca API key testing
-│   ├── personality_driven_pipeline.rs  # Personality-optimized trading ⭐ NEW
-│   ├── personality_based_bot.rs        # Personality-based live trading ⭐ NEW
-│   ├── enhanced_personality_analysis.rs # Advanced multi-dimensional personality analysis ⭐ ENHANCED
-│   ├── ml_enhanced_signals.rs          # ML-enhanced signal generation ⭐ NEW
-│   └── cali_enhanced_signals.rs        # California-specific signals ⭐ NEW
+│   ├── personality_driven_pipeline.rs  # Personality-optimized trading
+│   ├── personality_based_bot.rs        # Personality-based live trading
+│   ├── enhanced_personality_analysis.rs # Multi-dimensional personality analysis
+│   ├── ml_enhanced_signals.rs          # ML-enhanced signal generation (experimental)
+│   └── cali_enhanced_signals.rs        # California-specific signals (experimental)
 ├── py/
 │   ├── fetch_multi_stocks.py           # Stock data fetcher (config-driven)
 │   ├── fetch_multi_options.py          # Options chain fetcher (config-driven)
@@ -698,17 +601,17 @@ DollarBill/
 │   ├── get_tesla_quotes.py             # Tesla quotes fetcher
 │   └── get_tesla_stock_csv.py          # Tesla CSV downloader
 ├── scripts/
-│   ├── setup_python.bat                # Batch: Python environment setup ⭐ NEW
-│   ├── test_python.bat                 # Batch: Python environment testing ⭐ NEW
-│   ├── collect_data_fixed.bat          # Batch: Complete data collection pipeline ⭐ NEW
-│   ├── run_enhanced_personality.bat    # Batch: Enhanced personality analysis ⭐ NEW
+│   ├── setup_python.bat                # Batch: Python environment setup
+│   ├── test_python.bat                 # Batch: Python environment testing
+│   ├── collect_data_fixed.bat          # Batch: Data collection pipeline
+│   ├── run_enhanced_personality.bat    # Batch: Personality analysis
 │   ├── run_multi_signals.ps1           # PowerShell: Run signals
 │   ├── run_vol_surface.ps1             # PowerShell: Vol pipeline
 │   ├── run_signals.ps1                 # PowerShell: Single symbol signals
 │   ├── run_backtest.ps1                # PowerShell: Black-Scholes backtesting
-│   ├── run_heston_backtest.ps1         # PowerShell: Heston backtesting ⭐ NEW
+│   ├── run_heston_backtest.ps1         # PowerShell: Heston backtesting
 │   ├── run_paper_trading.ps1           # PowerShell: Paper trading
-│   ├── run_full_pipeline.ps1           # PowerShell: Complete pipeline ⭐ NEW
+│   ├── run_full_pipeline.ps1           # PowerShell: Complete pipeline
 │   ├── run_multi_signals.bat           # Batch: Run signals
 │   ├── run_signals.bat                 # Batch: Single symbol signals
 │   ├── run_paper_trading.sh            # Shell: Paper trading
@@ -717,7 +620,7 @@ DollarBill/
 │   ├── advanced-features.md            # Advanced features guide
 │   ├── alpaca-guide.md                 # Alpaca API integration
 │   ├── backtesting-guide.md            # Backtesting methodology
-│   ├── enhanced-personality-implementation.md # Enhanced personality system implementation ⭐ NEW
+│   ├── enhanced-personality-implementation.md # Personality system documentation
 │   ├── implementation-summary.md       # Technical implementation details
 │   └── trading-guide.md                # Trading strategies guide
 ├── images/                             # Generated charts and visualizations
@@ -841,23 +744,23 @@ Greeks {
 
 ## 🎯 Use Cases
 
-### Core Trading Applications
-✅ **Options Trading** - Identify mispriced options across diverse asset classes  
-✅ **Risk Management** - Monitor portfolio Greeks with sector diversification  
-✅ **Volatility Analysis** - Study IV surfaces and skew patterns across markets  
-✅ **Strategy Backtesting** - Evaluate historical performance with realistic P&L  
-✅ **Market Making** - Fair value pricing with correlation adjustments  
-✅ **Research** - Model calibration and cross-asset comparison  
+### Core Trading Applications (Implemented)
+✅ **Options Pricing** - Black-Scholes and Heston models for fair value calculation
+✅ **Greeks Analysis** - Delta, Gamma, Vega, Theta, Rho risk metrics  
+✅ **Volatility Analysis** - IV extraction and volatility surface visualization
+✅ **Strategy Backtesting** - Historical P&L evaluation for long options strategies
+✅ **Mispricing Detection** - Model vs market comparison for edge identification
+✅ **Model Calibration** - Heston parameter fitting to market options data
 
-### Advanced Portfolio Applications ⭐ NEW
-✅ **Multi-Asset Portfolio Construction** - Build diversified options portfolios across 8+ sectors  
-✅ **Sector Rotation Strategies** - Identify cyclical opportunities and defensive positioning  
-✅ **Cross-Asset Volatility Arbitrage** - Exploit IV discrepancies between correlated assets  
-✅ **Currency Hedging** - Manage international exposure with FX-sensitive positions  
-✅ **Event-Driven Trading** - Capitalize on earnings, splits, and corporate actions  
-✅ **Tail Risk Management** - VIX-based hedging strategies for black swan protection  
-✅ **Correlation Trading** - Exploit mean reversion in asset correlations  
-✅ **Regime-Based Allocation** - Adapt portfolio weights to volatility regimes  
+### Future Enhancements (Not Yet Implemented)
+⚠️ **Multi-Asset Portfolio Construction** - Diversified portfolio optimization (planned)
+⚠️ **Sector Rotation** - Cyclical opportunity identification (planned)
+⚠️ **Cross-Asset Arbitrage** - Exploit discrepancies between correlated assets (planned)
+⚠️ **Currency Hedging** - International exposure management (planned)
+⚠️ **Event-Driven Trading** - Earnings/corporate action strategies (planned)
+⚠️ **Tail Risk Management** - VIX-based hedging (planned)
+⚠️ **Correlation Trading** - Mean reversion strategies (planned)
+⚠️ **Regime-Based Allocation** - Dynamic portfolio weighting (planned)  
 
 ## 🚦 Current Status
 
@@ -877,15 +780,10 @@ Greeks {
 **Build Status:**
 - ✅ Compiles successfully (with warnings)
 - ✅ Optimized `--release` builds available  
-- ✅ **97 comprehensive unit tests** (100% passing)
-  - 17 backtesting tests (engine, configuration, position handling)
-  - 14 Nelder-Mead optimization tests
-  - 8 market data tests (CSV loading, validation)
-  - 15 Black-Scholes pricing tests  
-  - 19 Greeks calculation tests
-  - 22 Heston model tests (pricing, volatility smile)
-  - 17 strategy tests (volatility mean reversion)
-- ✅ **Integration test suite** for multi-strategy scenarios
+- ✅ **133 comprehensive tests** (100% passing)
+  - 105 integration tests
+  - 26 unit tests
+  - 2 doc tests
 - ✅ **Mathematical accuracy verified** across all core models
 
 ## 🔮 Potential Enhancements
@@ -900,81 +798,17 @@ Greeks {
 - [ ] Database persistence (PostgreSQL/SQLite)
 - [ ] Unit and integration tests
 
-## 📊 Data Coverage & Portfolio Expansion
+## 📊 Data Coverage
 
-### 📈 Current Core Holdings
-**Symbols with Live Options Data:**
-- TSLA, AAPL, NVDA, MSFT (JSON options chains available)
+**Supported Symbols:**
+- Any stock or ETF available on Yahoo Finance can be added to `config/stocks.json`
+- Examples included: TSLA, AAPL, NVDA, MSFT, GOOGL, AMZN, META
+- Options chains work best for high-liquidity symbols (SPY, QQQ, etc.)
 
-**Symbols with Historical Data:**
-- TSLA, AAPL, GOOGL, NVDA, MSFT, AMZN, META (CSV files)
-
-### 🎯 Recommended Portfolio Expansion
-
-#### **Tier 1: High-Volume ETF Leaders** 🔥
-*Essential building blocks for any options portfolio*
-- **SPY** - S&P 500 ETF (Highest options volume globally, tight spreads)
-- **QQQ** - Nasdaq 100 ETF (Tech concentration, high volatility)
-- **IWM** - Russell 2000 ETF (Small-cap exposure, higher premiums)
-- **GLD** - Gold ETF (Safe haven, inflation hedge, negative correlation)
-- **TLT** - 20+ Year Treasury ETF (Interest rate sensitivity, recession hedge)
-
-#### **Tier 2: High-Beta Momentum Plays** ⚡
-*Perfect for volatility strategies and breakout trading*
-- **AMD** - Advanced Micro Devices (High-beta semiconductor leader)
-- **COIN** - Coinbase (Crypto proxy, extreme volatility)
-- **PLTR** - Palantir (Meme stock favorite, retail sentiment)
-- **ARKK** - ARK Innovation ETF (Disruptive tech, high growth)
-- **RBLX** - Roblox (Gaming, metaverse exposure)
-
-#### **Tier 3: Sector Diversification** 🏭
-*Essential for balanced portfolio exposure*
-- **JPM** - JPMorgan Chase (Banking leader, rate sensitivity)
-- **JNJ** - Johnson & Johnson (Defensive healthcare, dividend yield)
-- **XOM** - ExxonMobil (Energy giant, commodity exposure)
-- **DIS** - Disney (Entertainment, reopening beneficiary)
-- **WMT** - Walmart (Consumer staples, recession-resistant)
-- **UNH** - UnitedHealth (Healthcare services, aging demographics)
-
-#### **Tier 4: Specialized Strategies** 🎯
-*Advanced trading opportunities and hedging*
-- **VIX** - Volatility Index (Pure volatility play, tail risk hedging)
-- **UVXY** - VIX Short-Term Futures ETN (Leveraged volatility)
-- **SQQQ** - ProShares UltraPro Short QQQ (3x inverse, market hedging)
-- **FXI** - China Large-Cap ETF (Emerging market exposure)
-- **EWZ** - Brazil ETF (Latin America, commodities)
-
-### 📊 Strategic Portfolio Matrix
-
-| Tier | Allocation | Purpose | Vol Level | Liquidity | Strategy Focus |
-|------|------------|---------|-----------|-----------|---------------|
-| **Core ETFs** | 40% | Market exposure | Medium | Highest | Spreads, covered calls |
-| **Tech Growth** | 30% | Momentum capture | High | High | Breakouts, straddles |
-| **Diversification** | 20% | Risk reduction | Low-Med | Medium | Income, defense |
-| **Specialized** | 10% | Alpha/hedging | Extreme | Variable | Vol arb, tail risk |
-
-### 💡 Implementation Roadmap
-
-**Phase 1: Core Foundation (Week 1)**
-```
-Immediate Adds: SPY, QQQ, GLD
-Focus: High liquidity, diversification
-Strategies: Market neutral spreads, covered calls
-```
-
-**Phase 2: Growth Enhancement (Week 2)**
-```
-Growth Adds: AMD, COIN, JPM
-Focus: Volatility capture, sector exposure
-Strategies: Momentum plays, earnings straddles
-```
-
-**Phase 3: Advanced Strategies (Week 3)**
-```
-Advanced Adds: VIX, UVXY, FXI
-Focus: Hedging, international exposure
-Strategies: Volatility arbitrage, tail risk management
-```
+**Data Types:**
+- Historical stock prices (CSV format)
+- Options chains (JSON format)
+- Volatility surfaces extracted from options data
 
 ## 🤝 Contributing
 
