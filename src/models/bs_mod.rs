@@ -9,6 +9,14 @@ fn norm_pdf(x: f64) -> f64 {
 }
 
 pub fn norm_cdf_abst(x: f64) -> f64 {
+    if x.is_nan() {
+        return f64::NAN;
+    }
+
+    if x.is_infinite() {
+        return if x.is_sign_positive() { 1.0 } else { 0.0 };
+    }
+
     if x >= 0.0 {
         let t = 1.0 / (1.0 + 0.2316419 * x);
         let poly = t * (0.319381530 +
@@ -125,6 +133,10 @@ pub fn black_scholes_merton_put(
 // Wrapper for backward compatibility
 pub fn black_scholes_call(s: f64, k: f64, t: f64, r: f64, sigma: f64) -> Greeks {
     black_scholes_merton_call(s, k, t, r, sigma, 0.0)
+}
+
+pub fn black_scholes_put(s: f64, k: f64, t: f64, r: f64, sigma: f64) -> Greeks {
+    black_scholes_merton_put(s, k, t, r, sigma, 0.0)
 }
 
 /// Compute annualized historical volatility from closing prices

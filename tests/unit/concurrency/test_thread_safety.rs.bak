@@ -1,0 +1,407 @@
+//! Concurrency and thread safety tests
+
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
+use dollarbill::models::bs_mod::{black_scholes_call, calculate_greeks};
+use dollarbill::calibration::nelder_mead::NelderMead;
+
+#[test]
+fn test_concurrent_pricing_calculations() {
+    // Test that multiple threads can safely calculate prices simultaneously
+    
+    let num_threads = 8;
+    let calculations_per_thread = 1000;
+    
+    let handles: Vec<_> = (0..num_threads).map(|thread_id| {
+        thread::spawn(move || {
+            let mut results = Vec::new();
+            
+            for i in 0..calculations_per_thread {
+                let spot = 100.0 + (thread_id as f64) * 0.1;
+                let strike = 95.0 + (i as f64) * 0.01;
+                let rate = 0.05;
+                let time = 0.25;
+                let vol = 0.2 + (thread_id as f64) * 0.01;
+                let dividend = 0.0;
+                
+                let price = black_scholes_call(spot, strike, rate, time, vol, dividend);
+                results.push(price);
+            }
+            
+            (thread_id, results)
+        })
+    }).collect();
+    
+    let mut all_results = Vec::new();
+    for handle in handles {
+        let (thread_id, results) = handle.join().expect("Thread panicked");
+        
+        // Verify all prices are valid
+        for (i, price) in results.iter().enumerate() {
+            assert!(price.is_finite(), "Thread {} calculation {} produced non-finite price", thread_id, i);
+            assert!(*price >= 0.0, "Thread {} calculation {} produced negative price", thread_id, i);
+        }
+        
+        all_results.extend(results);
+    }
+    
+    println!("Concurrent pricing test:");
+    println!("  {} threads × {} calculations = {} total", num_threads, calculations_per_thread, all_results.len());
+    println!("  All prices valid and positive");
+    
+    assert_eq!(all_results.len(), num_threads * calculations_per_thread);
+}
+
+#[test]
+fn test_concurrent_greeks_calculations() {
+    // Test Greeks calculations are thread-safe
+    
+    let shared_counter = Arc::new(Mutex::new(0));
+    let num_threads = 4;
+    
+    let handles: Vec<_> = (0..num_threads).map(|thread_id| {
+        let counter = Arc::clone(&shared_counter);
+        
+        thread::spawn(move || {
+            for i in 0..500 {
+                let spot = 100.0;
+                let strike = 95.0 + (i as f64) * 0.02;
+                let rate = 0.05;
+                let time = 0.25;
+                let vol = 0.2;
+                let dividend = 0.0;
+                
+                let call_greeks = calculate_greeks(spot, strike, rate, time, vol, dividend, true);
+                let put_greeks = calculate_greeks(spot, strike, rate, time, vol, dividend, false);
+                
+                // Verify Greeks are valid
+                assert!(call_greeks.delta.is_finite(), "Thread {} call delta not finite", thread_id);
+                assert!(put_greeks.delta.is_finite(), "Thread {} put delta not finite", thread_id);
+                assert!(call_greeks.gamma >= 0.0, "Thread {} negative gamma", thread_id);
+                assert!(put_greeks.gamma >= 0.0, "Thread {} negative gamma", thread_id);
+                
+                // Update shared counter safely
+                let mut count = counter.lock().unwrap();
+                *count += 1;
+            }
+        })
+    }).collect();
+    
+    for handle in handles {
+        handle.join().expect("Thread panicked");
+    }
+    
+    let final_count = *shared_counter.lock().unwrap();
+    assert_eq!(final_count, num_threads * 500);
+    
+    println!("Concurrent Greeks test:");
+    println!("  {} threads completed {} calculations each", num_threads, 500);
+    println!("  Shared counter: {}", final_count);
+}
+
+#[test] 
+fn test_parallel_calibration_independence() {
+    // Test that multiple calibrations running in parallel don't interfere
+    
+    let num_parallel_calibrations = 4;
+    
+    let handles: Vec<_> = (0..num_parallel_calibrations).map(|calib_id| {
+        thread::spawn(move || {
+            // Different objective function for each thread
+            let target = 2.0 + calib_id as f64;
+            let quadratic = |x: &[f64]| (x[0] - target).powi(2) + (x[1] - target).powi(2);
+            
+            let initial_guess = vec![0.0, 0.0];
+            let mut optimizer = NelderMead::new(vec![
+                initial_guess.clone(),
+                vec![initial_guess[0] + 1.0, initial_guess[1]],
+                vec![initial_guess[0], initial_guess[1] + 1.0],
+            ]);
+            
+            let result = optimizer.optimize(&quadratic, 1e-6, 1000);
+            
+            match result {
+                Ok(solution) => {
+                    let error = ((solution[0] - target).powi(2) + (solution[1] - target).powi(2)).sqrt();
+                    (calib_id, true, error, solution)
+                },
+                Err(_) => (calib_id, false, f64::INFINITY, vec![]),
+            }
+        })
+    }).collect();
+    
+    let mut successful_calibrations = 0;
+    
+    for handle in handles {
+        let (calib_id, success, error, solution) = handle.join().expect("Calibration thread panicked");
+        
+        if success {
+            successful_calibrations += 1;
+            assert!(error < 1e-3, "Calibration {} converged poorly: error={:.2e}", calib_id, error);
+            println!("Calibration {}: converged to [{:.4}, {:.4}] with error {:.2e}", 
+                     calib_id, solution[0], solution[1], error);
+        } else {
+            println!("Calibration {} failed", calib_id);
+        }
+    }
+    
+    assert!(successful_calibrations >= num_parallel_calibrations / 2, 
+           "Too many calibrations failed: {} / {}", 
+           successful_calibrations, num_parallel_calibrations);
+}
+
+#[test]
+fn test_data_race_prevention() {
+    // Test that shared data structures are properly protected
+    
+    use std::collections::HashMap;
+    
+    let shared_prices = Arc::new(Mutex::new(HashMap::new()));
+    let num_writers = 3;
+    let num_readers = 2;
+    let operations_per_thread = 100;
+    
+    // Writer threads
+    let mut writer_handles = Vec::new();
+    for writer_id in 0..num_writers {
+        let prices = Arc::clone(&shared_prices);
+        
+        let handle = thread::spawn(move || {
+            for i in 0..operations_per_thread {
+                let key = format!("STOCK_{}_{}", writer_id, i);
+                let spot = 100.0 + (writer_id as f64) * 10.0 + (i as f64) * 0.1;
+                let price = black_scholes_call(spot, 100.0, 0.05, 0.25, 0.2, 0.0);
+                
+                {
+                    let mut map = prices.lock().unwrap();
+                    map.insert(key, price);
+                }
+                
+                // Small delay to increase chance of contention
+                thread::sleep(Duration::from_micros(10));
+            }
+        });
+        
+        writer_handles.push(handle);
+    }
+    
+    // Reader threads
+    let mut reader_handles = Vec::new();
+    for reader_id in 0..num_readers {
+        let prices = Arc::clone(&shared_prices);
+        
+        let handle = thread::spawn(move || {
+            let mut reads_performed = 0;
+            let start_time = Instant::now();
+            
+            while start_time.elapsed() < Duration::from_millis(500) {
+                {
+                    let map = prices.lock().unwrap();
+                    reads_performed += map.len();
+                }
+                
+                thread::sleep(Duration::from_micros(50));
+            }
+            
+            (reader_id, reads_performed)
+        });
+        
+        reader_handles.push(handle);
+    }
+    
+    // Wait for all threads to complete
+    for handle in writer_handles {
+        handle.join().expect("Writer thread panicked");
+    }
+    
+    for handle in reader_handles {
+        let (reader_id, reads) = handle.join().expect("Reader thread panicked");
+        println!("Reader {} performed {} total reads", reader_id, reads);
+    }
+    
+    // Verify final state
+    let final_map = shared_prices.lock().unwrap();
+    let expected_entries = num_writers * operations_per_thread;
+    
+    assert_eq!(final_map.len(), expected_entries, 
+              "Expected {} entries, found {}", expected_entries, final_map.len());
+    
+    // Verify all prices are valid
+    for (key, price) in final_map.iter() {
+        assert!(price.is_finite(), "Invalid price for {}: {}", key, price);
+        assert!(*price >= 0.0, "Negative price for {}: {}", key, price);
+    }
+    
+    println!("Data race prevention test:");
+    println!("  {} writer threads, {} reader threads", num_writers, num_readers);  
+    println!("  Final map size: {} entries", final_map.len());
+    println!("  All entries valid");
+}
+
+#[test]
+fn test_memory_synchronization() {
+    // Test memory visibility between threads
+    
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    
+    let calculation_complete = Arc::new(AtomicBool::new(false));
+    let shared_result = Arc::new(Mutex::new(0.0));
+    let operations_counter = Arc::new(AtomicUsize::new(0));
+    
+    let complete_flag = Arc::clone(&calculation_complete);
+    let result = Arc::clone(&shared_result);
+    let counter = Arc::clone(&operations_counter);
+    
+    // Producer thread
+    let producer = thread::spawn(move || {
+        let spot = 100.0;
+        let strike = 100.0;
+        let rate = 0.05;
+        let time = 0.25;
+        let vol = 0.2;
+        let dividend = 0.0;
+        
+        for i in 0..1000 {
+            let price = black_scholes_call(spot + i as f64 * 0.01, strike, rate, time, vol, dividend);
+            
+            {
+                let mut result_guard = result.lock().unwrap();
+                *result_guard += price;
+            }
+            
+            counter.fetch_add(1, Ordering::SeqCst);
+        }
+        
+        complete_flag.store(true, Ordering::SeqCst);
+    });
+    
+    // Consumer thread
+    let consumer_complete = Arc::clone(&calculation_complete);
+    let consumer_result = Arc::clone(&shared_result);
+    let consumer_counter = Arc::clone(&operations_counter);
+    
+    let consumer = thread::spawn(move || {
+        let mut observations = 0;
+        
+        while !consumer_complete.load(Ordering::SeqCst) {
+            let current_count = consumer_counter.load(Ordering::SeqCst);
+            
+            if current_count > 0 {
+                let current_result = {
+                    let guard = consumer_result.lock().unwrap();
+                    *guard
+                };
+                
+                assert!(current_result.is_finite(), "Observed non-finite result");
+                assert!(current_result >= 0.0, "Observed negative result");
+                observations += 1;
+            }
+            
+            thread::sleep(Duration::from_micros(100));
+        }
+        
+        observations
+    });
+    
+    producer.join().expect("Producer thread panicked");
+    let total_observations = consumer.join().expect("Consumer thread panicked");
+    
+    let final_count = operations_counter.load(Ordering::SeqCst);
+    let final_result = *shared_result.lock().unwrap();
+    
+    assert_eq!(final_count, 1000, "Expected 1000 operations, got {}", final_count);
+    assert!(final_result.is_finite(), "Final result not finite");
+    assert!(final_result > 0.0, "Final result not positive");
+    
+    println!("Memory synchronization test:");
+    println!("  Operations completed: {}", final_count);
+    println!("  Consumer observations: {}", total_observations);
+    println!("  Final accumulated result: {:.2}", final_result);
+}
+
+#[test]
+fn test_deadlock_prevention() {
+    // Test that multiple lock acquisitions don't cause deadlocks
+    
+    use std::sync::RwLock;
+    
+    let data1 = Arc::new(RwLock::new(Vec::<f64>::new()));
+    let data2 = Arc::new(RwLock::new(Vec::<f64>::new()));
+    
+    let num_threads = 4;
+    let operations_per_thread = 50;
+    
+    let handles: Vec<_> = (0..num_threads).map(|thread_id| {
+        let d1 = Arc::clone(&data1);
+        let d2 = Arc::clone(&data2);
+        
+        thread::spawn(move || {
+            for i in 0..operations_per_thread {
+                let value = black_scholes_call(
+                    100.0 + thread_id as f64,
+                    100.0,
+                    0.05,
+                    0.25,
+                    0.2,
+                    0.0
+                );
+                
+                // Acquire locks in consistent order to prevent deadlock
+                if thread_id % 2 == 0 {
+                    // Even threads: data1 then data2
+                    let mut vec1 = d1.write().unwrap();
+                    vec1.push(value);
+                    drop(vec1);
+                    
+                    let mut vec2 = d2.write().unwrap();
+                    vec2.push(value * 2.0);
+                    drop(vec2);
+                } else {
+                    // Odd threads: data2 then data1  
+                    let mut vec2 = d2.write().unwrap();
+                    vec2.push(value * 2.0);
+                    drop(vec2);
+                    
+                    let mut vec1 = d1.write().unwrap();
+                    vec1.push(value);
+                    drop(vec1);
+                }
+                
+                // Read operations (shouldn't deadlock with writes)
+                let _read1 = d1.read().unwrap();
+                let _read2 = d2.read().unwrap();
+            }
+        })
+    }).collect();
+    
+    let start_time = Instant::now();
+    
+    for handle in handles {
+        handle.join().expect("Thread panicked or deadlocked");
+    }
+    
+    let duration = start_time.elapsed();
+    
+    // Verify no deadlock occurred (should complete quickly)
+    assert!(duration.as_secs() < 5, "Test took too long, possible deadlock: {:.2?}", duration);
+    
+    // Verify data integrity
+    let vec1 = data1.read().unwrap();
+    let vec2 = data2.read().unwrap();
+    
+    assert_eq!(vec1.len(), num_threads * operations_per_thread);
+    assert_eq!(vec2.len(), num_threads * operations_per_thread);
+    
+    for price in vec1.iter() {
+        assert!(price.is_finite(), "Invalid price in data1");
+    }
+    
+    for price in vec2.iter() {
+        assert!(price.is_finite(), "Invalid price in data2");
+    }
+    
+    println!("Deadlock prevention test:");
+    println!("  {} threads × {} operations completed in {:.2?}", num_threads, operations_per_thread, duration);
+    println!("  Data1 entries: {}, Data2 entries: {}", vec1.len(), vec2.len());
+}

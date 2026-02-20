@@ -3,3 +3,4 @@
 
 mod helpers;
 mod unit;
+mod integration;

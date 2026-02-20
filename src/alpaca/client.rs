@@ -23,12 +23,13 @@ impl AlpacaClient {
     /// 
     /// # Example
     /// ```no_run
-    /// use black_scholes_rust::alpaca::AlpacaClient;
-    /// 
+    /// use dollarbill::alpaca::AlpacaClient;
+    ///
     /// let client = AlpacaClient::new(
     ///     "YOUR_API_KEY".to_string(),
     ///     "YOUR_API_SECRET".to_string(),
     /// );
+    /// # let _ = client; // silence unused warning in doctest
     /// ```
     pub fn new(api_key: String, api_secret: String) -> Self {
         let client = Client::new();
@@ -148,11 +149,12 @@ impl AlpacaClient {
     /// 
     /// # Example
     /// ```no_run
-    /// use black_scholes_rust::alpaca::{AlpacaClient, OrderRequest, OrderSide, OrderType, TimeInForce};
-    /// 
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// use dollarbill::alpaca::{AlpacaClient, OrderRequest, OrderSide, OrderType, TimeInForce};
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = AlpacaClient::from_env()?;
-    /// 
+    ///
     /// let order = OrderRequest {
     ///     symbol: "TSLA".to_string(),
     ///     qty: 10.0,
@@ -164,10 +166,10 @@ impl AlpacaClient {
     ///     extended_hours: None,
     ///     client_order_id: None,
     /// };
-    /// 
+    ///
     /// let result = client.submit_order(&order).await?;
     /// println!("Order submitted: {:?}", result);
-    /// # Ok(())
+    /// Ok(())
     /// # }
     /// ```
     pub async fn submit_order(&self, order: &OrderRequest) -> Result<Order, Box<dyn Error>> {

@@ -1,0 +1,348 @@
+//! Performance benchmarks and regression detection tests
+
+use std::time::Instant;
+use dollarbill::models::bs_mod::{black_scholes_call, calculate_greeks};
+use dollarbill::models::heston_analytical::heston_call_price;
+use dollarbill::models::heston::HestonParams;
+use dollarbill::calibration::nelder_mead::NelderMead;
+
+// Performance thresholds (in microseconds for single operations)
+const BS_PRICING_THRESHOLD_US: u128 = 100;    // 100 microseconds for BS pricing
+const GREEKS_CALCULATION_THRESHOLD_US: u128 = 200; // 200 microseconds for all Greeks
+const HESTON_PRICING_THRESHOLD_MS: u128 = 50;  // 50 milliseconds for Heston pricing
+const CALIBRATION_THRESHOLD_MS: u128 = 3000;   // 3 seconds for calibration
+
+#[test]
+fn bench_black_scholes_pricing_speed() {
+    let iterations = 10000;
+    let spot = 100.0;
+    let strike = 100.0;
+    let rate = 0.05;
+    let time = 0.25;
+    let vol = 0.2;
+    let dividend = 0.0;
+    
+    let start = Instant::now();
+    
+    for _ in 0..iterations {
+        let _price = black_scholes_call(spot, strike, rate, time, vol, dividend);
+    }
+    
+    let duration = start.elapsed();
+    let avg_time_us = duration.as_micros() / iterations;
+    
+    println!("Black-Scholes pricing: {} iterations in {:.2?}, avg: {:.1} μs per call", 
+             iterations, duration, avg_time_us as f64);
+    
+    assert!(
+        avg_time_us < BS_PRICING_THRESHOLD_US,
+        "Black-Scholes pricing too slow: {:.1} μs > {} μs threshold",
+        avg_time_us as f64, BS_PRICING_THRESHOLD_US
+    );
+}
+
+#[test]
+fn bench_greeks_calculation_speed() {
+    let iterations = 5000;
+    let spot = 100.0;
+    let strike = 100.0;
+    let rate = 0.05;
+    let time = 0.25;
+    let vol = 0.2;
+    let dividend = 0.0;
+    
+    let start = Instant::now();
+    
+    for _ in 0..iterations {
+        let _greeks = calculate_greeks(spot, strike, rate, time, vol, dividend, true);
+    }
+    
+    let duration = start.elapsed();
+    let avg_time_us = duration.as_micros() / iterations;
+    
+    println!("Greeks calculation: {} iterations in {:.2?}, avg: {:.1} μs per call", 
+             iterations, duration, avg_time_us as f64);
+    
+    assert!(
+        avg_time_us < GREEKS_CALCULATION_THRESHOLD_US,
+        "Greeks calculation too slow: {:.1} μs > {} μs threshold",
+        avg_time_us as f64, GREEKS_CALCULATION_THRESHOLD_US
+    );
+}
+
+#[test]
+fn bench_heston_pricing_speed() {
+    let iterations = 100;
+    let spot = 100.0;
+    let strike = 100.0;
+    let rate = 0.05;
+    let time = 0.25;
+    let dividend = 0.0;
+    
+    let params = HestonParams {
+        v0: 0.04,
+        theta: 0.04,
+        kappa: 2.0,
+        sigma: 0.3,
+        rho: -0.5,
+    };
+    
+    let start = Instant::now();
+    
+    for _ in 0..iterations {
+        let _result = heston_call_price(spot, strike, rate, dividend, time, &params);
+    }
+    
+    let duration = start.elapsed();
+    let avg_time_ms = duration.as_millis() / iterations;
+    
+    println!("Heston pricing: {} iterations in {:.2?}, avg: {:.1} ms per call", 
+             iterations, duration, avg_time_ms as f64);
+    
+    assert!(
+        avg_time_ms < HESTON_PRICING_THRESHOLD_MS,
+        "Heston pricing too slow: {:.1} ms > {} ms threshold",
+        avg_time_ms as f64, HESTON_PRICING_THRESHOLD_MS
+    );
+}
+
+#[test]
+fn bench_nelder_mead_optimization_speed() {
+    let iterations = 10;
+    
+    // Simple quadratic function - should converge quickly
+    let quadratic = |x: &[f64]| (x[0] - 2.0).powi(2) + (x[1] - 3.0).powi(2);
+    
+    let start = Instant::now();
+    
+    for _ in 0..iterations {
+        let optimizer = NelderMead::new(NelderMeadConfig::default());
+        let _result = optimizer.minimize(&quadratic, vec![0.0, 0.0]);
+    }
+    
+    let duration = start.elapsed();
+    let avg_time_ms = duration.as_millis() / iterations;
+    
+    println!("Nelder-Mead optimization: {} iterations in {:.2?}, avg: {:.1} ms per optimization", 
+             iterations, duration, avg_time_ms as f64);
+    
+    // This is for simple quadratic - Heston calibration would be much slower
+    assert!(
+        avg_time_ms < 100, // 100ms for simple quadratic
+        "Nelder-Mead optimization too slow: {:.1} ms > 100 ms threshold",
+        avg_time_ms as f64
+    );
+}
+
+#[test]
+fn bench_multi_symbol_throughput() {
+    // Simulate multi-symbol analysis performance
+    let symbols = vec!["AAPL", "TSLA", "NVDA", "MSFT", "GOOGL"];
+    let strikes_per_symbol = 10;
+    
+    let start = Instant::now();
+    let mut total_calculations = 0;
+    
+    for _symbol in &symbols {
+        for i in 0..strikes_per_symbol {
+            let spot = 100.0;
+            let strike = 90.0 + (i as f64) * 2.0; // Strikes from 90 to 108
+            let rate = 0.05;
+            let time = 0.25;
+            let vol = 0.2;
+            let dividend = 0.0;
+            
+            let _call_price = black_scholes_call(spot, strike, rate, time, vol, dividend);
+            let _call_greeks = calculate_greeks(spot, strike, rate, time, vol, dividend, true);
+            let _put_greeks = calculate_greeks(spot, strike, rate, time, vol, dividend, false);
+            
+            total_calculations += 3; // 1 price + 2 Greeks calculations
+        }
+    }
+    
+    let duration = start.elapsed();
+    let throughput = total_calculations as f64 / duration.as_secs_f64();
+    
+    println!("Multi-symbol throughput: {} calculations in {:.2?}, {:.0} calc/sec", 
+             total_calculations, duration, throughput);
+    
+    // Should handle at least 1000 calculations per second
+    assert!(
+        throughput > 1000.0,
+        "Multi-symbol throughput too low: {:.0} calc/sec < 1000 calc/sec threshold",
+        throughput
+    );
+}
+
+#[test]
+fn bench_memory_usage_stability() {
+    // Test that repeated calculations don't cause memory leaks
+    use std::collections::HashMap;
+    
+    let iterations = 1000;
+    let mut prices = HashMap::new();
+    
+    let start = Instant::now();
+    
+    for i in 0..iterations {
+        let spot = 100.0 + (i as f64) * 0.01;
+        let strike = 100.0;
+        let rate = 0.05;
+        let time = 0.25;
+        let vol = 0.2;
+        let dividend = 0.0;
+        
+        let price = black_scholes_call(spot, strike, rate, time, vol, dividend);
+        prices.insert(i, price);
+        
+        // Periodically clear to simulate real usage
+        if i % 100 == 0 {
+            prices.clear();
+        }
+    }
+    
+    let duration = start.elapsed();
+    
+    println!("Memory stability test: {} iterations in {:.2?}", iterations, duration);
+    
+    // Should complete without excessive memory allocation
+    assert!(
+        duration.as_secs() < 1,
+        "Memory stability test took too long: {:.2?}",
+        duration
+    );
+}
+
+#[test]
+fn bench_parallel_processing_benefit() {
+    // This would test Rayon parallel processing if we had access to it
+    // For now, simulate sequential vs parallel timing
+    
+    let symbols = 8;
+    let calculations_per_symbol = 100;
+    
+    // Sequential simulation
+    let sequential_start = Instant::now();
+    for _symbol in 0..symbols {
+        for _calc in 0..calculations_per_symbol {
+            let _price = black_scholes_call(100.0, 100.0, 0.05, 0.25, 0.2, 0.0);
+        }
+    }
+    let sequential_duration = sequential_start.elapsed();
+    
+    println!("Sequential processing: {} symbols × {} calcs in {:.2?}", 
+             symbols, calculations_per_symbol, sequential_duration);
+    
+    // In real implementation, parallel should be significantly faster
+    // This is just a placeholder test
+    assert!(
+        sequential_duration.as_millis() < 1000,
+        "Sequential processing too slow: {:.2?}",
+        sequential_duration
+    );
+}
+
+#[test]
+fn bench_cache_effectiveness() {
+    // Test repeated calculations with same parameters (should benefit from CPU cache)
+    let iterations = 10000;
+    let spot = 100.0;
+    let strike = 100.0;
+    let rate = 0.05;
+    let time = 0.25;
+    let vol = 0.2;
+    let dividend = 0.0;
+    
+    // First run (cold cache)
+    let cold_start = Instant::now();
+    for _ in 0..iterations {
+        let _price = black_scholes_call(spot, strike, rate, time, vol, dividend);
+    }
+    let cold_duration = cold_start.elapsed();
+    
+    // Second run (warm cache)
+    let warm_start = Instant::now();
+    for _ in 0..iterations {
+        let _price = black_scholes_call(spot, strike, rate, time, vol, dividend);
+    }
+    let warm_duration = warm_start.elapsed();
+    
+    println!("Cache test - Cold: {:.2?}, Warm: {:.2?}", cold_duration, warm_duration);
+    
+    // Warm should be at least as fast as cold (usually faster due to CPU caching)
+    let warm_ratio = warm_duration.as_nanos() as f64 / cold_duration.as_nanos() as f64;
+    
+    assert!(
+        warm_ratio <= 1.2, // Allow 20% variation due to system noise
+        "Warm run unexpectedly slower than cold: {:.2}x",
+        warm_ratio
+    );
+}
+
+#[test]
+fn bench_precision_vs_speed_tradeoff() {
+    // Test how precision requirements affect speed
+    let iterations = 1000;
+    
+    let quadratic = |x: &[f64]| (x[0] - 2.0).powi(2) + (x[1] - 3.0).powi(2);
+    let tolerances = vec![1e-3, 1e-6, 1e-9, 1e-12];
+    
+    for tolerance in tolerances {
+        let start = Instant::now();
+        
+        for _ in 0..iterations {
+            let mut optimizer = NelderMead::new(vec![
+                vec![0.0, 0.0], 
+                vec![1.0, 0.0], 
+                vec![0.0, 1.0]
+            ]);
+            let _result = optimizer.optimize(&quadratic, tolerance, 1000);
+        }
+        
+        let duration = start.elapsed();
+        println!("Tolerance {:.0e}: {} iterations in {:.2?}", 
+                 tolerance, iterations, duration);
+        
+        // Higher precision should not be excessively slow
+        if tolerance == 1e-12 {
+            assert!(
+                duration.as_secs() < 5,
+                "High precision optimization too slow: {:.2?}",
+                duration
+            );
+        }
+    }
+}
+
+#[test]
+fn bench_regression_detection() {
+    // Baseline performance metrics to catch regressions
+    struct PerformanceBaseline {
+        bs_pricing_us: f64,
+        greeks_calc_us: f64,
+        multi_symbol_rate: f64,
+    }
+    
+    let baseline = PerformanceBaseline {
+        bs_pricing_us: 10.0,    // Should be much faster than 10μs
+        greeks_calc_us: 50.0,   // Should be much faster than 50μs  
+        multi_symbol_rate: 5000.0, // Should process >5000 calcs/sec
+    };
+    
+    // Quick BS timing test
+    let bs_start = Instant::now();
+    for _ in 0..1000 {
+        let _price = black_scholes_call(100.0, 100.0, 0.05, 0.25, 0.2, 0.0);
+    }
+    let bs_avg_us = bs_start.elapsed().as_micros() as f64 / 1000.0;
+    
+    println!("Performance regression check:");
+    println!("  BS pricing: {:.1} μs (baseline: {:.1} μs)", bs_avg_us, baseline.bs_pricing_us);
+    
+    // Should be significantly faster than baseline
+    assert!(
+        bs_avg_us < baseline.bs_pricing_us,
+        "Performance regression in BS pricing: {:.1} μs >= {:.1} μs baseline",
+        bs_avg_us, baseline.bs_pricing_us
+    );
+}
