@@ -158,6 +158,12 @@ impl BacktestEngine {
                         SignalAction::BuyPut { strike, days_to_expiry, volatility } => {
                             self.open_put_position(symbol, spot, strike, days_to_expiry, volatility, &day.date);
                         },
+                        SignalAction::SellCall { strike, days_to_expiry, volatility } => {
+                            self.open_short_call_position(symbol, spot, strike, days_to_expiry, volatility, &day.date);
+                        },
+                        SignalAction::SellPut { strike, days_to_expiry, volatility } => {
+                            self.open_short_put_position(symbol, spot, strike, days_to_expiry, volatility, &day.date);
+                        },
                         SignalAction::ClosePosition { position_id } => {
                             if let Some(hist_vol) = hist_vols.get(day_idx) {
                                 self.close_position_by_id(position_id, &day.date, spot, *hist_vol, 0);
@@ -281,6 +287,118 @@ impl BacktestEngine {
         );
         
         self.current_capital -= trade.total_cost();
+        self.positions.push(position);
+        self.trades.push(trade);
+        self.position_counter += 1;
+    }
+    
+    fn open_short_call_position(
+        &mut self,
+        symbol: &str,
+        spot: f64,
+        strike: f64,
+        _days_to_expiry: usize,  // Use config instead
+        volatility: f64,
+        date: &str,
+    ) {
+        let time_to_expiry = self.config.days_to_expiry as f64 / 365.0;
+        let greeks = black_scholes_merton_call(
+            spot,
+            strike,
+            time_to_expiry,
+            self.config.risk_free_rate,
+            volatility,
+            0.0,
+        );
+        
+        let position_size = self.calculate_position_size(greeks.price);
+        if position_size == 0 {
+            return;
+        }
+        
+        // For short positions, quantity is negative
+        let position = Position::new(
+            self.position_counter,
+            symbol.to_string(),
+            OptionType::Call,
+            strike,
+            -(position_size as i32),  // Negative for short
+            greeks.price,
+            date.to_string(),
+            spot,
+            Some(greeks),
+        );
+        
+        let trade = Trade::new(
+            self.position_counter,
+            TradeType::Entry,
+            date.to_string(),
+            symbol.to_string(),
+            greeks.price,
+            -(position_size as i32),  // Negative for short
+            spot,
+            Some(greeks),
+            self.config.commission_per_trade,
+        );
+        
+        // For short options, we receive premium (credit)
+        self.current_capital += greeks.price * position_size as f64 * 100.0 - self.config.commission_per_trade;
+        self.positions.push(position);
+        self.trades.push(trade);
+        self.position_counter += 1;
+    }
+    
+    fn open_short_put_position(
+        &mut self,
+        symbol: &str,
+        spot: f64,
+        strike: f64,
+        _days_to_expiry: usize,  // Use config instead
+        volatility: f64,
+        date: &str,
+    ) {
+        let time_to_expiry = self.config.days_to_expiry as f64 / 365.0;
+        let greeks = black_scholes_merton_put(
+            spot,
+            strike,
+            time_to_expiry,
+            self.config.risk_free_rate,
+            volatility,
+            0.0,
+        );
+        
+        let position_size = self.calculate_position_size(greeks.price);
+        if position_size == 0 {
+            return;
+        }
+        
+        // For short positions, quantity is negative
+        let position = Position::new(
+            self.position_counter,
+            symbol.to_string(),
+            OptionType::Put,
+            strike,
+            -(position_size as i32),  // Negative for short
+            greeks.price,
+            date.to_string(),
+            spot,
+            Some(greeks),
+        );
+        
+        let trade = Trade::new(
+            self.position_counter,
+            TradeType::Entry,
+            date.to_string(),
+            symbol.to_string(),
+            greeks.price,
+            -(position_size as i32),  // Negative for short
+            spot,
+            Some(greeks),
+            self.config.commission_per_trade,
+        );
+        
+        // For short options, we receive premium (credit)
+        self.current_capital += greeks.price * position_size as f64 * 100.0 - self.config.commission_per_trade;
         self.positions.push(position);
         self.trades.push(trade);
         self.position_counter += 1;
@@ -544,5 +662,7 @@ impl BacktestEngine {
 pub enum SignalAction {
     BuyCall { strike: f64, days_to_expiry: usize, volatility: f64 },
     BuyPut { strike: f64, days_to_expiry: usize, volatility: f64 },
+    SellCall { strike: f64, days_to_expiry: usize, volatility: f64 },
+    SellPut { strike: f64, days_to_expiry: usize, volatility: f64 },
     ClosePosition { position_id: usize },
 }

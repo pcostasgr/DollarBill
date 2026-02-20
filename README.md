@@ -22,6 +22,7 @@ No traditional programming sessions. Just prompts, iterations, and Rust. 🚀
 - **Paper Trading**: Live integration with Alpaca API for risk-free testing
 - **Backtesting**: Historical strategy evaluation with P&L tracking
 - **Stock Classification**: Basic personality-driven strategy selection (3 types)
+- **Short Options**: SellCall and SellPut support for premium collection strategies
 
 ### ❌ **What It's NOT**
 - Production trading system
@@ -94,8 +95,11 @@ cargo run --example multi_symbol_signals
 # Analyze stock personalities  
 cargo run --example enhanced_personality_analysis
 
-# Backtest strategies
+# Backtest long options strategies
 cargo run --example backtest_strategy
+
+# Backtest short options (covered calls, cash-secured puts)
+cargo run --example backtest_short_options
 
 # Paper trade (requires Alpaca API keys)
 cargo run --example personality_based_bot
@@ -741,9 +745,10 @@ Greeks {
 ✅ **Options Pricing** - Black-Scholes and Heston models for fair value calculation
 ✅ **Greeks Analysis** - Delta, Gamma, Vega, Theta, Rho risk metrics  
 ✅ **Volatility Analysis** - IV extraction and volatility surface visualization
-✅ **Strategy Backtesting** - Historical P&L evaluation for long options strategies
+✅ **Strategy Backtesting** - Historical P&L evaluation for long and short options strategies
 ✅ **Mispricing Detection** - Model vs market comparison for edge identification
 ✅ **Model Calibration** - Heston parameter fitting to market options data
+✅ **Short Options Trading** - Sell calls and puts for premium collection (covered calls, cash-secured puts)
 
 ### Future Enhancements (Not Yet Implemented)
 ⚠️ **Multi-Asset Portfolio Construction** - Diversified portfolio optimization (planned)
