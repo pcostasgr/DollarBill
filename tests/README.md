@@ -31,10 +31,10 @@ cargo test test_call_option_atm
 
 ## Current Status
 
-**133 tests implemented, 133 passing (100% ✅)**
+**146 tests implemented, 146 passing (100% ✅)**
 
 ### Breakdown by Type
-- **Integration Tests**: 105 passing
+- **Integration Tests**: 118 passing
 - **Library Unit Tests**: 26 passing
 - **Doc Tests**: 2 passing
 
@@ -47,6 +47,7 @@ cargo test test_call_option_atm
 - ✅ Edge Cases: Multiple tests (100%) **NEW**
 - ✅ Nelder-Mead Optimization: 14/14 (100%)
 - ✅ Backtest Engine: 17/17 (100%)
+- ✅ Short Options: 13/13 (100%) **NEW**
 - ✅ Market Data Loading: 8/8 (100%)
 - ✅ Volatility Mean Reversion Strategy: 17/17 (100%)
 - ✅ Thread Safety & Concurrency: 3/3 (100%) **NEW**

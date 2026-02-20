@@ -205,11 +205,11 @@ DollarBill/
 
 ## ✅ Testing
 
-**Comprehensive Test Suite: 133 tests, 100% passing**
+**Comprehensive Test Suite: 146 tests, 100% passing**
 
 ### Test Coverage
 - **Unit Tests (26)**: Core library functionality in `src/`
-- **Integration Tests (105)**: Comprehensive test suite in `tests/`
+- **Integration Tests (118)**: Comprehensive test suite in `tests/`
   - Black-Scholes Pricing: 15 tests
   - Greeks Calculations: 19 tests
   - Heston Model: 22 tests
@@ -218,6 +218,7 @@ DollarBill/
   - Edge Cases: Multiple tests (boundary conditions)
   - Nelder-Mead Optimization: 14 tests
   - Backtest Engine: 17 tests
+  - Short Options: 13 tests (premium collection strategies)
   - Market Data Loading: 8 tests
   - Volatility Mean Reversion Strategy: 17 tests
   - Thread Safety: 3 tests (concurrent calculations)
@@ -778,8 +779,8 @@ Greeks {
 **Build Status:**
 - ✅ Compiles successfully (with warnings)
 - ✅ Optimized `--release` builds available  
-- ✅ **133 comprehensive tests** (100% passing)
-  - 105 integration tests
+- ✅ **146 comprehensive tests** (100% passing)
+  - 118 integration tests
   - 26 unit tests
   - 2 doc tests
 - ✅ **Mathematical accuracy verified** across all core models

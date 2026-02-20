@@ -11,3 +11,8 @@ mod market_data {
 mod strategies {
     mod test_vol_mean_reversion;
 }
+
+mod backtesting {
+    mod test_engine;
+    mod test_short_options;
+}
