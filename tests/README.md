@@ -31,7 +31,7 @@ cargo test test_call_option_atm
 
 ## Current Status
 
-**173 tests implemented, 173 passing (100% ✅)**
+**254 tests implemented, 254 passing (100% ✅)**
 
 ### Breakdown by Type
 - **Integration Tests**: 135 passing
@@ -49,6 +49,7 @@ cargo test test_call_option_atm
 - ✅ Backtest Engine: 17/17 (100%)
 - ✅ Short Options: 13/13 (100%) **NEW**
 - ✅ Strategy Templates: 12/12 (100%) 🆕 NEW
+- ✅ Portfolio Management: 41/41 (100%) 🆕 NEW
 - ✅ Market Data Loading: 8/8 (100%)
 - ✅ Volatility Mean Reversion Strategy: 17/17 (100%)
 - ✅ Thread Safety & Concurrency: 3/3 (100%) **NEW**

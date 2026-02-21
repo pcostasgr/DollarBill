@@ -25,6 +25,7 @@ No traditional programming sessions. Just prompts, iterations, and Rust. 🚀
 - **Short Options**: SellCall and SellPut support for premium collection strategies
 - **Multi-Leg Strategies**: Iron condors, credit spreads, straddles, strangles with customizable templates
 - **Strategy Templates**: Configurable strategy builders for quick backtesting
+- **Portfolio Management**: Position sizing, risk analytics, multi-strategy allocation, performance attribution 🆕 NEW
 
 ### ❌ **What It's NOT**
 - Production trading system
@@ -111,6 +112,9 @@ cargo run --example credit_spreads
 
 # Strategy templates (customizable parameters)
 cargo run --example strategy_templates
+
+# Portfolio management (position sizing, risk analytics, allocation)
+cargo run --example portfolio_management
 
 # Paper trade (requires Alpaca API keys)
 cargo run --example personality_based_bot
@@ -216,7 +220,7 @@ DollarBill/
 
 ## ✅ Testing
 
-**Comprehensive Test Suite: 173 tests, 100% passing**
+**Comprehensive Test Suite: 254 tests, 100% passing**
 
 ### Test Coverage
 - **Unit Tests (26)**: Core library functionality in `src/`

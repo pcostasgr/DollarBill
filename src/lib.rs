@@ -9,3 +9,4 @@ pub mod backtesting;
 pub mod alpaca;
 pub mod config;
 pub mod analysis;
+pub mod portfolio;
