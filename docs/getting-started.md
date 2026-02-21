@@ -48,6 +48,7 @@ This script automatically:
 - **Step 3**: Runs Heston backtesting with live market calibration
 - **Step 4**: Trains personality models and matches optimal strategies
 
+**Optional**: Test multi-leg strategies (iron condors, credit spreads) with Step 3.5
 **Then proceed to steps 5-6 for testing and live trading!**
 
 #### Step 1: Configure Stocks (1 minute)
@@ -95,6 +96,39 @@ cmd /c ".\scripts\setup_python.bat"
 ```
 This calibrates Heston parameters to live market data and builds the performance matrix that the bot uses for trading decisions. **Essential for realistic results!**
 
+#### Step 3.5: Test Multi-Leg Strategies (Optional, 5 minutes)
+
+**NEW**: Explore advanced options strategies before live trading! These examples demonstrate iron condors, credit spreads, and customizable strategy templates.
+
+```bash
+# Test iron condors (4-leg neutral income strategy)
+cargo run --example iron_condor
+
+# Test credit spreads (bull put & bear call spreads)
+cargo run --example credit_spreads
+
+# Test customizable strategy templates
+cargo run --example strategy_templates
+```
+
+**What You'll Learn:**
+- **Iron Condors**: Neutral strategy for high-IV stocks (TSLA 87% win rate in backtest!)
+- **Credit Spreads**: Directional spreads with defined risk (bullish/bearish)
+- **Strategy Templates**: 7 customizable templates (straddles, strangles, covered calls, etc.)
+
+**Example Output:**
+```
+Iron Condor Strategy Testing
+Testing QQQ with conservative iron condor...
+  Win Rate: 55.1%  |  Avg Winner: $127.23  |  Avg Loser: -$245.89
+Testing TSLA with aggressive iron condor...
+  Win Rate: 86.9%  |  Avg Winner: $156.78  |  Avg Loser: -$312.45
+```
+
+**📚 Deep Dive**: See [strategies-guide.md](docs/strategies-guide.md) for comprehensive education on all 7 strategy types, risk profiles, and best practices.
+
+**Integration**: These strategies work seamlessly with the personality bot (Step 6). The bot automatically selects optimal strategies based on stock personality and market conditions.
+
 #### Step 4: Train Enhanced Personality Models (3 minutes)
 ```bash
 # Quick enhanced personality analysis (batch script)
@@ -129,6 +163,7 @@ cargo run --example personality_based_bot -- --continuous 5
 
 ✅ **Market Data**: Historical prices and live options fetched
 ✅ **Heston Calibration**: Parameters fitted to current market conditions
+✅ **Multi-Leg Strategies**: Tested iron condors, credit spreads, and customizable templates (optional)
 ✅ **Enhanced Personality Analysis**: Stocks classified using 15+ features: volatility percentiles, market regime detection, trend persistence
 ✅ **Intelligent Strategy Matching**: Each stock got optimal strategy with 20-70% confidence scoring
 ✅ **Market Regime Awareness**: LowVol/HighVol/Trending/MeanReverting classification for context-aware trading
@@ -244,10 +279,11 @@ cargo run --example personality_based_bot -- --dry-run
 ## 🎯 Next Steps
 
 ### Level Up Your Trading
-1. **Add More Stocks**: Enable additional symbols in `config/stocks.json`
-2. **Increase Position Sizes**: Gradually increase from 5 to 10-20 shares
-3. **Customize Strategies**: Modify confidence thresholds and risk settings
-4. **Add Stop Losses**: Implement additional risk management in Alpaca
+1. **Explore Multi-Leg Strategies**: Review [strategies-guide.md](docs/strategies-guide.md) to master iron condors, credit spreads, straddles, and more
+2. **Add More Stocks**: Enable additional symbols in `config/stocks.json`
+3. **Increase Position Sizes**: Gradually increase from 5 to 10-20 shares
+4. **Customize Strategies**: Modify confidence thresholds and risk settings
+5. **Add Stop Losses**: Implement additional risk management in Alpaca
 
 ### Advanced Features
 - **Real-time Alerts**: Monitor bot performance
