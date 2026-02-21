@@ -31,12 +31,12 @@ cargo test test_call_option_atm
 
 ## Current Status
 
-**146 tests implemented, 146 passing (100% ✅)**
+**173 tests implemented, 173 passing (100% ✅)**
 
 ### Breakdown by Type
-- **Integration Tests**: 118 passing
-- **Library Unit Tests**: 26 passing
-- **Doc Tests**: 2 passing
+- **Integration Tests**: 135 passing
+- **Library Unit Tests**: 38 passing
+- **Doc Tests**: 0 passing
 
 ### Test Coverage by Category
 - ✅ Black-Scholes Pricing: 15/15 (100%)
@@ -48,6 +48,7 @@ cargo test test_call_option_atm
 - ✅ Nelder-Mead Optimization: 14/14 (100%)
 - ✅ Backtest Engine: 17/17 (100%)
 - ✅ Short Options: 13/13 (100%) **NEW**
+- ✅ Strategy Templates: 12/12 (100%) 🆕 NEW
 - ✅ Market Data Loading: 8/8 (100%)
 - ✅ Volatility Mean Reversion Strategy: 17/17 (100%)
 - ✅ Thread Safety & Concurrency: 3/3 (100%) **NEW**
@@ -95,6 +96,26 @@ Concurrent calculation validation:
 - Parallel pricing calculations (4 threads)
 - Independent calibration threads
 - Deadlock prevention
+
+#### Strategy Templates Tests (`src/strategies/templates.rs`) 🆕
+Multi-leg options strategy template validation:
+- Iron condor signal generation (4 legs: sell put, buy put, sell call, buy call)
+- Bull put spread validation (2 legs with correct strike ordering)
+- Bear call spread validation (2 legs with correct strike ordering)
+- Short straddle/strangle configuration tests
+- Covered call and cash-secured put templates
+- Strike price calculation accuracy across different spot prices
+- Volatility and days-to-expiry parameter passing
+- Spread width consistency verification
+- Custom configuration support
+- Floating-point precision handling
+
+Tests ensure:
+- Correct number of legs for each strategy
+- Proper strike price calculations (with tolerance for floating point)
+- Signal types match strategy requirements
+- Parameters propagate correctly through all legs
+- Strategies work across different spot prices and volatilities
 
 ### Recent Fixes
 All previous test failures have been resolved:
