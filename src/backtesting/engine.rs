@@ -5,6 +5,7 @@ use crate::backtesting::trade::{Trade, TradeType};
 use crate::backtesting::metrics::{BacktestResult, PerformanceMetrics, EquityCurve};
 use crate::models::bs_mod::{black_scholes_merton_call, black_scholes_merton_put};
 use crate::market_data::csv_loader::HistoricalDay;
+use crate::portfolio::{PortfolioManager, PortfolioConfig, SizingMethod, AllocationMethod, RiskLimits};
 
 #[derive(Debug, Clone)]
 pub struct BacktestConfig {
@@ -12,11 +13,12 @@ pub struct BacktestConfig {
     pub commission_per_trade: f64,
     pub risk_free_rate: f64,
     pub max_positions: usize,
-    pub position_size_pct: f64,  // Percentage of capital per position
+    pub position_size_pct: f64,  // Percentage of capital per position (used if no portfolio manager)
     pub days_to_expiry: usize,  // Option expiration in days
     pub max_days_hold: usize,  // Maximum days to hold before forced close
     pub stop_loss_pct: Option<f64>,  // Optional stop loss
     pub take_profit_pct: Option<f64>,  // Optional take profit
+    pub use_portfolio_management: bool,  // Enable portfolio-based position sizing and risk limits
 }
 
 impl Default for BacktestConfig {
@@ -31,12 +33,14 @@ impl Default for BacktestConfig {
             max_days_hold: 21,  // Close after 21 days (70% of expiry)
             stop_loss_pct: Some(50.0),  // 50% stop loss
             take_profit_pct: Some(100.0),  // 100% take profit
+            use_portfolio_management: false,  // Disabled by default for backward compatibility
         }
     }
 }
 
 pub struct BacktestEngine {
     config: BacktestConfig,
+    portfolio_manager: Option<PortfolioManager>,
     positions: Vec<Position>,
     trades: Vec<Trade>,
     equity_curve: EquityCurve,
@@ -46,9 +50,36 @@ pub struct BacktestEngine {
 
 impl BacktestEngine {
     pub fn new(config: BacktestConfig) -> Self {
+        let portfolio_manager = if config.use_portfolio_management {
+            Some(PortfolioManager::new(PortfolioConfig {
+                initial_capital: config.initial_capital,
+                max_risk_per_trade: 2.0,
+                max_position_pct: 10.0,
+                sizing_method: SizingMethod::VolatilityBased,
+                allocation_method: AllocationMethod::RiskParity,
+                risk_limits: RiskLimits::default(),
+            }))
+        } else {
+            None
+        };
+        
         Self {
             current_capital: config.initial_capital,
             config,
+            portfolio_manager,
+            positions: Vec::new(),
+            trades: Vec::new(),
+            equity_curve: EquityCurve::new(),
+            position_counter: 0,
+        }
+    }
+    
+    /// Create a new backtest engine with custom portfolio configuration
+    pub fn new_with_portfolio(config: BacktestConfig, portfolio_config: PortfolioConfig) -> Self {
+        Self {
+            current_capital: config.initial_capital,
+            config,
+            portfolio_manager: Some(PortfolioManager::new(portfolio_config)),
             positions: Vec::new(),
             trades: Vec::new(),
             equity_curve: EquityCurve::new(),
@@ -203,8 +234,14 @@ impl BacktestEngine {
             0.0,
         );
         
-        let position_size = self.calculate_position_size(greeks.price);
+        // Calculate position size first
+        let position_size = self.calculate_position_size_with_vol(greeks.price, volatility);
         if position_size == 0 {
+            return;
+        }
+        
+        // Check portfolio risk limits if enabled
+        if !self.can_open_position_with_portfolio_check(symbol, greeks.price, volatility, position_size) {
             return;
         }
         
@@ -257,8 +294,14 @@ impl BacktestEngine {
             0.0,
         );
         
-        let position_size = self.calculate_position_size(greeks.price);
+        // Calculate position size first
+        let position_size = self.calculate_position_size_with_vol(greeks.price, volatility);
         if position_size == 0 {
+            return;
+        }
+        
+        // Check portfolio risk limits if enabled
+        if !self.can_open_position_with_portfolio_check(symbol, greeks.price, volatility, position_size) {
             return;
         }
         
@@ -311,8 +354,14 @@ impl BacktestEngine {
             0.0,
         );
         
-        let position_size = self.calculate_position_size(greeks.price);
+        // Calculate position size first
+        let position_size = self.calculate_position_size_with_vol(greeks.price, volatility);
         if position_size == 0 {
+            return;
+        }
+        
+        // Check portfolio risk limits if enabled
+        if !self.can_open_position_with_portfolio_check(symbol, greeks.price, volatility, position_size) {
             return;
         }
         
@@ -367,8 +416,14 @@ impl BacktestEngine {
             0.0,
         );
         
-        let position_size = self.calculate_position_size(greeks.price);
+        // Calculate position size first
+        let position_size = self.calculate_position_size_with_vol(greeks.price, volatility);
         if position_size == 0 {
+            return;
+        }
+        
+        // Check portfolio risk limits if enabled
+        if !self.can_open_position_with_portfolio_check(symbol, greeks.price, volatility, position_size) {
             return;
         }
         
@@ -564,13 +619,58 @@ impl BacktestEngine {
             .filter(|p| matches!(p.status, PositionStatus::Open))
             .count();
         
-        open_positions < self.config.max_positions && self.current_capital > 0.0
+        if open_positions >= self.config.max_positions {
+            return false;
+        }
+        
+        if self.current_capital <= 0.0 {
+            return false;
+        }
+        
+        // No additional portfolio risk checks if portfolio management disabled
+        true
+    }
+    
+    fn can_open_position_with_portfolio_check(
+        &self,
+        symbol: &str,
+        option_price: f64,
+        volatility: f64,
+        contracts: i32,
+    ) -> bool {
+        if !self.can_open_position() {
+            return false;
+        }
+        
+        // If portfolio management enabled, check risk limits
+        if let Some(ref manager) = self.portfolio_manager {
+            let decision = manager.can_take_position(symbol, option_price, volatility, contracts);
+            decision.can_trade
+        } else {
+            true
+        }
     }
     
     fn calculate_position_size(&self, option_price: f64) -> i32 {
-        let available_capital = self.current_capital * (self.config.position_size_pct / 100.0);
-        let contracts = (available_capital / (option_price * 100.0)).floor() as i32;
-        contracts.max(0).min(10)  // Limit to 10 contracts max per position
+        self.calculate_position_size_with_vol(option_price, 0.30)  // Default 30% vol
+    }
+    
+    fn calculate_position_size_with_vol(&self, option_price: f64, volatility: f64) -> i32 {
+        if let Some(ref manager) = self.portfolio_manager {
+            // Use portfolio manager for intelligent sizing
+            manager.calculate_position_size(
+                option_price,
+                volatility,
+                None,  // win_rate - could be calculated from historical trades
+                None,  // avg_win
+                None,  // avg_loss
+            )
+        } else {
+            // Fallback to simple percentage-based sizing
+            let available_capital = self.current_capital * (self.config.position_size_pct / 100.0);
+            let contracts = (available_capital / (option_price * 100.0)).floor() as i32;
+            contracts.max(0).min(10)  // Limit to 10 contracts max per position
+        }
     }
     
     fn unrealized_pnl(&self) -> f64 {

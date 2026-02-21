@@ -5,6 +5,7 @@ use dollarbill::alpaca::{AlpacaClient, OrderRequest, OrderSide, OrderType, TimeI
 use dollarbill::market_data::symbols::load_enabled_stocks;
 use dollarbill::strategies::matching::StrategyMatcher;
 use dollarbill::strategies::SignalAction;
+use dollarbill::portfolio::{PortfolioManager, PortfolioConfig, SizingMethod, AllocationMethod, RiskLimits};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
@@ -15,6 +16,18 @@ use serde::Deserialize;
 struct PersonalityBotConfig {
     trading: TradingConfig,
     execution: ExecutionConfig,
+    portfolio: Option<PortfolioSettings>,  // Optional portfolio management settings
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct PortfolioSettings {
+    enabled: bool,
+    initial_capital: f64,
+    max_risk_per_trade: f64,
+    max_position_pct: f64,
+    sizing_method: String,  // "VolatilityBased", "FixedFractional", "KellyCriterion", etc.
+    max_portfolio_delta: f64,
+    max_concentration_pct: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -44,6 +57,7 @@ struct PersonalityBasedBot {
     config: PersonalityBotConfig,
     symbols: Vec<String>,
     matcher: StrategyMatcher,
+    portfolio_manager: Option<PortfolioManager>,  // Optional portfolio management
 }
 
 impl PersonalityBasedBot {
@@ -53,11 +67,42 @@ impl PersonalityBasedBot {
         symbols: Vec<String>,
         matcher: StrategyMatcher,
     ) -> Self {
+        // Initialize portfolio manager if enabled in config
+        let portfolio_manager = if let Some(ref portfolio_settings) = config.portfolio {
+            if portfolio_settings.enabled {
+                let sizing_method = match portfolio_settings.sizing_method.as_str() {
+                    "VolatilityBased" => SizingMethod::VolatilityBased,
+                    "KellyCriterion" => SizingMethod::KellyCriterion,
+                    "RiskParity" => SizingMethod::RiskParity,
+                    "FixedDollar" => SizingMethod::FixedDollar(5000.0),
+                    _ => SizingMethod::FixedFractional(5.0),  // Default
+                };
+                
+                Some(PortfolioManager::new(PortfolioConfig {
+                    initial_capital: portfolio_settings.initial_capital,
+                    max_risk_per_trade: portfolio_settings.max_risk_per_trade,
+                    max_position_pct: portfolio_settings.max_position_pct,
+                    sizing_method,
+                    allocation_method: AllocationMethod::RiskParity,
+                    risk_limits: RiskLimits {
+                        max_portfolio_delta: portfolio_settings.max_portfolio_delta,
+                        max_concentration_pct: portfolio_settings.max_concentration_pct,
+                        ..Default::default()
+                    },
+                }))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        
         Self {
             client,
             config,
             symbols,
             matcher,
+            portfolio_manager,
         }
     }
 
@@ -301,10 +346,43 @@ impl PersonalityBasedBot {
 
                     match (action, has_position) {
                         ("BUY", false) => {
-                            print!("🟢 BUY → {} shares...", self.config.trading.position_size_shares);
+                            // Calculate position size using portfolio manager if enabled
+                            let position_size = if let Some(ref manager) = self.portfolio_manager {
+                                // Use intelligent sizing based on volatility and risk
+                                let contracts = manager.calculate_position_size(
+                                    current_price,
+                                    hist_vol,
+                                    None,  // Could track win_rate from historical trades
+                                    None,  // avg_win
+                                    None,  // avg_loss
+                                );
+                                
+                                // Check if we can take this position (portfolio risk limits)
+                                let decision = manager.can_take_position(
+                                    &signal.strategy_name,
+                                    current_price,
+                                    hist_vol,
+                                    contracts,
+                                );
+                                
+                                if !decision.can_trade {
+                                    println!("❌ REJECTED by portfolio manager:");
+                                    for warning in &decision.risk_warnings {
+                                        println!("   ⚠️  {}", warning);
+                                    }
+                                    continue;  // Skip this trade
+                                }
+                                
+                                contracts
+                            } else {
+                                // Fallback to fixed size if portfolio management disabled
+                                self.config.trading.position_size_shares
+                            };
+                            
+                            print!("🟢 BUY → {} shares...", position_size);
                             let order = OrderRequest {
                                 symbol: symbol.clone(),
-                                qty: self.config.trading.position_size_shares as f64,
+                                qty: position_size as f64,
                                 side: OrderSide::Buy,
                                 r#type: OrderType::Market,
                                 time_in_force: TimeInForce::Day,

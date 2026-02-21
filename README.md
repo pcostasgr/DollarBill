@@ -98,6 +98,9 @@ cargo run --example multi_symbol_signals
 # Analyze stock personalities  
 cargo run --example enhanced_personality_analysis
 
+# Portfolio management demonstration
+cargo run --example portfolio_management
+
 # Backtest long options strategies
 cargo run --example backtest_strategy
 

@@ -12,5 +12,14 @@
   "execution": {
     "continuous_mode_interval_minutes": 60,
     "data_lookback_days": 252
+  },
+  "portfolio": {
+    "enabled": true,
+    "initial_capital": 100000.0,
+    "max_risk_per_trade": 2.0,
+    "max_position_pct": 10.0,
+    "sizing_method": "VolatilityBased",
+    "max_portfolio_delta": 0.30,
+    "max_concentration_pct": 20.0
   }
 }
