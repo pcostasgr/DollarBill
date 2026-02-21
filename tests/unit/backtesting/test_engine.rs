@@ -54,6 +54,7 @@ fn test_backtest_custom_config() {
         max_days_hold: 30,
         stop_loss_pct: Some(30.0),
         take_profit_pct: Some(50.0),
+        use_portfolio_management: false,
     };
     
     let _engine = BacktestEngine::new(config.clone());

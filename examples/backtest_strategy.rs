@@ -296,6 +296,7 @@ fn backtest_symbol(symbol: &str, config: &StrategyConfig) -> Result<(), Box<dyn 
         max_days_hold: config.strategies.short_term.max_days_hold,
         stop_loss_pct: Some(config.backtest.stop_loss_pct),
         take_profit_pct: Some(config.backtest.take_profit_pct),
+        use_portfolio_management: false,
     };
     
     let config_medium = BacktestConfig {
@@ -308,6 +309,7 @@ fn backtest_symbol(symbol: &str, config: &StrategyConfig) -> Result<(), Box<dyn 
         max_days_hold: config.strategies.medium_term.max_days_hold,
         stop_loss_pct: Some(config.backtest.stop_loss_pct),
         take_profit_pct: Some(config.backtest.take_profit_pct),
+        use_portfolio_management: false,
     };
     
     let config_long = BacktestConfig {
@@ -320,6 +322,7 @@ fn backtest_symbol(symbol: &str, config: &StrategyConfig) -> Result<(), Box<dyn 
         max_days_hold: config.strategies.long_term.max_days_hold,
         stop_loss_pct: Some(config.backtest.stop_loss_pct),
         take_profit_pct: Some(config.backtest.take_profit_pct),
+        use_portfolio_management: false,
     };
     
     // Run strategy 1: Short-term (adaptive based on volatility)

@@ -24,6 +24,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         max_days_hold: 25,        // Exit before expiration
         stop_loss_pct: Some(2.0),      // 200% loss (let winners run on shorts)
         take_profit_pct: Some(0.50),   // 50% profit on premium
+        use_portfolio_management: false,
     };
 
     let symbols = vec!["AAPL", "TSLA"];

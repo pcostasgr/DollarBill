@@ -84,6 +84,7 @@ fn test_iron_condor_variations() -> Result<(), Box<dyn Error>> {
         max_days_hold: 40,
         stop_loss_pct: Some(2.0),
         take_profit_pct: Some(0.50),
+        use_portfolio_management: false,
     });
     
     let result = engine.run_with_signals(
@@ -126,6 +127,7 @@ fn test_iron_condor_variations() -> Result<(), Box<dyn Error>> {
         max_days_hold: 25,
         stop_loss_pct: Some(2.0),
         take_profit_pct: Some(0.60),
+        use_portfolio_management: false,
     });
     
     let result = engine.run_with_signals(
@@ -166,6 +168,7 @@ fn test_credit_spread_variations() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     
+    // [narrow marker]
     // Narrow spread - higher credit, more risk
     println!("\n1️⃣  NARROW BULL PUT SPREAD (Higher Premium, More Risk)");
     println!("───────────────────────────────────────────────────────────\n");
@@ -192,6 +195,7 @@ fn test_credit_spread_variations() -> Result<(), Box<dyn Error>> {
         max_days_hold: 25,
         stop_loss_pct: Some(2.0),
         take_profit_pct: Some(0.60),
+        use_portfolio_management: false,
     });
     
     let result = engine.run_with_signals(
@@ -231,6 +235,7 @@ fn test_credit_spread_variations() -> Result<(), Box<dyn Error>> {
         max_days_hold: 25,
         stop_loss_pct: Some(2.0),
         take_profit_pct: Some(0.60),
+        use_portfolio_management: false,
     });
     
     let result = engine.run_with_signals(

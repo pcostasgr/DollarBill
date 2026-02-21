@@ -33,6 +33,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         max_days_hold: 40,         // Close before expiration if held this long
         stop_loss_pct: Some(2.0),       // Exit at 200% of premium received (max loss)
         take_profit_pct: Some(0.50),    // Lock in 50% of max profit early
+        use_portfolio_management: false,
     };
 
     println!("Strategy Parameters:");

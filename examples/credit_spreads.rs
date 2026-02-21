@@ -60,6 +60,7 @@ fn test_bull_put_spreads() -> Result<(), Box<dyn Error>> {
         max_days_hold: 25,
         stop_loss_pct: Some(2.0),       // 200% loss
         take_profit_pct: Some(0.60),    // 60% profit
+        use_portfolio_management: false,
     };
 
     let symbols = vec!["SPY", "AAPL", "MSFT"];
@@ -140,6 +141,7 @@ fn test_bear_call_spreads() -> Result<(), Box<dyn Error>> {
         max_days_hold: 25,
         stop_loss_pct: Some(2.0),
         take_profit_pct: Some(0.60),
+        use_portfolio_management: false,
     };
 
     let symbols = vec!["SPY", "QQQ", "IWM"];
