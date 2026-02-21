@@ -96,3 +96,6 @@ pub mod mean_reversion;
 pub mod breakout;
 pub mod vol_arbitrage;
 pub mod tests;
+
+// Multi-leg option strategy templates
+pub mod templates;

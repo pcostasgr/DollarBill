@@ -23,6 +23,8 @@ No traditional programming sessions. Just prompts, iterations, and Rust. 🚀
 - **Backtesting**: Historical strategy evaluation with P&L tracking
 - **Stock Classification**: Basic personality-driven strategy selection (3 types)
 - **Short Options**: SellCall and SellPut support for premium collection strategies
+- **Multi-Leg Strategies**: Iron condors, credit spreads, straddles, strangles with customizable templates
+- **Strategy Templates**: Configurable strategy builders for quick backtesting
 
 ### ❌ **What It's NOT**
 - Production trading system
@@ -100,6 +102,15 @@ cargo run --example backtest_strategy
 
 # Backtest short options (covered calls, cash-secured puts)
 cargo run --example backtest_short_options
+
+# Multi-leg strategies - Iron condor (neutral income strategy)
+cargo run --example iron_condor
+
+# Credit spreads (bull put spread, bear call spread)
+cargo run --example credit_spreads
+
+# Strategy templates (customizable parameters)
+cargo run --example strategy_templates
 
 # Paper trade (requires Alpaca API keys)
 cargo run --example personality_based_bot
@@ -731,6 +742,7 @@ Greeks {
 - **README.md** (this file) - Overview and quick start
 - **[Personality Guide](docs/personality-guide.md)** - Personality-driven trading system ⭐ NEW
 - **[Enhanced Personality Implementation](docs/enhanced-personality-implementation.md)** - Advanced multi-dimensional personality system ⭐ ENHANCED
+- **[Options Strategies Guide](docs/strategies-guide.md)** - Multi-leg strategies, credit spreads, iron condors 🆕 NEW
 - **[Advanced Features](docs/advanced-features.md)** - Detailed feature guides and examples
 - **[Alpaca Integration](docs/alpaca-guide.md)** - Paper trading setup and API usage
 - **[Backtesting Guide](docs/backtesting-guide.md)** - Strategy testing methodology
@@ -747,6 +759,8 @@ Greeks {
 ✅ **Greeks Analysis** - Delta, Gamma, Vega, Theta, Rho risk metrics  
 ✅ **Volatility Analysis** - IV extraction and volatility surface visualization
 ✅ **Strategy Backtesting** - Historical P&L evaluation for long and short options strategies
+✅ **Multi-Leg Strategies** - Iron condors, credit spreads, straddles, strangles 🆕 NEW
+✅ **Short Options Trading** - Sell calls and puts for premium collection 🆕 NEW
 ✅ **Mispricing Detection** - Model vs market comparison for edge identification
 ✅ **Model Calibration** - Heston parameter fitting to market options data
 ✅ **Short Options Trading** - Sell calls and puts for premium collection (covered calls, cash-secured puts)
