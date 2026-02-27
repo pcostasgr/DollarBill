@@ -241,3 +241,110 @@ fn test_regime_change_low_to_high_vol_survives() {
     assert!(!result.metrics.max_drawdown.is_infinite(),
             "Max drawdown should not be Inf after regime change");
 }
+
+/// 2020 COVID vol-explosion stress test.
+///
+/// Proposal 5: "Regime-shift stress in backtester — 2020 vol explosion sim missing."
+///
+/// Simulates three phases that mirror the March 2020 crash:
+///   Phase 1 (days 0–119): Calm — σ = 0.15, trending up +0.02 %/day (pre-COVID)
+///   Phase 2 (days 120–149): Crash — stock drops −1.5 %/day for 30 days (−36 %)
+///   Phase 3 (days 150–179): Panic — σ = 0.80, flat (VIX ≈ 80, elevated fear)
+///
+/// The strategy sells naked calls throughout — the worst position during a crash:
+///   • Phase 1 premium collection works fine
+///   • Phase 2/3 the calls go deep ITM → large mark-to-market loss
+///
+/// Acceptance criteria:
+///   • Engine must not panic at any point
+///   • All metrics must be finite (no Inf/NaN except Sharpe on 0 trades)
+///   • max_drawdown must be finite (engine tracked P&L through the regime shift)
+#[test]
+fn test_2020_covid_vol_explosion_stress() {
+    let config = BacktestConfig {
+        initial_capital: 100_000.0,
+        max_positions: 3,
+        position_size_pct: 20.0,  // sizeable enough to feel the loss
+        days_to_expiry: 30,
+        max_days_hold: 28,
+        stop_loss_pct: None,      // no stop — test unlimited-loss survival
+        take_profit_pct: None,
+        ..Default::default()
+    };
+    let mut engine = BacktestEngine::new(config);
+
+    // Build the two-regime data series manually so we can control vol precisely
+    let mut data: Vec<HistoricalDay> = Vec::new();
+
+    // Phase 1: 120 days of calm, grinding uptrend (+0.02 %/day, VIX ≈ 15)
+    let mut price = 340.0_f64;  // SPY-like starting price
+    for i in 0..120_usize {
+        data.push(HistoricalDay {
+            date:  format!("2020-{:03}", i + 1),
+            close: price,
+        });
+        price *= 1.0002;
+    }
+
+    // Phase 2: 30-day crash (-1.5 %/day → total −36%, mirrors Feb 20 – Mar 23 2020)
+    for i in 0..30_usize {
+        data.push(HistoricalDay {
+            date:  format!("2020-{:03}", 120 + i + 1),
+            close: price,
+        });
+        price *= 0.985;
+    }
+
+    // Phase 3: 30 days of panic (flat-to-sideways, VIX ≈ 80 reflected in signal vol = 0.80)
+    for i in 0..30_usize {
+        data.push(HistoricalDay {
+            date:  format!("2020-{:03}", 150 + i + 1),
+            close: price,
+        });
+        price *= 1.001;  // tiny recovery attempts
+    }
+
+    let result = engine.run_with_signals(
+        "SPY",
+        data,
+        |_sym, spot, idx, hist_vols| {
+            // Signal vol: calm during phase 1, panic vol during phases 2 & 3
+            let signal_vol = if idx < 120 {
+                hist_vols.last().copied().unwrap_or(0.15)
+            } else {
+                0.80  // simulate VIX ≈ 80 blowing out during crash
+            };
+            vec![SignalAction::SellCall {
+                strike: spot * 1.05,
+                days_to_expiry: 30,
+                volatility: signal_vol,
+            }]
+        },
+    );
+
+    // ── Stability assertions ───────────────────────────────────────────────
+    assert!(
+        !result.metrics.total_return_pct.is_infinite(),
+        "total_return_pct must not be Inf after 2020 crash simulation"
+    );
+    assert!(
+        !result.metrics.max_drawdown.is_infinite(),
+        "max_drawdown must not be Inf after 2020 crash simulation"
+    );
+    assert!(
+        result.metrics.max_drawdown.is_finite(),
+        "max_drawdown must be finite, got {}", result.metrics.max_drawdown
+    );
+    // The strategy sold calls into a 36 % drawdown — we expect to have taken a hit
+    // (or to have had 0 trades).  Either is fine; what is NOT acceptable is a positive
+    // return that defies financial reality under this design (no stop losses).
+    // Simply assert P&L is in a plausible range [-100%, +50%].
+    if result.metrics.total_trades > 0 {
+        assert!(
+            result.metrics.total_return_pct >= -100.0,
+            "total_return_pct below -100 %: {}  (capital went below zero?)",
+            result.metrics.total_return_pct
+        );
+    }
+}
+

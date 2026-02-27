@@ -13,15 +13,17 @@ pub enum ExerciseStyle {
 /// Binomial tree configuration
 #[derive(Debug, Clone)]
 pub struct BinomialConfig {
-    pub n_steps: usize,      // Number of time steps
-    pub use_dividends: bool, // Whether to include dividends
+    pub n_steps: usize,       // Number of time steps
+    pub use_dividends: bool,  // Whether to include dividends
+    pub dividend_yield: f64,  // Continuous annual dividend yield (0.0 = none)
 }
 
 impl Default for BinomialConfig {
     fn default() -> Self {
         Self {
-            n_steps: 100,  // Reasonable default for accuracy vs speed
+            n_steps: 100,
             use_dividends: false,
+            dividend_yield: 0.0,
         }
     }
 }
@@ -88,8 +90,12 @@ fn binomial_tree(
     let dt = maturity / n as f64;
     let u = (volatility * dt.sqrt()).exp();  // Up factor
     let d = 1.0 / u;                         // Down factor
-    let r = (rate * dt).exp();               // Risk-neutral discount factor
-    let p = (r - d) / (u - d);               // Risk-neutral up probability
+    let disc = (rate * dt).exp();            // Discount factor per step
+    // Continuous dividend yield shifts risk-neutral drift: forward = S*exp((r-q)*dt)
+    let q = if config.use_dividends { config.dividend_yield } else { 0.0 };
+    let fwd_factor = ((rate - q) * dt).exp();
+    let p = (fwd_factor - d) / (u - d);     // Risk-neutral up probability
+    let r = disc;                            // alias kept for backwards-compat
 
     // Validate parameters
     if !p.is_finite() || p < 0.0 || p > 1.0 {
@@ -146,8 +152,11 @@ fn binomial_tree_european(
     let dt = maturity / n as f64;
     let u = (volatility * dt.sqrt()).exp();
     let d = 1.0 / u;
-    let r = (rate * dt).exp();
-    let p = (r - d) / (u - d);
+    let disc = (rate * dt).exp();
+    let q = if config.use_dividends { config.dividend_yield } else { 0.0 };
+    let fwd_factor = ((rate - q) * dt).exp();
+    let p = (fwd_factor - d) / (u - d);
+    let r = disc;
 
     if !p.is_finite() || p < 0.0 || p > 1.0 {
         return 0.0;
@@ -377,9 +386,9 @@ mod tests {
         let rate = 0.05;
         let vol = 0.2;
 
-        let config_50 = BinomialConfig { n_steps: 50, use_dividends: false };
-        let config_100 = BinomialConfig { n_steps: 100, use_dividends: false };
-        let config_200 = BinomialConfig { n_steps: 200, use_dividends: false };
+        let config_50 = BinomialConfig { n_steps: 50, use_dividends: false, dividend_yield: 0.0 };
+        let config_100 = BinomialConfig { n_steps: 100, use_dividends: false, dividend_yield: 0.0 };
+        let config_200 = BinomialConfig { n_steps: 200, use_dividends: false, dividend_yield: 0.0 };
 
         let price_50 = american_call_binomial(spot, strike, maturity, rate, vol, &config_50);
         let price_100 = american_call_binomial(spot, strike, maturity, rate, vol, &config_100);

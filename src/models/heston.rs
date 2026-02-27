@@ -284,6 +284,10 @@ impl HestonMonteCarlo {
                         + self.params.sigma * sqrt_v * sqrt_dt * dw_v
                         + 0.25 * self.params.sigma * self.params.sigma * dt * (dw_v * dw_v - 1.0);
             
+            // Apply reflection boundary (same as simulate_path / simulate_path_antithetic)
+            // Without this, negative variances accumulate silently and corrupt antithetic paths
+            let v_new = if v_new < 0.0 { -v_new } else { v_new };
+
             stock_prices.push(s_new.max(0.0));
             variances.push(v_new);
         }

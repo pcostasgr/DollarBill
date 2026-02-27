@@ -238,4 +238,79 @@ proptest! {
         );
         prop_assert!(valid, "unexpected personality variant: {:?}", personality);
     }
+
+    // ─── Proposal 4: ±1 % price-noise invariance ──────────────────────────────
+
+    /// When the classifier returns a *high confidence* result for a clearly
+    /// dominant personality, adding ±1 % noise to every feature must not flip
+    /// the label.
+    ///
+    /// "High confidence" = the base confidence score is above 0.55 (well above
+    /// the 0.5 decision boundary).  We test two canonical high-confidence cases:
+    ///
+    ///   MomentumLeader  — all momentum features clearly above thresholds
+    ///   VolatileBreaker — extreme vol + high breakout + low beta stability
+    ///
+    /// A flip under sub-1 % noise at high confidence indicates an instability
+    /// in the scorer's threshold placement.
+    #[test]
+    fn momentum_leader_classification_stable_under_1pct_noise(
+        noise in -0.01f64..0.01f64,
+    ) {
+        // All momentum features well clear of their thresholds:
+        //   mom_acc > 0.61, trend > 0.71, vol > 0.75, breakout > 0.6
+        // Scores: MomentumLeader ≈ 9.0, next best ≈ 3.5 — a 5.5-point gap
+        let features = make_features(
+            (0.90 + noise).clamp(0.0, 1.0),   // volatility_percentile
+            (0.85 + noise).clamp(0.0, 1.0),   // trend_strength
+            (0.80 + noise).clamp(0.0, 1.0),   // momentum_acceleration
+            (0.80 + noise).clamp(0.0, 1.0),   // trend_persistence
+            (0.80 + noise).clamp(0.0, 1.0),   // breakout_frequency
+            0.0,                               // mean_reversion_speed (neutral)
+            0.0,                               // mean_reversion_strength
+            0.0,                               // support_resistance_strength
+            0.1,                               // beta_stability
+        );
+        let (personality, confidence) = make_classifier().classify_personality_advanced(&features);
+
+        // Only assert stability when confidence is still high after perturbation
+        if confidence > 0.55 {
+            prop_assert_eq!(
+                personality,
+                StockPersonality::MomentumLeader,
+                "MomentumLeader flipped under {:.4}% noise (confidence={:.3})",
+                noise * 100.0, confidence
+            );
+        }
+    }
+
+    #[test]
+    fn volatile_breaker_classification_stable_under_1pct_noise(
+        noise in -0.01f64..0.01f64,
+    ) {
+        // VolatileBreaker features well clear of thresholds:
+        //   vol > 0.9, breakout > 0.7, beta_stability < 0.4
+        // Scores: VolatileBreaker ≈ 7.5, MomentumLeader ≈ 3.5 — a 4-point gap
+        let features = make_features(
+            (0.97 + noise).clamp(0.0, 1.0),   // volatility_percentile
+            0.0,                               // trend_strength (neutral)
+            0.0,                               // momentum_acceleration
+            0.0,                               // trend_persistence
+            (0.85 + noise).clamp(0.0, 1.0),   // breakout_frequency
+            0.0,                               // mean_reversion_speed
+            0.0,                               // mean_reversion_strength
+            0.0,                               // support_resistance_strength
+            (0.15 + noise).clamp(0.0, 1.0),   // beta_stability (low = volatile)
+        );
+        let (personality, confidence) = make_classifier().classify_personality_advanced(&features);
+
+        if confidence > 0.55 {
+            prop_assert_eq!(
+                personality,
+                StockPersonality::VolatileBreaker,
+                "VolatileBreaker flipped under {:.4}% noise (confidence={:.3})",
+                noise * 100.0, confidence
+            );
+        }
+    }
 }

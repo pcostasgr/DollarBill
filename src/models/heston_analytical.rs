@@ -43,13 +43,18 @@ pub fn heston_call_carr_madan(
     let discount = (-rate * maturity).exp();
     let price = spot * p1 - strike * discount * p2;
     
-    // Ensure non-negative price with better validation
+    // No-arbitrage lower bound for a European call: C >= max(0, S - K*exp(-rT))
+    // The Fourier integration can produce small positive values below intrinsic on
+    // deep-ITM inputs or with extreme vol-of-vol parameters; clamp here ensures
+    // every returned price respects put-call parity at the lower boundary.
+    let intrinsic = (spot - strike * discount).max(0.0);
+
     if price.is_finite() && price >= 0.0 {
-        price
+        price.max(intrinsic)
     } else {
         // Fallback to Black-Scholes approximation for numerical failure
         let bs_vol = (params.v0).sqrt(); // Approximate volatility
-        crate::models::bs_mod::black_scholes_merton_call(spot, strike, maturity, rate, bs_vol, 0.0).price
+        crate::models::bs_mod::black_scholes_merton_call(spot, strike, maturity, rate, bs_vol, 0.0).price.max(intrinsic)
     }
 }
 

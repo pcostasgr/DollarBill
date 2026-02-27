@@ -9,3 +9,5 @@ pub mod test_heston_pathological;
 pub mod test_volatility_surface_arbitrage;
 pub mod test_property_based_extended;
 pub mod test_portfolio_risk;
+pub mod test_heston_stress;
+pub mod test_american_dividends;
