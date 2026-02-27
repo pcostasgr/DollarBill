@@ -40,6 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         stop_loss_pct: Some(200.0), // 200% stop loss
         take_profit_pct: Some(50.0), // 50% profit target
         use_portfolio_management: false,
+        ..BacktestConfig::default()
     };
 
     // Create short strangle strategy

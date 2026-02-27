@@ -61,6 +61,40 @@ impl HestonParams {
     pub fn satisfies_feller(&self) -> bool {
         2.0 * self.kappa * self.theta > self.sigma * self.sigma
     }
+
+    /// Feller ratio 2κθ/σ².  Values > 1 satisfy the Feller condition.
+    /// Calibrated parameters often return values between 0.3–0.9, which is why
+    /// `new_unchecked` exists — hard rejection is impractical for real workflows.
+    pub fn feller_ratio(&self) -> f64 {
+        2.0 * self.kappa * self.theta / (self.sigma * self.sigma)
+    }
+
+    /// Validate only hard parameter bounds; does NOT check the Feller condition.
+    /// Used by `HestonMonteCarlo::new_unchecked` and the Carr-Madan pricer.
+    pub fn validate_bounds_only(&self) -> Result<(), String> {
+        if self.s0 <= 0.0 {
+            return Err("Initial stock price must be positive".to_string());
+        }
+        if self.v0 < 0.0 {
+            return Err("Initial variance cannot be negative".to_string());
+        }
+        if self.kappa <= 0.0 {
+            return Err("Mean reversion rate must be positive".to_string());
+        }
+        if self.theta <= 0.0 {
+            return Err("Long-term variance must be positive".to_string());
+        }
+        if self.sigma <= 0.0 {
+            return Err("Volatility of volatility must be positive".to_string());
+        }
+        if self.rho < -1.0 || self.rho > 1.0 {
+            return Err("Correlation must be between -1 and 1".to_string());
+        }
+        if self.t <= 0.0 {
+            return Err("Time to maturity must be positive".to_string());
+        }
+        Ok(())
+    }
 }
 
 /// Greeks for Heston model options
@@ -166,6 +200,21 @@ impl HestonMonteCarlo {
         Ok(HestonMonteCarlo { params, config })
     }
 
+    /// Create simulator without enforcing the Feller condition (2κθ > σ²).
+    ///
+    /// Calibrated parameters routinely violate Feller — rejecting them inside
+    /// `new()` is overly strict for production use.  Hard bounds (s0 > 0,
+    /// v0 ≥ 0, etc.) are still checked; only the Feller check is skipped.
+    ///
+    /// When Feller is violated the path simulation automatically switches from
+    /// *reflection* to *full truncation* at the zero boundary.  Reflection
+    /// introduces an upward-biased pile-up at v = 0 in this regime; truncation
+    /// (absorbing at 0) is less biased and is the industry-standard fallback.
+    pub fn new_unchecked(params: HestonParams, config: MonteCarloConfig) -> Result<Self, String> {
+        params.validate_bounds_only()?;
+        Ok(HestonMonteCarlo { params, config })
+    }
+
     /// Simulate a single path using Milstein scheme with full truncation
     fn simulate_path(&self, rng: &mut LCG) -> HestonPath {
         let dt = self.params.t / self.config.n_steps as f64;
@@ -197,10 +246,14 @@ impl HestonMonteCarlo {
                            + self.params.sigma * sqrt_v * sqrt_dt * dw_v
                            + 0.25 * self.params.sigma * self.params.sigma * dt * (dw_v * dw_v - 1.0);
             
-            // Apply reflection boundary: if variance would be negative, reflect it back
-            // This preserves the distribution better than absorption (setting to 0)
+            // Adaptive variance boundary.
+            // • Feller satisfied (2κθ > σ²): reflection — preserves the marginal
+            //   distribution with minimal bias in the well-behaved regime.
+            // • Feller violated              : full truncation at 0 — reflection
+            //   introduces a spurious positive pile-up when the variance process
+            //   spends significant time at the boundary; absorption is less biased.
             if v_new < 0.0 {
-                v_new = -v_new; // Reflect negative values back to positive
+                v_new = if self.params.satisfies_feller() { -v_new } else { 0.0 };
             }
             
             stock_prices.push(s_new.max(0.0)); // Ensure non-negative stock price
@@ -241,9 +294,10 @@ impl HestonMonteCarlo {
                            + self.params.sigma * sqrt_v * sqrt_dt * dw_v_anti
                            + 0.25 * self.params.sigma * self.params.sigma * dt * (dw_v_anti * dw_v_anti - 1.0);
             
-            // Apply reflection boundary for antithetic path as well
+            // Adaptive boundary — reflection when Feller satisfied, truncation when violated
+            // (same logic as simulate_path; see that function for detailed rationale).
             if v_new < 0.0 {
-                v_new = -v_new;
+                v_new = if self.params.satisfies_feller() { -v_new } else { 0.0 };
             }
             
             stock_prices.push(s_new.max(0.0));
@@ -284,9 +338,13 @@ impl HestonMonteCarlo {
                         + self.params.sigma * sqrt_v * sqrt_dt * dw_v
                         + 0.25 * self.params.sigma * self.params.sigma * dt * (dw_v * dw_v - 1.0);
             
-            // Apply reflection boundary (same as simulate_path / simulate_path_antithetic)
-            // Without this, negative variances accumulate silently and corrupt antithetic paths
-            let v_new = if v_new < 0.0 { -v_new } else { v_new };
+            // Adaptive boundary — reflection when Feller satisfied, truncation when violated
+            // (same logic as simulate_path; see that function for detailed rationale).
+            let v_new = if v_new < 0.0 {
+                if self.params.satisfies_feller() { -v_new } else { 0.0 }
+            } else {
+                v_new
+            };
 
             stock_prices.push(s_new.max(0.0));
             variances.push(v_new);

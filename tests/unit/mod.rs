@@ -19,4 +19,5 @@ mod backtesting {
     mod test_short_options;
     mod test_edge_cases_backtest;
     mod test_trading_costs;
+    mod test_dynamic_slippage;
 }

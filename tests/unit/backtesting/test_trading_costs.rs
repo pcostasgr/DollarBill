@@ -128,6 +128,7 @@ proptest! {
             commission_per_contract: 0.65,
             bid_ask_spread_percent: spread,
             slippage_model: SlippageModel::Fixed,
+            ..TradingCosts::default()
         };
         let fill = costs.fill_price(mid, true, 0.25, 1);
         prop_assert!(fill > mid, "buy fill {} not > mid {} (spread={})", fill, mid, spread);
@@ -143,6 +144,7 @@ proptest! {
             commission_per_contract: 0.65,
             bid_ask_spread_percent: spread,
             slippage_model: SlippageModel::Fixed,
+            ..TradingCosts::default()
         };
         let fill = costs.fill_price(mid, false, 0.25, 1);
         prop_assert!(fill < mid, "sell fill {} not < mid {} (spread={})", fill, mid, spread);
@@ -159,6 +161,7 @@ proptest! {
             commission_per_contract: commission,
             bid_ask_spread_percent: spread,
             slippage_model: SlippageModel::Fixed,
+            ..TradingCosts::default()
         };
         let buy_fill  = costs.fill_price(mid, true,  0.25, 1);
         let sell_fill = costs.fill_price(mid, false, 0.25, 1);
@@ -181,6 +184,7 @@ proptest! {
             commission_per_contract: per_contract,
             bid_ask_spread_percent: 0.01,
             slippage_model: SlippageModel::Fixed,
+            ..TradingCosts::default()
         };
         let single = costs.commission_for(n);
         let double = costs.commission_for(2 * n);
@@ -303,6 +307,7 @@ fn high_commission_kills_tiny_edge() {
         commission_per_contract: 0.65,
         bid_ask_spread_percent: 0.0,
         slippage_model: SlippageModel::Fixed,
+        ..TradingCosts::default()
     };
 
     let n_condors:      i32 = 100;

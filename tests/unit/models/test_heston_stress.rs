@@ -222,3 +222,88 @@ fn carr_madan_short_maturity_all_strikes_nonneg() {
         );
     }
 }
+
+// ─── 3. Feller violation: new_unchecked + adaptive truncation boundary ────────
+
+/// `feller_ratio()` returns the correct 2κθ/σ² value.
+#[test]
+fn heston_params_feller_ratio_correct() {
+    let p = HestonParams { s0: 100.0, v0: 0.04, kappa: 1.5, theta: 0.04,
+                           sigma: 0.3, rho: -0.5, r: 0.05, t: 1.0 };
+    let expected = 2.0 * 1.5 * 0.04 / (0.3 * 0.3);  // = 1.333...
+    assert!(
+        (p.feller_ratio() - expected).abs() < 1e-9,
+        "feller_ratio() expected {:.6}, got {:.6}", expected, p.feller_ratio()
+    );
+}
+
+/// `validate_bounds_only()` should pass for Feller-violating params that have
+/// valid hard bounds.
+#[test]
+fn validate_bounds_only_passes_for_feller_violated_params() {
+    // 2*0.5*0.04 = 0.04 < 0.64 = 0.8² → Feller violated
+    let p = HestonParams { s0: 100.0, v0: 0.04, kappa: 0.5, theta: 0.04,
+                           sigma: 0.8, rho: -0.5, r: 0.05, t: 1.0 };
+    assert!(p.satisfies_feller() == false, "test sanity: Feller should be violated");
+    assert!(
+        p.validate_bounds_only().is_ok(),
+        "validate_bounds_only should pass for valid-bounded but Feller-violated params"
+    );
+}
+
+/// `validate_bounds_only()` still rejects nonsensical hard bounds.
+#[test]
+fn validate_bounds_only_rejects_negative_s0() {
+    let p = HestonParams { s0: -1.0, v0: 0.04, kappa: 1.0, theta: 0.04,
+                           sigma: 0.3, rho: -0.5, r: 0.05, t: 1.0 };
+    assert!(p.validate_bounds_only().is_err(), "negative s0 must be rejected");
+}
+
+/// `new_unchecked()` succeeds with params that `new()` would reject due to
+/// Feller violation — so calibrated params are actually usable.
+#[test]
+fn new_unchecked_allows_feller_violated_params_where_new_fails() {
+    // Severely violated: 2*0.5*0.04 = 0.04, σ² = 0.64
+    let p = HestonParams { s0: 100.0, v0: 0.04, kappa: 0.5, theta: 0.04,
+                           sigma: 0.8, rho: -0.5, r: 0.05, t: 1.0 };
+    let cfg = MonteCarloConfig { n_paths: 10, n_steps: 20, seed: 1, use_antithetic: false };
+
+    assert!(HestonMonteCarlo::new(p.clone(), cfg.clone()).is_err(),
+            "new() must reject Feller-violating params");
+    assert!(HestonMonteCarlo::new_unchecked(p, cfg).is_ok(),
+            "new_unchecked() must accept Feller-violating params");
+}
+
+/// With Feller violated and full-truncation boundary, all path variances must
+/// still be >= 0 (the truncation absorbs at zero instead of reflecting).
+#[test]
+fn new_unchecked_feller_violated_all_variances_nonneg() {
+    let p = HestonParams { s0: 100.0, v0: 0.04, kappa: 0.5, theta: 0.04,
+                           sigma: 0.8, rho: -0.3, r: 0.05, t: 1.0 };
+    let cfg = MonteCarloConfig { n_paths: 500, n_steps: 50, seed: 42, use_antithetic: false };
+    let mc = HestonMonteCarlo::new_unchecked(p, cfg).expect("unchecked must succeed");
+
+    for (path_idx, path) in mc.simulate_paths().iter().enumerate() {
+        for (step, &v) in path.variances.iter().enumerate() {
+            assert!(
+                v >= 0.0,
+                "Path {} step {}: variance negative ({:.6}) under full-truncation boundary",
+                path_idx, step, v
+            );
+        }
+    }
+}
+
+/// Prices from `new_unchecked` with Feller-violated params must be finite
+/// and positive — truncation should give usable (if slightly biased) prices.
+#[test]
+fn new_unchecked_feller_violated_price_finite_and_positive() {
+    let p = HestonParams { s0: 100.0, v0: 0.04, kappa: 0.5, theta: 0.04,
+                           sigma: 0.8, rho: -0.5, r: 0.05, t: 1.0 };
+    let cfg = MonteCarloConfig { n_paths: 2_000, n_steps: 50, seed: 7, use_antithetic: false };
+    let mc = HestonMonteCarlo::new_unchecked(p, cfg).unwrap();
+    let price = mc.price_european_call(100.0);
+
+    assert!(price.is_finite(), "Feller-violated MC price must be finite: {}", price);
+    assert!(price > 0.0,       "Feller-violated MC price must be positive: {}", price);
+}

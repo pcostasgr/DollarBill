@@ -27,6 +27,61 @@ pub enum SlippageModel {
     /// impact_bps is added on top of the flat spread for every √lot traded.
     /// spread = base + (impact_bps / 10_000) × √contracts
     SizeImpact { impact_bps: f64 },
+
+    /// Panic-widening model: below `normal_vol` the spread is the base rate;
+    /// above it the spread widens as (vol / normal_vol)^panic_exponent, simulating
+    /// the liquidity drought during market panics (e.g. VIX 80 in March 2020).
+    ///
+    /// Example: normal_vol=0.20, panic_exponent=2.0 → at vol=0.80 (4×)
+    /// the spread is 16× wider, matching typical bid-ask blow-out in a crash.
+    PanicWidening {
+        /// Annualised vol below which the spread stays at the base rate.
+        normal_vol: f64,
+        /// Exponent applied to (vol / normal_vol) when vol > normal_vol.
+        /// 1.5 = moderate widening; 2.0 = severe panic widening.
+        panic_exponent: f64,
+    },
+}
+
+/// Models what fraction of a requested order actually executes.
+///
+/// In liquid markets orders fill completely; during a panic, market depth
+/// dries up and the effective fill rate drops — a large vol-seller in
+/// March 2020 might only fill 60% of the desired contracts before the market
+/// moved away.
+#[derive(Debug, Clone)]
+pub enum PartialFillModel {
+    /// All orders execute completely (default; original behaviour).
+    AlwaysFull,
+
+    /// Fill rate scales down as volatility rises above `normal_vol`.
+    ///
+    /// fill_rate = clamp(normal_vol / vol, min_fill_rate, 1.0)
+    ///
+    /// Example: normal_vol=0.25, min_fill_rate=0.30, vol=0.80
+    ///   → fill_rate = clamp(0.25/0.80, 0.30, 1.0) = 0.313 (31% fill).
+    VolScaled {
+        /// At or below this vol the fill rate is 1.0.
+        normal_vol: f64,
+        /// Floor for the fill fraction even in the worst panic (e.g. 0.25 = 25%).
+        min_fill_rate: f64,
+    },
+}
+
+impl PartialFillModel {
+    /// Compute the fill fraction [0, 1] for a given realised volatility.
+    pub fn fill_rate(&self, volatility: f64) -> f64 {
+        match self {
+            Self::AlwaysFull => 1.0,
+            Self::VolScaled { normal_vol, min_fill_rate } => {
+                if volatility <= *normal_vol {
+                    1.0
+                } else {
+                    (normal_vol / volatility).clamp(*min_fill_rate, 1.0)
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -39,6 +94,9 @@ pub struct TradingCosts {
     pub bid_ask_spread_percent: f64,
     /// Controls how slippage scales beyond the flat spread.
     pub slippage_model: SlippageModel,
+    /// Controls what fraction of the desired order size actually fills.
+    /// `AlwaysFull` (default) gives the original 100%-fill behaviour.
+    pub partial_fill_model: PartialFillModel,
 }
 
 impl TradingCosts {
@@ -57,6 +115,14 @@ impl TradingCosts {
             SlippageModel::SizeImpact { impact_bps } => {
                 let impact = (impact_bps / 10_000.0) * (contracts.max(1) as f64).sqrt();
                 base + impact
+            }
+            SlippageModel::PanicWidening { normal_vol, panic_exponent } => {
+                if volatility <= *normal_vol {
+                    base
+                } else {
+                    let vol_ratio = (volatility / normal_vol).min(10.0);
+                    base * vol_ratio.powf(*panic_exponent)
+                }
             }
         }
     }
@@ -77,6 +143,13 @@ impl TradingCosts {
     pub fn commission_for(&self, contracts: i32) -> f64 {
         self.commission_per_contract * contracts.abs() as f64
     }
+
+    /// Effective number of contracts to fill after applying the partial-fill model.
+    /// Returns a value in [0, requested]; may be 0 in extreme panic with VolScaled.
+    pub fn apply_partial_fill(&self, requested: i32, volatility: f64) -> i32 {
+        let rate = self.partial_fill_model.fill_rate(volatility);
+        ((requested.abs() as f64 * rate).floor() as i32).max(0)
+    }
 }
 
 impl Default for TradingCosts {
@@ -85,6 +158,7 @@ impl Default for TradingCosts {
             commission_per_contract: 1.0,   // $1 per contract
             bid_ask_spread_percent: 1.0,    // 1% spread (realistic for SPY options)
             slippage_model: SlippageModel::Fixed,
+            partial_fill_model: PartialFillModel::AlwaysFull,
         }
     }
 }
@@ -101,6 +175,10 @@ pub struct BacktestConfig {
     pub stop_loss_pct: Option<f64>,  // Optional stop loss
     pub take_profit_pct: Option<f64>,  // Optional take profit
     pub use_portfolio_management: bool,  // Enable portfolio-based position sizing and risk limits
+    /// Continuous annual dividend yield for the underlying asset.  Passed to the
+    /// CRR binomial tree when pricing American options so early-exercise is
+    /// correctly penalised for high-dividend stocks.  Default 0.0 (no dividends).
+    pub dividend_yield: f64,
 }
 
 impl Default for BacktestConfig {
@@ -116,6 +194,7 @@ impl Default for BacktestConfig {
             stop_loss_pct: Some(50.0),  // 50% stop loss
             take_profit_pct: Some(100.0),  // 100% take profit
             use_portfolio_management: false,  // Disabled by default for backward compatibility
+            dividend_yield: 0.0,
         }
     }
 }
@@ -368,7 +447,11 @@ impl BacktestEngine {
                 (greeks.price, greeks)
             },
             ExerciseStyle::American => {
-                let config = BinomialConfig::default();
+                let config = BinomialConfig {
+                    use_dividends: self.config.dividend_yield > 0.0,
+                    dividend_yield: self.config.dividend_yield,
+                    ..BinomialConfig::default()
+                };
                 let price = american_call_binomial(spot, strike, time_to_expiry, self.config.risk_free_rate, volatility, &config);
                 let greeks = crate::models::american::american_call_greeks(spot, strike, time_to_expiry, self.config.risk_free_rate, volatility, &config);
                 (price, greeks)
@@ -377,6 +460,11 @@ impl BacktestEngine {
         
         // Calculate position size first
         let position_size = self.calculate_position_size_with_vol(price, volatility);
+        if position_size == 0 {
+            return;
+        }
+        // Partial-fill model: in panic regimes only a fraction of the order executes.
+        let position_size = self.config.trading_costs.apply_partial_fill(position_size, volatility);
         if position_size == 0 {
             return;
         }
@@ -450,7 +538,11 @@ impl BacktestEngine {
                 (greeks.price, greeks)
             },
             ExerciseStyle::American => {
-                let config = BinomialConfig::default();
+                let config = BinomialConfig {
+                    use_dividends: self.config.dividend_yield > 0.0,
+                    dividend_yield: self.config.dividend_yield,
+                    ..BinomialConfig::default()
+                };
                 let price = american_put_binomial(spot, strike, time_to_expiry, self.config.risk_free_rate, volatility, &config);
                 let greeks = crate::models::american::american_put_greeks(spot, strike, time_to_expiry, self.config.risk_free_rate, volatility, &config);
                 (price, greeks)
@@ -459,6 +551,11 @@ impl BacktestEngine {
         
         // Calculate position size first
         let position_size = self.calculate_position_size_with_vol(price, volatility);
+        if position_size == 0 {
+            return;
+        }
+        // Partial-fill model: in panic regimes only a fraction of the order executes.
+        let position_size = self.config.trading_costs.apply_partial_fill(position_size, volatility);
         if position_size == 0 {
             return;
         }
@@ -530,6 +627,11 @@ impl BacktestEngine {
         if position_size == 0 {
             return;
         }
+        // Partial-fill model: in panic regimes only a fraction of the order executes.
+        let position_size = self.config.trading_costs.apply_partial_fill(position_size, volatility);
+        if position_size == 0 {
+            return;
+        }
         
         // Check portfolio risk limits if enabled
         if !self.can_open_position_with_portfolio_check(symbol, greeks.price, volatility, position_size) {
@@ -597,6 +699,12 @@ impl BacktestEngine {
         
         // Calculate position size first
         let position_size = self.calculate_position_size_with_vol(greeks.price, volatility);
+        if position_size == 0 {
+            return;
+        }
+        
+        // Partial-fill model: in panic regimes only a fraction of the order executes.
+        let position_size = self.config.trading_costs.apply_partial_fill(position_size, volatility);
         if position_size == 0 {
             return;
         }

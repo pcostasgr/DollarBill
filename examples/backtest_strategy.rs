@@ -288,7 +288,7 @@ fn backtest_symbol(symbol: &str, config: &StrategyConfig) -> Result<(), Box<dyn 
     // Configure backtest with different holding periods
     let config_short = BacktestConfig {
         initial_capital: config.strategies.short_term.initial_capital,
-        trading_costs: TradingCosts { commission_per_contract: config.backtest.commission_per_trade, bid_ask_spread_percent: 0.0, slippage_model: SlippageModel::Fixed },
+        trading_costs: TradingCosts { commission_per_contract: config.backtest.commission_per_trade, bid_ask_spread_percent: 0.0, slippage_model: SlippageModel::Fixed, ..TradingCosts::default() },
         risk_free_rate: config.backtest.risk_free_rate,
         max_positions: config.backtest.max_positions,
         position_size_pct: config.backtest.position_size_pct,
@@ -297,11 +297,12 @@ fn backtest_symbol(symbol: &str, config: &StrategyConfig) -> Result<(), Box<dyn 
         stop_loss_pct: Some(config.backtest.stop_loss_pct),
         take_profit_pct: Some(config.backtest.take_profit_pct),
         use_portfolio_management: false,
+        ..BacktestConfig::default()
     };
     
     let config_medium = BacktestConfig {
         initial_capital: config.strategies.medium_term.initial_capital,
-        trading_costs: TradingCosts { commission_per_contract: config.backtest.commission_per_trade, bid_ask_spread_percent: 0.0, slippage_model: SlippageModel::Fixed },
+        trading_costs: TradingCosts { commission_per_contract: config.backtest.commission_per_trade, bid_ask_spread_percent: 0.0, slippage_model: SlippageModel::Fixed, ..TradingCosts::default() },
         risk_free_rate: config.backtest.risk_free_rate,
         max_positions: config.backtest.max_positions,
         position_size_pct: config.backtest.position_size_pct,
@@ -310,11 +311,12 @@ fn backtest_symbol(symbol: &str, config: &StrategyConfig) -> Result<(), Box<dyn 
         stop_loss_pct: Some(config.backtest.stop_loss_pct),
         take_profit_pct: Some(config.backtest.take_profit_pct),
         use_portfolio_management: false,
+        ..BacktestConfig::default()
     };
     
     let config_long = BacktestConfig {
         initial_capital: config.strategies.long_term.initial_capital,
-        trading_costs: TradingCosts { commission_per_contract: config.backtest.commission_per_trade, bid_ask_spread_percent: 0.0, slippage_model: SlippageModel::Fixed },
+        trading_costs: TradingCosts { commission_per_contract: config.backtest.commission_per_trade, bid_ask_spread_percent: 0.0, slippage_model: SlippageModel::Fixed, ..TradingCosts::default() },
         risk_free_rate: config.backtest.risk_free_rate,
         max_positions: config.backtest.max_positions,
         position_size_pct: config.backtest.position_size_pct,
@@ -323,6 +325,7 @@ fn backtest_symbol(symbol: &str, config: &StrategyConfig) -> Result<(), Box<dyn 
         stop_loss_pct: Some(config.backtest.stop_loss_pct),
         take_profit_pct: Some(config.backtest.take_profit_pct),
         use_portfolio_management: false,
+        ..BacktestConfig::default()
     };
     
     // Run strategy 1: Short-term (adaptive based on volatility)
