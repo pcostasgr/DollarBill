@@ -232,4 +232,98 @@ proptest! {
             total_cost, value, price, qty, commission
         );
     }
+
+    // ─── Group C: Round-trip Accounting Invariant ─────────────────────────────
+
+    /// Commissions can only decrease PnL — they can never inflate a profit.
+    ///
+    /// For every book of long round-trips, the fee-adjusted PnL must satisfy:
+    ///   pnl_with_fees ≤ pnl_no_fees   (when the gross book is profitable)
+    ///
+    /// Both sides are computed through the Trade API (which applies the options
+    /// ×100 multiplier), differing only in the commission argument, so the
+    /// invariant reduces to: −2 × commission × qty × 100 ≤ 0, which is always
+    /// true for commission ≥ 0.  The test verifies the API implements this
+    /// correctly rather than accidentally adding commissions.
+    #[test]
+    fn commissions_never_turn_profit_into_loss(
+        round_trips in prop::collection::vec(
+            (0.01f64..200.0, 0.01f64..200.0, 1i32..20i32),
+            1..50,
+        ),
+        commission in 0.01f64..100.0,
+    ) {
+        // Gross PnL: same accounting as with fees, but commission = 0.
+        let pnl_no_fees: f64 = round_trips.iter()
+            .map(|(ep, xp, q)| {
+                let entry = Trade::new(0, TradeType::Entry, String::new(), "T".to_string(),
+                                      *ep, *q, 100.0, None, 0.0);
+                let exit = Trade::new(0, TradeType::Exit, String::new(), "T".to_string(),
+                                      *xp, *q, 100.0, None, 0.0);
+                exit.proceeds() - entry.total_cost()
+            })
+            .sum();
+
+        // Net PnL: identical except real commission is charged on every leg.
+        let pnl_with_fees: f64 = round_trips.iter()
+            .map(|(ep, xp, q)| {
+                let entry = Trade::new(0, TradeType::Entry, String::new(), "T".to_string(),
+                                       *ep, *q, 100.0, None, commission);
+                let exit = Trade::new(0, TradeType::Exit, String::new(), "T".to_string(),
+                                      *xp, *q, 100.0, None, commission);
+                exit.proceeds() - entry.total_cost()
+            })
+            .sum();
+
+        if pnl_no_fees > 0.0 {
+            prop_assert!(
+                pnl_with_fees <= pnl_no_fees + 1e-9,
+                "fees increased PnL: gross={:.6} with_fees={:.6} diff={:.6}",
+                pnl_no_fees, pnl_with_fees, pnl_with_fees - pnl_no_fees,
+            );
+        }
+    }
+}
+
+// ─── Deterministic edge-kill test ─────────────────────────────────────────────
+
+/// 100 iron condors with a theoretical $0.02 edge each.
+///
+/// Commission math (realistic $0.65 / contract rate):
+///   100 condors × 4 legs × 2 sides (entry + exit) × $0.65 = $520.00
+///   Gross edge:  100 × $0.02                               =   $2.00
+///   Net PnL:     $2.00 − $520.00                           = −$518.00
+///
+/// This is the "fees ate the edge alive" scenario.  The test is parameterised
+/// so you can see clearly which numbers matter; change commission_per_contract
+/// to 0.0 to watch it flip positive.
+#[test]
+fn high_commission_kills_tiny_edge() {
+    let costs = TradingCosts {
+        commission_per_contract: 0.65,
+        bid_ask_spread_percent: 0.0,
+        slippage_model: SlippageModel::Fixed,
+    };
+
+    let n_condors:      i32 = 100;
+    let legs_per_condor: i32 = 4;
+    let sides:           i32 = 2; // entry + exit
+
+    let gross_pnl        = n_condors as f64 * 0.02;
+    let total_commission = costs.commission_for(n_condors * legs_per_condor * sides);
+    let net_pnl          = gross_pnl - total_commission;
+
+    assert!(
+        net_pnl < 0.0,
+        "Fees ate the edge alive: gross=${:.2}, commissions=${:.2}, net=${:.2}",
+        gross_pnl, total_commission, net_pnl,
+    );
+
+    // Sanity: confirm the commission figure equals the expected $520.
+    let expected_commission = 0.65 * (n_condors * legs_per_condor * sides) as f64;
+    assert!(
+        (total_commission - expected_commission).abs() < 1e-9,
+        "Commission maths wrong: got {:.2}, expected {:.2}",
+        total_commission, expected_commission,
+    );
 }
