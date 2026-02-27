@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // Position sizing algorithms for portfolio management
 
 /// Position sizing method
@@ -179,7 +180,7 @@ impl MultiLegSizer {
     /// Calculate size for iron condor (4 legs)
     pub fn iron_condor_size(
         &self,
-        method: SizingMethod,
+        _method: SizingMethod,
         max_loss: f64,  // Maximum loss if breached
         net_credit: f64, // Net credit received
         volatility: f64,
@@ -199,7 +200,7 @@ impl MultiLegSizer {
     /// Calculate size for credit spread (2 legs)
     pub fn credit_spread_size(
         &self,
-        method: SizingMethod,
+        _method: SizingMethod,
         spread_width: f64,
         net_credit: f64,
         volatility: f64,

@@ -217,7 +217,7 @@ fn calculate_delta(
 
 /// Estimate volatility from market price (inverse problem)
 /// This is a simplified approach - in practice you'd use more sophisticated methods
-fn estimate_volatility(option: &MarketOption, market_price: f64, spot: f64) -> f64 {
+fn estimate_volatility(option: &MarketOption, _market_price: f64, spot: f64) -> f64 {
     // For now, use a reasonable default based on moneyness and time
     // In a real implementation, you'd solve for vol that makes model = market
 

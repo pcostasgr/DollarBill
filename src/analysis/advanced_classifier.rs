@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // Advanced stock personality classification system
 // Multi-dimensional analysis with regime detection and adaptive thresholds
 
@@ -80,6 +81,7 @@ pub struct SectorStats {
 }
 
 /// Advanced stock classifier with multi-dimensional analysis
+#[allow(dead_code)]
 pub struct AdvancedStockClassifier {
     features_cache: HashMap<String, AdvancedStockFeatures>,
     sector_stats: HashMap<String, SectorStats>,
@@ -370,7 +372,6 @@ impl AdvancedStockClassifier {
 
     /// Calculate momentum acceleration (rate of change of momentum)
     fn calculate_momentum_acceleration(&self, history: &[HistoricalDay]) -> Result<f64, Box<dyn Error>> {
-        const SHORT_WINDOW: usize = 20;
         const LONG_WINDOW: usize = 60;
         
         if history.len() < LONG_WINDOW * 2 {

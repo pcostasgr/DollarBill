@@ -1,5 +1,6 @@
 // Scrape live options data from Yahoo Finance
 // Uses undocumented Yahoo API endpoint (free but unofficial)
+#![allow(dead_code)]
 
 use crate::calibration::market_option::{MarketOption, OptionType};
 use serde_json::Value;

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // Type definitions for Alpaca API
 
 use serde::{Deserialize, Serialize};

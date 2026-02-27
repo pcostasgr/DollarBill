@@ -1,4 +1,5 @@
 // Strategy testing framework and comprehensive tests
+#![allow(unused_imports)]
 use crate::strategies::*;
 use crate::strategies::{
     momentum::MomentumStrategy,

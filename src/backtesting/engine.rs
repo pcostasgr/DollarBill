@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // Backtesting engine - orchestrates historical simulation
 
 use crate::backtesting::position::{Position, PositionStatus, OptionType};
@@ -255,13 +256,7 @@ pub struct BacktestEngine {
 }
 
 impl BacktestEngine {
-    /// Effective fill price using the configured slippage model.
-    /// `volatility` is annualised realised vol (used for VolatilityScaled model).
-    fn effective_price(&self, mid_price: f64, is_buying: bool) -> f64 {
-        self.config.trading_costs.fill_price(mid_price, is_buying, 0.25, 1)
-    }
-
-    /// Context-aware fill price — prefers actual vol and contract count.
+    /// Effective fill price — prefers actual vol and contract count.
     fn effective_price_ctx(&self, mid: f64, is_buying: bool, vol: f64, contracts: i32) -> f64 {
         self.config.trading_costs.fill_price(mid, is_buying, vol, contracts)
     }
@@ -442,10 +437,10 @@ impl BacktestEngine {
                         SignalAction::BuyStraddle => {
                             // Implement buy straddle logic
                         },
-                        SignalAction::IronButterfly { wing_width } => {
+                        SignalAction::IronButterfly { .. } => {
                             // Implement iron butterfly logic
                         },
-                        SignalAction::CashSecuredPut { strike_pct } => {
+                        SignalAction::CashSecuredPut { .. } => {
                             // Implement cash-secured put logic
                         },
                         SignalAction::NoAction => {

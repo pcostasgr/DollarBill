@@ -1,5 +1,6 @@
 // Portfolio management module
 // Provides position sizing, risk analytics, allocation, and performance tracking
+#![allow(unused_imports)]
 
 pub mod position_sizing;
 pub mod risk_analytics;

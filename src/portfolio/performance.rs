@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // Performance attribution and tracking
 
 use crate::backtesting::position::{Position, PositionStatus};

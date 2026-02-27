@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // Multi-strategy allocation and portfolio optimization
 
 use std::collections::HashMap;

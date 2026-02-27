@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // Portfolio-level risk analytics
 
 use crate::backtesting::position::{Position, PositionStatus, OptionType};

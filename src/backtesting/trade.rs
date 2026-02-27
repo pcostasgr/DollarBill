@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // Trade record for entry/exit transactions
 
 use crate::models::bs_mod::Greeks;

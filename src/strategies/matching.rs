@@ -49,19 +49,9 @@ impl StrategyMatcher {
         for symbol in symbols {
             println!("  📊 Analyzing {}...", symbol);
 
-            match StockClassifier::analyze_historical_data(symbol) {
-                Ok((volatility, trend_strength, reversion_tendency, momentum_sensitivity)) => {
-                    let profile = matcher.classifier.classify_stock(
-                        symbol,
-                        volatility,
-                        trend_strength,
-                        reversion_tendency,
-                        momentum_sensitivity,
-                    );
-
-                    println!("    🎭 Personality: {:?}", profile.personality);
-                    println!("    📈 Volatility: {:.1}%, Trend: {:.2}, Reversion: {:.2}, Momentum: {:.2}",
-                            volatility, trend_strength, reversion_tendency, momentum_sensitivity);
+            match matcher.classifier.classify_stock_enhanced(symbol, "Technology") {
+                Ok(profile) => {
+                    // classify_stock_enhanced already prints detailed classification output
                     println!("    🏆 Best strategies: {:?}", profile.best_strategies);
                 }
                 Err(e) => {
@@ -125,7 +115,7 @@ impl StrategyMatcher {
             "Cash-Secured Puts" => {
                 Ok(Box::new(CashSecuredPuts::new()))
             }
-            "Mean Reversion" | "Statistical Arbitrage" => {
+            "Statistical Arbitrage" => {
                 Ok(Box::new(MeanReversionStrategy::new()))
             }
             "Breakout Trading" | "Breakout" => {

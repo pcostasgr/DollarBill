@@ -3,7 +3,6 @@
 
 use crate::calibration::market_option::{MarketOption, OptionType};
 use crate::market_data::options_json_loader::{load_options_from_json, filter_liquid_options};
-use crate::models::bs_mod::{black_scholes_merton_call, black_scholes_merton_put};
 use crate::strategies::{SignalAction, TradeSignal};
 use std::error::Error;
 

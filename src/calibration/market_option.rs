@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // Market option data structures for calibration
 
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // Volatility surface analysis and visualization
 // Generates CSV data for volatility surface plotting
 

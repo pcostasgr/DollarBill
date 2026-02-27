@@ -60,7 +60,7 @@ impl IronCondorConfig {
     }
     
     /// Calculate theoretical max profit (net credit)
-    pub fn max_profit_estimate(&self, spot: f64, volatility: f64) -> f64 {
+    pub fn max_profit_estimate(&self, spot: f64, _volatility: f64) -> f64 {
         // This is a simplified estimate - actual calculation requires option pricing
         let put_spread_width = spot * (self.sell_put_pct - self.buy_put_pct);
         let call_spread_width = spot * (self.buy_call_pct - self.sell_call_pct);

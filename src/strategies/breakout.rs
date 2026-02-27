@@ -36,8 +36,8 @@ impl BreakoutStrategy {
         
         // Simulate consolidation range
         let range_size = spot * (0.02 + (symbol_hash * 0.001).sin().abs() * 0.03);
-        let range_high = spot * (1.0 + range_size * 0.5);
-        let range_low = spot * (1.0 - range_size * 0.5);
+        let _range_high = spot * (1.0 + range_size * 0.5);
+        let _range_low = spot * (1.0 - range_size * 0.5);
         
         // Simulate current price relative to range
         let time_factor = (now as f64 * 0.01 + symbol_hash * 0.1).sin();

@@ -140,7 +140,7 @@ fn characteristic_function(
         Complex64::new(0.0, 0.0)
     } else {
         let ratio = (b_j - rho * sigma * phi * i - d) / sigma.powi(2);
-        let exp_ratio = ((1.0 - exp_d_tau) / one_minus_g_exp);
+        let exp_ratio = (1.0 - exp_d_tau) / one_minus_g_exp;
         if ratio.is_finite() && exp_ratio.is_finite() {
             ratio * exp_ratio
         } else {

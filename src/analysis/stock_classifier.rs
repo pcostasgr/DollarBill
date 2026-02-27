@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // Stock personality classification system
 // Analyzes historical performance to match optimal strategies to stocks
 // Enhanced with advanced multi-dimensional feature analysis

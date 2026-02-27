@@ -1,7 +1,7 @@
 // Backtest example - demonstrates the backtesting framework
 // Tests real volatility and momentum-based trading strategies
 
-use dollarbill::backtesting::{BacktestEngine, BacktestConfig, SignalAction, TradingCosts, SlippageModel};
+use dollarbill::backtesting::{BacktestEngine, BacktestConfig, SignalAction, TradingCosts, SlippageModel, PartialFillModel};
 use dollarbill::market_data::csv_loader::load_csv_closes;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -314,9 +314,26 @@ fn backtest_symbol(symbol: &str, config: &StrategyConfig) -> Result<(), Box<dyn 
         ..BacktestConfig::default()
     };
     
+    // Long-term strategy uses FullMarketImpact: realistic liquidity cost model combining
+    // small-cap spread widening × √contract size impact × panic-driven blow-out.
+    // cap_multiplier=1.5 (large-cap bias), size_impact_bps=8 (moderate impact),
+    // normal_vol=0.25 (25% is the long-run avg), panic_exponent=2.0 (quadratic widening).
     let config_long = BacktestConfig {
         initial_capital: config.strategies.long_term.initial_capital,
-        trading_costs: TradingCosts { commission_per_contract: config.backtest.commission_per_trade, bid_ask_spread_percent: 0.0, slippage_model: SlippageModel::Fixed, ..TradingCosts::default() },
+        trading_costs: TradingCosts {
+            commission_per_contract: config.backtest.commission_per_trade,
+            bid_ask_spread_percent: 1.0,
+            slippage_model: SlippageModel::FullMarketImpact {
+                cap_multiplier: 1.5,
+                size_impact_bps: 8.0,
+                normal_vol: 0.25,
+                panic_exponent: 2.0,
+            },
+            partial_fill_model: PartialFillModel::VolScaled {
+                normal_vol: 0.25,
+                min_fill_rate: 0.40,
+            },
+        },
         risk_free_rate: config.backtest.risk_free_rate,
         max_positions: config.backtest.max_positions,
         position_size_pct: config.backtest.position_size_pct,

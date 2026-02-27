@@ -2,7 +2,6 @@
 // Sells OTM call and OTM put simultaneously for premium collection
 
 use crate::strategies::{TradingStrategy, TradeSignal, SignalAction, RiskParams};
-use crate::market_data::csv_loader::HistoricalDay;
 use crate::models::bs_mod::{black_scholes_merton_call, black_scholes_merton_put};
 
 #[derive(Debug, Clone)]
@@ -38,8 +37,8 @@ impl TradingStrategy for ShortStrangleStrategy {
         symbol: &str,
         spot: f64,
         market_iv: f64,
-        model_iv: f64,
-        historical_vol: f64,
+        _model_iv: f64,
+        _historical_vol: f64,
     ) -> Vec<TradeSignal> {
         let mut signals = Vec::new();
 
@@ -136,7 +135,7 @@ impl ShortStrangleStrategy {
         }
 
         // Create signal for best strangle found
-        if let Some((call_strike, put_strike, premium, max_loss)) = best_strangle {
+        if let Some((call_strike, _put_strike, premium, _max_loss)) = best_strangle {
             // For short strangle, we use a custom signal that represents both legs
             // Since we don't have a specific ShortStrangle signal type, we'll use two separate signals
             // In a real implementation, you'd want a multi-leg signal type

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // Heston Stochastic Volatility Model - Monte Carlo Implementation
 // This implementation uses no external libraries except std and rayon for parallelization
 
@@ -65,12 +66,14 @@ impl HestonParams {
     /// Feller ratio 2κθ/σ².  Values > 1 satisfy the Feller condition.
     /// Calibrated parameters often return values between 0.3–0.9, which is why
     /// `new_unchecked` exists — hard rejection is impractical for real workflows.
+    #[allow(dead_code)]
     pub fn feller_ratio(&self) -> f64 {
         2.0 * self.kappa * self.theta / (self.sigma * self.sigma)
     }
 
     /// Validate only hard parameter bounds; does NOT check the Feller condition.
     /// Used by `HestonMonteCarlo::new_unchecked` and the Carr-Madan pricer.
+    #[allow(dead_code)]
     pub fn validate_bounds_only(&self) -> Result<(), String> {
         if self.s0 <= 0.0 {
             return Err("Initial stock price must be positive".to_string());
@@ -161,6 +164,7 @@ impl LCG {
 /// A single simulated path
 pub struct HestonPath {
     pub stock_prices: Vec<f64>,
+    #[allow(dead_code)]
     pub variances: Vec<f64>,
 }
 

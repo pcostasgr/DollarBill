@@ -1,5 +1,6 @@
 // src/symbols.rs
 // Popular and viral stock symbols for analysis
+#![allow(dead_code)]
 
 use serde::Deserialize;
 use std::fs;

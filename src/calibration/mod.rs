@@ -1,4 +1,5 @@
 // Calibration module - fits model parameters to market data
+#![allow(unused_imports)]
 
 pub mod market_option;
 pub mod heston_calibrator;

@@ -1,5 +1,6 @@
 // Backtesting framework for historical strategy evaluation
 // Simulates option trading on historical data with full P&L and performance metrics
+#![allow(unused_imports)]
 
 pub mod position;
 pub mod trade;
