@@ -4,3 +4,8 @@ pub mod test_heston;
 pub mod test_edge_cases;
 pub mod test_numerical_stability;
 pub mod test_property_based;
+pub mod test_pathological_bs;
+pub mod test_pathological_heston;
+pub mod test_vol_surface_arbitrage;
+pub mod test_property_based_extended;
+pub mod test_portfolio_risk;
