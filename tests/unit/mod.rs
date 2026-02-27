@@ -21,4 +21,5 @@ mod backtesting {
     mod test_trading_costs;
     mod test_dynamic_slippage;
     mod test_market_impact;
+    mod test_liquidity_tiers;
 }
