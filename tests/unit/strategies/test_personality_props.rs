@@ -313,4 +313,155 @@ proptest! {
             );
         }
     }
+
+    // ── Extended noise robustness: ±2% perturbation tests ────────────────────
+    //
+    // Proposal: "Personality fuzz robustness — ±0.5–2% price noise → classification
+    // flip?  Extends the existing ±1% tests to ±2% for deeper robustness coverage."
+
+    /// MomentumLeader features placed 10–15 pp above all thresholds must still
+    /// classify correctly when features are perturbed by up to ±2%.
+    #[test]
+    fn momentum_leader_stable_under_2pct_noise(
+        noise in -0.02f64..0.02f64,
+    ) {
+        let features = make_features(
+            (0.90 + noise).clamp(0.0, 1.0),
+            (0.85 + noise).clamp(0.0, 1.0),
+            (0.80 + noise).clamp(0.0, 1.0),
+            (0.80 + noise).clamp(0.0, 1.0),
+            (0.80 + noise).clamp(0.0, 1.0),
+            0.0,
+            0.0,
+            0.0,
+            0.1,
+        );
+        let (personality, confidence) = make_classifier().classify_personality_advanced(&features);
+
+        if confidence > 0.50 {
+            prop_assert_eq!(
+                personality,
+                StockPersonality::MomentumLeader,
+                "MomentumLeader flipped under {:.4}% noise (confidence={:.3})",
+                noise * 100.0, confidence
+            );
+        }
+    }
+
+    /// VolatileBreaker features placed well above all thresholds must still
+    /// classify correctly under ±2% perturbation.
+    #[test]
+    fn volatile_breaker_stable_under_2pct_noise(
+        noise in -0.02f64..0.02f64,
+    ) {
+        let features = make_features(
+            (0.97 + noise).clamp(0.0, 1.0),
+            0.0,
+            0.0,
+            0.0,
+            (0.85 + noise).clamp(0.0, 1.0),
+            0.0,
+            0.0,
+            0.0,
+            (0.15 + noise).clamp(0.0, 1.0),
+        );
+        let (personality, confidence) = make_classifier().classify_personality_advanced(&features);
+
+        if confidence > 0.50 {
+            prop_assert_eq!(
+                personality,
+                StockPersonality::VolatileBreaker,
+                "VolatileBreaker flipped under {:.4}% noise (confidence={:.3})",
+                noise * 100.0, confidence
+            );
+        }
+    }
+
+    /// MeanReverting features (extreme mean-reversion scores, no momentum) must
+    /// remain stable under ±2% feature perturbation.
+    #[test]
+    fn mean_reverting_stable_under_2pct_noise(
+        noise in -0.02f64..0.02f64,
+    ) {
+        // MeanReverting dominates when: mean_reversion_speed > 0.6,
+        // mean_reversion_strength > 0.6, support_resistance > 0.5.
+        // Set features 25 pp above these thresholds for a comfortable margin.
+        let features = make_features(
+            (0.30 + noise).clamp(0.0, 1.0),  // vol low (not a volatile stock)
+            0.0,                              // trend_strength (no momentum)
+            0.0,
+            0.0,
+            0.0,
+            (0.85 + noise).clamp(0.0, 1.0),  // mean_reversion_speed high
+            (0.85 + noise).clamp(0.0, 1.0),  // mean_reversion_strength high
+            (0.80 + noise).clamp(0.0, 1.0),  // support_resistance_strength high
+            0.5,                              // beta_stability neutral
+        );
+        let (personality, confidence) = make_classifier().classify_personality_advanced(&features);
+
+        if confidence > 0.50 {
+            prop_assert_eq!(
+                personality,
+                StockPersonality::MeanReverting,
+                "MeanReverting flipped under {:.4}% noise (confidence={:.3})",
+                noise * 100.0, confidence
+            );
+        }
+    }
+}
+
+// ─── Deterministic flip-rate measurement ─────────────────────────────────────
+//
+// Proptest can assert per-sample invariants but cannot count aggregate flip
+// rates.  This deterministic test sweeps 50 evenly-spaced noise values across
+// the ±2% range for features positioned near a classification boundary and
+// asserts that the flip rate is < 30%.  This gives an empirical bound on the
+// "danger zone" for live trading decisions.
+
+#[test]
+fn classification_near_boundary_flip_rate_under_30pct_over_2pct_noise() {
+    let classifier = make_classifier();
+    let n_samples       = 50_usize;
+    let noise_range     = 0.02_f64;  // ±2%
+
+    // Features near the MomentumLeader boundary — just 5 pp above each threshold.
+    // At this margin, a 2% perturbation can theoretically reach the boundary.
+    let base_vol_pct  = 0.66_f64;  // threshold ≈ 0.61 + 5 pp margin
+    let base_trend    = 0.76_f64;  // threshold ≈ 0.71 + 5 pp margin
+    let base_mom_acc  = 0.66_f64;  // threshold ≈ 0.61 + 5 pp margin
+    let base_breakout = 0.65_f64;  // threshold ≈ 0.60 + 5 pp margin
+
+    // Determine the "baseline" classification (no noise)
+    let baseline_features = make_features(
+        base_vol_pct, base_trend, base_mom_acc, base_breakout, base_breakout,
+        0.0, 0.0, 0.0, 0.1,
+    );
+    let (baseline_personality, _) =
+        classifier.classify_personality_advanced(&baseline_features);
+
+    let mut flip_count = 0_usize;
+
+    for i in 0..n_samples {
+        let noise = -noise_range + (2.0 * noise_range / (n_samples as f64 - 1.0)) * i as f64;
+        let features = make_features(
+            (base_vol_pct  + noise).clamp(0.0, 1.0),
+            (base_trend    + noise).clamp(0.0, 1.0),
+            (base_mom_acc  + noise).clamp(0.0, 1.0),
+            (base_breakout + noise).clamp(0.0, 1.0),
+            (base_breakout + noise).clamp(0.0, 1.0),
+            0.0, 0.0, 0.0, 0.1,
+        );
+        let (personality, _) = classifier.classify_personality_advanced(&features);
+        if personality != baseline_personality {
+            flip_count += 1;
+        }
+    }
+
+    let flip_rate = flip_count as f64 / n_samples as f64;
+    assert!(
+        flip_rate < 0.30,
+        "Classification flip rate near boundary is {:.1}% ({}/{}) over ±2% noise — \
+         exceeds 30% threshold; boundary too unstable for live trading",
+        flip_rate * 100.0, flip_count, n_samples
+    );
 }

@@ -41,6 +41,35 @@ pub enum SlippageModel {
         /// 1.5 = moderate widening; 2.0 = severe panic widening.
         panic_exponent: f64,
     },
+
+    /// Full market-impact model combining three real-world liquidity effects:
+    ///
+    /// 1. **Cap-class multiplier** — small/illiquid stocks have intrinsically
+    ///    wider spreads.  `cap_multiplier = 1.0` for large-caps (SPY, AAPL),
+    ///    `3.0` for micro-caps or thinly traded names.
+    ///
+    /// 2. **√-contract size impact** — large orders move the market proportional
+    ///    to the square-root of the number of contracts traded.
+    ///    `size_impact_bps` bps are added per √lot.
+    ///
+    /// 3. **Panic widening** — when realised vol exceeds `normal_vol` the
+    ///    combined base+size spread is multiplied by (vol/normal_vol)^panic_exponent.
+    ///
+    /// Formula:
+    ///   base  = (bid_ask_spread_percent / 200) × cap_multiplier
+    ///   size  = (size_impact_bps / 10_000) × √contracts
+    ///   panic = if vol > normal_vol { (vol/normal_vol)^panic_exponent } else { 1 }
+    ///   half_spread = (base + size) × panic
+    FullMarketImpact {
+        /// Base spread multiplier for illiquidity class (1.0 = large-cap, 3.0 = small-cap).
+        cap_multiplier: f64,
+        /// Market impact in basis points per √contract traded.
+        size_impact_bps: f64,
+        /// Annualised vol threshold below which no panic widening occurs.
+        normal_vol: f64,
+        /// Exponent applied to (vol / normal_vol) when vol > normal_vol.
+        panic_exponent: f64,
+    },
 }
 
 /// Models what fraction of a requested order actually executes.
@@ -123,6 +152,22 @@ impl TradingCosts {
                     let vol_ratio = (volatility / normal_vol).min(10.0);
                     base * vol_ratio.powf(*panic_exponent)
                 }
+            }
+            SlippageModel::FullMarketImpact {
+                cap_multiplier,
+                size_impact_bps,
+                normal_vol,
+                panic_exponent,
+            } => {
+                let illiq_base = (self.bid_ask_spread_percent / 200.0) * cap_multiplier;
+                let size_impact = (size_impact_bps / 10_000.0)
+                    * (contracts.max(1) as f64).sqrt();
+                let panic_mult = if volatility > *normal_vol {
+                    (volatility / normal_vol).min(10.0).powf(*panic_exponent)
+                } else {
+                    1.0
+                };
+                (illiq_base + size_impact) * panic_mult
             }
         }
     }

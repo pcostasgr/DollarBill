@@ -20,4 +20,5 @@ mod backtesting {
     mod test_edge_cases_backtest;
     mod test_trading_costs;
     mod test_dynamic_slippage;
+    mod test_market_impact;
 }

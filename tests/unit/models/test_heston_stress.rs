@@ -307,3 +307,126 @@ fn new_unchecked_feller_violated_price_finite_and_positive() {
     assert!(price.is_finite(), "Feller-violated MC price must be finite: {}", price);
     assert!(price > 0.0,       "Feller-violated MC price must be positive: {}", price);
 }
+
+// ─── 4. 10 000-path guardrail test for extreme Feller violation ───────────────
+//
+// Proposal: "Explicit Feller guardrails + variance path tests — prove no negative
+// variance in 10 000-path Monte-Carlo under extreme params."
+//
+// These params achieve feller_ratio = 2κθ/σ² ≈ 0.01 — far below the Feller
+// threshold of 1.0 and far more extreme than any calibrated real-world fit.
+// Without full-truncation at the boundary the Euler–Maruyama scheme would
+// produce negative variance on virtually every path.
+
+/// 10 000 paths with feller_ratio ≈ 0.01 (2×0.5×0.04 / 2.0² = 0.02/4 = 0.005).
+/// Every variance value across every path and every time step must be ≥ 0.
+/// This is the definitive proof that the full-truncation boundary in
+/// `simulate_path` holds under the most extreme Feller violation we can construct.
+#[test]
+fn heston_10k_paths_extreme_feller_violation_all_variances_nonneg() {
+    // kappa=0.5, theta=0.04, sigma=2.0 → feller_ratio = 2·0.5·0.04 / 4.0 = 0.01
+    let p = HestonParams {
+        s0: 100.0,
+        v0: 0.04,
+        kappa: 0.5,
+        theta: 0.04,
+        sigma: 2.0,    // σ² = 4.0; 2κθ = 0.04 → ratio = 0.01 (100× below threshold)
+        rho: -0.3,
+        r: 0.05,
+        t: 1.0,
+    };
+
+    // Sanity-check the fixture before running
+    assert!(
+        p.feller_ratio() < 0.1,
+        "Test fixture must be an extreme Feller violation (ratio < 0.1), got {:.4}",
+        p.feller_ratio()
+    );
+    assert!(
+        !p.satisfies_feller(),
+        "Test fixture must violate the Feller condition"
+    );
+
+    // Coarse grid (50 steps) maximises per-step variance noise — worst case for the
+    // Euler scheme.  We deliberately do NOT use antithetic variates so every path is
+    // independently stressed.
+    let cfg = MonteCarloConfig {
+        n_paths: 10_000,
+        n_steps: 50,
+        seed: 2024,
+        use_antithetic: false,
+    };
+
+    let mc = HestonMonteCarlo::new_unchecked(p, cfg).expect("new_unchecked must succeed");
+    let paths = mc.simulate_paths();
+
+    assert_eq!(paths.len(), 10_000, "Expected 10 000 simulated paths");
+
+    let mut negative_count = 0usize;
+    let mut min_variance   = f64::INFINITY;
+
+    for path in &paths {
+        for &v in &path.variances {
+            if v < 0.0 {
+                negative_count += 1;
+            }
+            if v < min_variance {
+                min_variance = v;
+            }
+        }
+    }
+
+    assert_eq!(
+        negative_count, 0,
+        "{} negative variance value(s) found across 10 000 paths (min={:.6e}). \
+         Full-truncation boundary is not holding under extreme Feller violation.",
+        negative_count, min_variance
+    );
+    assert!(
+        min_variance >= 0.0,
+        "Minimum variance across all paths/steps must be ≥ 0, got {:.6e}",
+        min_variance
+    );
+}
+
+/// Same extreme params via antithetic paths: both the original and mirror path
+/// must have all variances ≥ 0, proving `simulate_path_with_randoms` applies
+/// full-truncation consistently in both branches.
+#[test]
+fn heston_10k_antithetic_paths_extreme_feller_all_variances_nonneg() {
+    let p = HestonParams {
+        s0: 100.0,
+        v0: 0.04,
+        kappa: 0.5,
+        theta: 0.04,
+        sigma: 2.0,
+        rho: -0.3,
+        r: 0.05,
+        t: 1.0,
+    };
+
+    let cfg = MonteCarloConfig {
+        n_paths: 5_000,   // antithetic halves the variance, so 5k pairs = 10k paths
+        n_steps: 50,
+        seed: 2025,
+        use_antithetic: true,
+    };
+
+    let mc = HestonMonteCarlo::new_unchecked(p, cfg).expect("new_unchecked must succeed");
+    let paths = mc.simulate_paths();
+
+    let mut negative_count = 0usize;
+    for path in &paths {
+        for &v in &path.variances {
+            if v < 0.0 {
+                negative_count += 1;
+            }
+        }
+    }
+
+    assert_eq!(
+        negative_count, 0,
+        "{} negative variance value(s) in antithetic paths under extreme Feller violation",
+        negative_count
+    );
+}
