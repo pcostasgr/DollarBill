@@ -329,6 +329,7 @@ fn test_short_options_commission_impact() {
         trading_costs: dollarbill::backtesting::TradingCosts {
             commission_per_contract: 0.50,
             bid_ask_spread_percent: 0.0,
+            slippage_model: dollarbill::backtesting::SlippageModel::Fixed,
         },
         ..Default::default()
     };
@@ -337,6 +338,7 @@ fn test_short_options_commission_impact() {
         trading_costs: dollarbill::backtesting::TradingCosts {
             commission_per_contract: 5.0,
             bid_ask_spread_percent: 0.0,
+            slippage_model: dollarbill::backtesting::SlippageModel::Fixed,
         },
         ..Default::default()
     };

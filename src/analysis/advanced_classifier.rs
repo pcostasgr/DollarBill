@@ -706,80 +706,81 @@ impl AdvancedStockClassifier {
 
     pub fn classify_personality_advanced(&self, features: &AdvancedStockFeatures) -> (crate::analysis::stock_classifier::StockPersonality, f64) {
         use crate::analysis::stock_classifier::StockPersonality;
-        use std::collections::HashMap;
         
-        let mut scores = HashMap::new();
-        scores.insert(StockPersonality::MomentumLeader, 0.0);
-        scores.insert(StockPersonality::MeanReverting, 0.0);
-        scores.insert(StockPersonality::TrendFollower, 0.0);
-        scores.insert(StockPersonality::VolatileBreaker, 0.0);
-        scores.insert(StockPersonality::StableAccumulator, 0.0);
+        // Fixed-order array — deterministic tie-breaking (last max wins).
+        let mut scores: [(StockPersonality, f64); 5] = [
+            (StockPersonality::MomentumLeader,   0.0),
+            (StockPersonality::MeanReverting,    0.0),
+            (StockPersonality::TrendFollower,    0.0),
+            (StockPersonality::VolatileBreaker,  0.0),
+            (StockPersonality::StableAccumulator, 0.0),
+        ];
         
         // Momentum Leader scoring (high momentum + trend + vol)
         if features.momentum_acceleration > 0.6 {
-            *scores.get_mut(&StockPersonality::MomentumLeader).unwrap() += 3.0;
+            scores[0].1 += 3.0;
         }
         if features.trend_persistence > 0.7 {
-            *scores.get_mut(&StockPersonality::MomentumLeader).unwrap() += 2.5;
+            scores[0].1 += 2.5;
         }
         if features.volatility_percentile > 0.75 {
-            *scores.get_mut(&StockPersonality::MomentumLeader).unwrap() += 2.0;
+            scores[0].1 += 2.0;
         }
         if features.breakout_frequency > 0.6 {
-            *scores.get_mut(&StockPersonality::MomentumLeader).unwrap() += 1.5;
+            scores[0].1 += 1.5;
         }
         
         // Mean Reverting scoring (high reversion + low trend persistence)
         if features.mean_reversion_speed > 0.7 {
-            *scores.get_mut(&StockPersonality::MeanReverting).unwrap() += 3.0;
+            scores[1].1 += 3.0;
         }
         if features.mean_reversion_strength > 0.6 {
-            *scores.get_mut(&StockPersonality::MeanReverting).unwrap() += 2.5;
+            scores[1].1 += 2.5;
         }
         if features.support_resistance_strength > 0.6 {
-            *scores.get_mut(&StockPersonality::MeanReverting).unwrap() += 2.0;
+            scores[1].1 += 2.0;
         }
         if features.trend_persistence < 0.4 {
-            *scores.get_mut(&StockPersonality::MeanReverting).unwrap() += 1.5;
+            scores[1].1 += 1.5;
         }
         
         // Trend Follower scoring (sustained trends + medium vol)
         if features.trend_strength > 0.7 && features.trend_persistence > 0.6 {
-            *scores.get_mut(&StockPersonality::TrendFollower).unwrap() += 3.0;
+            scores[2].1 += 3.0;
         }
         if features.volatility_percentile > 0.3 && features.volatility_percentile < 0.8 {
-            *scores.get_mut(&StockPersonality::TrendFollower).unwrap() += 2.0;
+            scores[2].1 += 2.0;
         }
         if features.beta_stability > 0.7 {
-            *scores.get_mut(&StockPersonality::TrendFollower).unwrap() += 1.5;
+            scores[2].1 += 1.5;
         }
         
         // Volatile Breaker scoring (extreme vol + breakouts)
         if features.volatility_percentile > 0.9 {
-            *scores.get_mut(&StockPersonality::VolatileBreaker).unwrap() += 3.0;
+            scores[3].1 += 3.0;
         }
         if features.breakout_frequency > 0.7 {
-            *scores.get_mut(&StockPersonality::VolatileBreaker).unwrap() += 2.5;
+            scores[3].1 += 2.5;
         }
         if features.beta_stability < 0.4 {
-            *scores.get_mut(&StockPersonality::VolatileBreaker).unwrap() += 2.0;
+            scores[3].1 += 2.0;
         }
         
         // Stable Accumulator scoring (low vol + steady trends)
         if features.volatility_percentile < 0.4 {
-            *scores.get_mut(&StockPersonality::StableAccumulator).unwrap() += 3.0;
+            scores[4].1 += 3.0;
         }
         if features.trend_strength > 0.4 && features.volatility_percentile < 0.6 {
-            *scores.get_mut(&StockPersonality::StableAccumulator).unwrap() += 2.5;
+            scores[4].1 += 2.5;
         }
         if features.beta_stability > 0.8 {
-            *scores.get_mut(&StockPersonality::StableAccumulator).unwrap() += 2.0;
+            scores[4].1 += 2.0;
         }
         if features.support_resistance_strength > 0.5 {
-            *scores.get_mut(&StockPersonality::StableAccumulator).unwrap() += 1.5;
+            scores[4].1 += 1.5;
         }
         
-        // Find best match and calculate confidence
+        // Find best match — deterministic: scans left-to-right, last equal wins.
         let max_entry = scores.into_iter()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
             .unwrap_or((StockPersonality::StableAccumulator, 0.0));

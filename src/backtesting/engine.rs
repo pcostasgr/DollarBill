@@ -9,17 +9,82 @@ use crate::market_data::csv_loader::HistoricalDay;
 use crate::portfolio::{PortfolioManager, PortfolioConfig, SizingMethod, AllocationMethod, RiskLimits};
 use crate::strategies::SignalAction;
 
+/// How the bid-ask spread (and market impact) scales beyond a flat percentage.
+///
+/// All models start from `bid_ask_spread_percent / 2` as the one-way half-spread.
+#[derive(Debug, Clone)]
+pub enum SlippageModel {
+    /// Constant half-spread — the same percentage regardless of volatility or size.
+    /// This is the original behaviour and the default.
+    Fixed,
+
+    /// Half-spread grows linearly with realised volatility relative to a 25% baseline.
+    /// spread = base * (1 + multiplier * (vol / 0.25 − 1)).
+    /// `multiplier = 1.0` means at 50% vol you pay 3× the base spread.
+    VolatilityScaled { multiplier: f64 },
+
+    /// Square-root market-impact model commonly used in option markets.
+    /// impact_bps is added on top of the flat spread for every √lot traded.
+    /// spread = base + (impact_bps / 10_000) × √contracts
+    SizeImpact { impact_bps: f64 },
+}
+
 #[derive(Debug, Clone)]
 pub struct TradingCosts {
-    pub commission_per_contract: f64,  // $0.50–$2.50 per contract (realistic)
-    pub bid_ask_spread_percent: f64,   // 0.5–5% of mid price (market impact)
+    /// Flat commission charged per contract on every leg, entry and exit.
+    /// Typical range: $0.50 (low-cost broker) to $2.50 (full service).
+    pub commission_per_contract: f64,
+    /// Base bid-ask spread as a % of the option mid-price (round-trip = 2× this half).
+    /// Typical range: 0.5% (liquid large-cap) to 5% (illiquid small-cap).
+    pub bid_ask_spread_percent: f64,
+    /// Controls how slippage scales beyond the flat spread.
+    pub slippage_model: SlippageModel,
+}
+
+impl TradingCosts {
+    /// One-way half-spread fraction to apply to the mid price.
+    ///
+    /// Buying: fill = mid × (1 + half_spread)
+    /// Selling: fill = mid × (1 − half_spread)
+    pub fn half_spread(&self, volatility: f64, contracts: i32) -> f64 {
+        let base = self.bid_ask_spread_percent / 200.0;  // half of the full spread %
+        match &self.slippage_model {
+            SlippageModel::Fixed => base,
+            SlippageModel::VolatilityScaled { multiplier } => {
+                let vol_ratio = (volatility / 0.25).clamp(0.5, 5.0);
+                base * (1.0 + multiplier * (vol_ratio - 1.0).max(0.0))
+            }
+            SlippageModel::SizeImpact { impact_bps } => {
+                let impact = (impact_bps / 10_000.0) * (contracts.max(1) as f64).sqrt();
+                base + impact
+            }
+        }
+    }
+
+    /// Effective fill price given the mid-market price and trade direction.
+    pub fn fill_price(&self, mid: f64, is_buying: bool, volatility: f64, contracts: i32) -> f64 {
+        let h = self.half_spread(volatility, contracts);
+        if is_buying { mid * (1.0 + h) } else { mid * (1.0 - h) }
+    }
+
+    /// One-way slippage cost in dollars: how much you lose to the spread on a single leg.
+    pub fn one_way_slippage(&self, mid: f64, contracts: i32, volatility: f64) -> f64 {
+        let h = self.half_spread(volatility, contracts);
+        mid * contracts.abs() as f64 * 100.0 * h
+    }
+
+    /// Total commission for a trade with the given number of contracts.
+    pub fn commission_for(&self, contracts: i32) -> f64 {
+        self.commission_per_contract * contracts.abs() as f64
+    }
 }
 
 impl Default for TradingCosts {
     fn default() -> Self {
         Self {
-            commission_per_contract: 1.0,  // $1 per contract
-            bid_ask_spread_percent: 1.0,   // 1% spread
+            commission_per_contract: 1.0,   // $1 per contract
+            bid_ask_spread_percent: 1.0,    // 1% spread (realistic for SPY options)
+            slippage_model: SlippageModel::Fixed,
         }
     }
 }
@@ -66,21 +131,20 @@ pub struct BacktestEngine {
 }
 
 impl BacktestEngine {
-    /// Calculate effective price including bid-ask spread
-    /// For buying: price * (1 + spread/2) 
-    /// For selling: price * (1 - spread/2)
+    /// Effective fill price using the configured slippage model.
+    /// `volatility` is annualised realised vol (used for VolatilityScaled model).
     fn effective_price(&self, mid_price: f64, is_buying: bool) -> f64 {
-        let spread_factor = self.config.trading_costs.bid_ask_spread_percent / 100.0;
-        if is_buying {
-            mid_price * (1.0 + spread_factor / 2.0)
-        } else {
-            mid_price * (1.0 - spread_factor / 2.0)
-        }
+        self.config.trading_costs.fill_price(mid_price, is_buying, 0.25, 1)
     }
-    
-    /// Calculate total commission for a trade
-    fn calculate_commission(&self, quantity: i32) -> f64 {
-        self.config.trading_costs.commission_per_contract * quantity.abs() as f64
+
+    /// Context-aware fill price — prefers actual vol and contract count.
+    fn effective_price_ctx(&self, mid: f64, is_buying: bool, vol: f64, contracts: i32) -> f64 {
+        self.config.trading_costs.fill_price(mid, is_buying, vol, contracts)
+    }
+
+    /// Total commission for `contracts` lots (already the sum, not per-contract).
+    fn calculate_commission(&self, contracts: i32) -> f64 {
+        self.config.trading_costs.commission_for(contracts)
     }
     pub fn new(config: BacktestConfig) -> Self {
         let portfolio_manager = if config.use_portfolio_management {
@@ -335,21 +399,24 @@ impl BacktestEngine {
             Some(greeks),
         );
         
-        // Calculate effective price with bid-ask spread (buying)
-        let effective_price = self.effective_price(price, true);
+        // Effective fill price when buying (we pay more than mid due to spread)
+        let effective_price = self.effective_price_ctx(price, true, volatility, position_size);
         let commission = self.calculate_commission(position_size);
+        let slippage = self.config.trading_costs.one_way_slippage(price, position_size, volatility);
         
-        let trade = Trade::new(
+        let mut trade = Trade::new(
             self.position_counter,
             TradeType::Entry,
             date.to_string(),
             symbol.to_string(),
-            effective_price,  // Use effective price instead of mid price
+            effective_price,
             position_size,
             spot,
             Some(greeks),
             commission,
         );
+        trade.mid_price = price;
+        trade.slippage = slippage;
         
         self.current_capital -= trade.total_cost();
         self.positions.push(position);
@@ -414,21 +481,24 @@ impl BacktestEngine {
             Some(greeks),
         );
         
-        // Calculate effective price with bid-ask spread (buying)
-        let effective_price = self.effective_price(price, true);
+        // Effective fill price when buying (we pay more than mid due to spread)
+        let effective_price = self.effective_price_ctx(price, true, volatility, position_size);
         let commission = self.calculate_commission(position_size);
+        let slippage = self.config.trading_costs.one_way_slippage(price, position_size, volatility);
         
-        let trade = Trade::new(
+        let mut trade = Trade::new(
             self.position_counter,
             TradeType::Entry,
             date.to_string(),
             symbol.to_string(),
-            effective_price,  // Use effective price instead of mid price
+            effective_price,
             position_size,
             spot,
             Some(greeks),
             commission,
         );
+        trade.mid_price = price;
+        trade.slippage = slippage;
         
         self.current_capital -= trade.total_cost();
         self.positions.push(position);
@@ -480,24 +550,27 @@ impl BacktestEngine {
             Some(greeks),
         );
         
-        // Calculate effective price with bid-ask spread (selling/short)
-        let effective_price = self.effective_price(greeks.price, false);
+        // Effective fill price when selling (we get less than mid due to spread)
+        let effective_price = self.effective_price_ctx(greeks.price, false, volatility, position_size as i32);
         let commission = self.calculate_commission(position_size as i32);
+        let slippage = self.config.trading_costs.one_way_slippage(greeks.price, position_size as i32, volatility);
         
-        let trade = Trade::new(
+        let mut trade = Trade::new(
             self.position_counter,
             TradeType::Entry,
             date.to_string(),
             symbol.to_string(),
-            effective_price,  // Use effective price instead of mid price
+            effective_price,
             -(position_size as i32),  // Negative for short
             spot,
             Some(greeks),
             commission,
         );
+        trade.mid_price = greeks.price;
+        trade.slippage = slippage;
         
-        // For short options, we receive premium (credit) minus commission
-        self.current_capital += trade.total_cost();
+        // For short options: credit received = effective_price × qty × 100 − commission
+        self.current_capital += trade.proceeds();
         self.positions.push(position);
         self.trades.push(trade);
         self.position_counter += 1;
@@ -547,24 +620,27 @@ impl BacktestEngine {
             Some(greeks),
         );
         
-        // Calculate effective price with bid-ask spread (selling/short)
-        let effective_price = self.effective_price(greeks.price, false);
+        // Effective fill price when selling (we get less than mid due to spread)
+        let effective_price = self.effective_price_ctx(greeks.price, false, volatility, position_size as i32);
         let commission = self.calculate_commission(position_size as i32);
+        let slippage = self.config.trading_costs.one_way_slippage(greeks.price, position_size as i32, volatility);
         
-        let trade = Trade::new(
+        let mut trade = Trade::new(
             self.position_counter,
             TradeType::Entry,
             date.to_string(),
             symbol.to_string(),
-            effective_price,  // Use effective price instead of mid price
+            effective_price,
             -(position_size as i32),  // Negative for short
             spot,
             Some(greeks),
             commission,
         );
+        trade.mid_price = greeks.price;
+        trade.slippage = slippage;
         
-        // For short options, we receive premium (credit) minus commission
-        self.current_capital += trade.total_cost();
+        // For short puts: credit received = effective_price × qty × 100 − commission
+        self.current_capital += trade.proceeds();
         self.positions.push(position);
         self.trades.push(trade);
         self.position_counter += 1;
@@ -740,10 +816,11 @@ impl BacktestEngine {
             Some(greeks),
         );
         
-        let effective_price = self.effective_price(price, quantity > 0);
+        let effective_price = self.effective_price_ctx(price, quantity > 0, volatility, quantity.abs());
         let commission = self.calculate_commission(quantity.abs());
+        let slippage = self.config.trading_costs.one_way_slippage(price, quantity.abs(), volatility);
         
-        let trade = Trade::new(
+        let mut trade = Trade::new(
             self.position_counter,
             TradeType::Entry,
             date.to_string(),
@@ -754,9 +831,15 @@ impl BacktestEngine {
             Some(greeks),
             commission,
         );
+        trade.mid_price = price;
+        trade.slippage = slippage;
         
-        // Update capital (positive for credits, negative for debits)
-        self.current_capital -= trade.total_cost();
+        // Long legs are debits (we pay), short legs are credits (we receive)
+        if quantity > 0 {
+            self.current_capital -= trade.total_cost();
+        } else {
+            self.current_capital += trade.proceeds();
+        }
         self.positions.push(position);
         self.trades.push(trade);
         self.position_counter += 1;
@@ -961,12 +1044,15 @@ impl BacktestEngine {
             let quantity = position.quantity;
             let symbol = position.symbol.clone();
             let is_selling = quantity > 0;
+            let abs_qty = quantity.unsigned_abs() as i32;
             
             // Now call methods (no mutable borrow conflict)
-            let effective_exit_price = self.effective_price(exit_price, !is_selling);
+            // is_selling=true (long exit → selling) means !is_selling=false=not buying
+            let effective_exit_price = self.effective_price_ctx(exit_price, !is_selling, volatility, abs_qty);
             let commission = self.calculate_commission(quantity);
+            let slippage = (effective_exit_price - exit_price).abs();
             
-            let trade = Trade::new(
+            let mut trade = Trade::new(
                 position_id,
                 TradeType::Exit,
                 date.to_string(),
@@ -977,13 +1063,15 @@ impl BacktestEngine {
                 None,
                 commission,
             );
+            trade.mid_price = exit_price;
+            trade.slippage = slippage;
             
-            // Calculate P&L: for long positions we sell (credit), for short positions we buy (debit)
+            // Calculate P&L:
+            // Long exit  (selling to close): receive proceeds − commission
+            // Short exit (buying to cover):  pay fill price + commission
             if quantity > 0 {
-                // Long position: receive exit price minus commission
-                self.current_capital += trade.total_cost();
+                self.current_capital += trade.proceeds();
             } else {
-                // Short position: pay exit price plus commission
                 self.current_capital -= trade.total_cost();
             }
             self.trades.push(trade);

@@ -57,6 +57,7 @@ pub struct PerformanceMetrics {
     
     pub avg_days_held: f64,
     pub total_commissions: f64,
+    pub total_slippage: f64,
 }
 
 impl PerformanceMetrics {
@@ -134,8 +135,9 @@ impl PerformanceMetrics {
             0.0
         };
         
-        // Total commissions
+        // Total commissions and slippage
         let total_commissions: f64 = trades.iter().map(|t| t.commission).sum();
+        let total_slippage: f64 = trades.iter().map(|t| t.slippage).sum();
         
         Self {
             total_trades,
@@ -154,6 +156,7 @@ impl PerformanceMetrics {
             max_drawdown_pct,
             avg_days_held,
             total_commissions,
+            total_slippage,
         }
     }
     
@@ -265,6 +268,7 @@ impl BacktestResult {
         println!();
         println!("Avg Days Held:    {:>12.1}", self.metrics.avg_days_held);
         println!("Total Commissions:${:>12.2}", self.metrics.total_commissions);
+        println!("Total Slippage:   ${:>12.2}", self.metrics.total_slippage);
         println!("{}", "=".repeat(80));
     }
     

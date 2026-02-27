@@ -17,4 +17,5 @@ time = "0.3"                                        # Time library for Yahoo Fin
 rayon = "1.8"                                       # Data parallelism for Heston Monte Carlo
 num-complex = "0.4"                                 # Complex numbers for Carr-Madan formula
 
-# Lean dependencies - only what we need
+[dev-dependencies]
+proptest = "1"   # Property-based testing: 1000-case fuzzing for numerical stability

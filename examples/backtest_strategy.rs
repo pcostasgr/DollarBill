@@ -1,7 +1,7 @@
 // Backtest example - demonstrates the backtesting framework
 // Tests real volatility and momentum-based trading strategies
 
-use dollarbill::backtesting::{BacktestEngine, BacktestConfig, SignalAction, TradingCosts};
+use dollarbill::backtesting::{BacktestEngine, BacktestConfig, SignalAction, TradingCosts, SlippageModel};
 use dollarbill::market_data::csv_loader::load_csv_closes;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -288,7 +288,7 @@ fn backtest_symbol(symbol: &str, config: &StrategyConfig) -> Result<(), Box<dyn 
     // Configure backtest with different holding periods
     let config_short = BacktestConfig {
         initial_capital: config.strategies.short_term.initial_capital,
-        trading_costs: TradingCosts { commission_per_contract: config.backtest.commission_per_trade, bid_ask_spread_percent: 0.0 },
+        trading_costs: TradingCosts { commission_per_contract: config.backtest.commission_per_trade, bid_ask_spread_percent: 0.0, slippage_model: SlippageModel::Fixed },
         risk_free_rate: config.backtest.risk_free_rate,
         max_positions: config.backtest.max_positions,
         position_size_pct: config.backtest.position_size_pct,
@@ -301,7 +301,7 @@ fn backtest_symbol(symbol: &str, config: &StrategyConfig) -> Result<(), Box<dyn 
     
     let config_medium = BacktestConfig {
         initial_capital: config.strategies.medium_term.initial_capital,
-        trading_costs: TradingCosts { commission_per_contract: config.backtest.commission_per_trade, bid_ask_spread_percent: 0.0 },
+        trading_costs: TradingCosts { commission_per_contract: config.backtest.commission_per_trade, bid_ask_spread_percent: 0.0, slippage_model: SlippageModel::Fixed },
         risk_free_rate: config.backtest.risk_free_rate,
         max_positions: config.backtest.max_positions,
         position_size_pct: config.backtest.position_size_pct,
@@ -314,7 +314,7 @@ fn backtest_symbol(symbol: &str, config: &StrategyConfig) -> Result<(), Box<dyn 
     
     let config_long = BacktestConfig {
         initial_capital: config.strategies.long_term.initial_capital,
-        trading_costs: TradingCosts { commission_per_contract: config.backtest.commission_per_trade, bid_ask_spread_percent: 0.0 },
+        trading_costs: TradingCosts { commission_per_contract: config.backtest.commission_per_trade, bid_ask_spread_percent: 0.0, slippage_model: SlippageModel::Fixed },
         risk_free_rate: config.backtest.risk_free_rate,
         max_positions: config.backtest.max_positions,
         position_size_pct: config.backtest.position_size_pct,

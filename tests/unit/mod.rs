@@ -11,10 +11,12 @@ mod market_data {
 mod strategies {
     mod test_vol_mean_reversion;
     mod test_stock_classifier;
+    mod test_personality_props;
 }
 
 mod backtesting {
     mod test_engine;
     mod test_short_options;
     mod test_edge_cases_backtest;
+    mod test_trading_costs;
 }
