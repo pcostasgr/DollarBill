@@ -1,5 +1,6 @@
 // Position tracking for open options positions
 
+use crate::models::american::ExerciseStyle;
 use crate::models::bs_mod::Greeks;
 
 #[derive(Debug, Clone)]
@@ -20,6 +21,7 @@ pub struct Position {
     pub id: usize,
     pub symbol: String,
     pub option_type: OptionType,
+    pub exercise_style: ExerciseStyle,
     pub strike: f64,
     pub quantity: i32,  // Positive for long, negative for short
     pub entry_price: f64,
@@ -44,6 +46,7 @@ impl Position {
         id: usize,
         symbol: String,
         option_type: OptionType,
+        exercise_style: ExerciseStyle,
         strike: f64,
         quantity: i32,
         entry_price: f64,
@@ -55,6 +58,7 @@ impl Position {
             id,
             symbol,
             option_type,
+            exercise_style,
             strike,
             quantity,
             entry_price,

@@ -5,6 +5,7 @@
 //! via the RiskAnalyzer.
 
 use dollarbill::backtesting::position::{Position, PositionStatus, OptionType};
+use dollarbill::models::american::ExerciseStyle;
 use dollarbill::models::bs_mod::{black_scholes_merton_call, black_scholes_merton_put, Greeks};
 use dollarbill::portfolio::risk_analytics::{RiskAnalyzer, RiskLimits};
 
@@ -22,6 +23,7 @@ fn make_position(
         id,
         symbol.to_string(),
         opt_type,
+        ExerciseStyle::European,
         strike,
         quantity,
         greeks.price,

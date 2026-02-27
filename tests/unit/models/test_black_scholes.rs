@@ -19,7 +19,7 @@ fn test_call_option_atm() {
     assert_greeks_valid(&greeks);
     assert!(greeks.price > 0.0, "ATM call must have positive value");
     // ATM delta = N(d1) where d1 = (r + 0.5*σ²)√T/σ = 0.35 → N(0.35) ≈ 0.637
-    assert!(greeks.delta > 0.55 && greeks.delta < 0.70, 
+    assert!(greeks.delta > 0.60 && greeks.delta < 0.70, 
             "ATM call delta with r=0.05 should be ~0.637, got {}", greeks.delta);
 }
 

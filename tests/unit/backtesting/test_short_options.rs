@@ -1,7 +1,7 @@
 // Short options backtesting tests
 
 use crate::helpers::generate_synthetic_stock_data;
-use dollarbill::backtesting::engine::{BacktestEngine, BacktestConfig, SignalAction};
+use dollarbill::backtesting::{BacktestEngine, BacktestConfig, SignalAction};
 use dollarbill::backtesting::position::PositionStatus;
 
 #[test]
@@ -326,12 +326,18 @@ fn test_short_options_different_strikes() {
 #[test]
 fn test_short_options_commission_impact() {
     let config_low = BacktestConfig {
-        commission_per_trade: 0.50,
+        trading_costs: dollarbill::backtesting::TradingCosts {
+            commission_per_contract: 0.50,
+            bid_ask_spread_percent: 0.0,
+        },
         ..Default::default()
     };
     
     let config_high = BacktestConfig {
-        commission_per_trade: 5.0,
+        trading_costs: dollarbill::backtesting::TradingCosts {
+            commission_per_contract: 5.0,
+            bid_ask_spread_percent: 0.0,
+        },
         ..Default::default()
     };
     

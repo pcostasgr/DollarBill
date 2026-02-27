@@ -8,7 +8,7 @@
 // Maximum Loss: Width of spread - net premium
 // Best Case: Stock stays between short strikes until expiration
 
-use dollarbill::backtesting::engine::{BacktestEngine, BacktestConfig, SignalAction};
+use dollarbill::backtesting::{BacktestEngine, BacktestConfig, SignalAction};
 use dollarbill::market_data::csv_loader::load_csv_closes;
 use std::error::Error;
 
@@ -27,13 +27,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         max_positions: 2,          // Limit to 2 iron condors at a time
         days_to_expiry: 45,        // 45 DTE is common for iron condors
         risk_free_rate: 0.045,
-        commission_per_trade: 2.0,
         
         // Exit conditions
         max_days_hold: 40,         // Close before expiration if held this long
         stop_loss_pct: Some(2.0),       // Exit at 200% of premium received (max loss)
         take_profit_pct: Some(0.50),    // Lock in 50% of max profit early
         use_portfolio_management: false,
+        ..Default::default()
     };
 
     println!("Strategy Parameters:");

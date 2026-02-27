@@ -13,7 +13,7 @@
 //   - Limited risk (spread width - credit)
 //   - Defined risk/reward before entry
 
-use dollarbill::backtesting::engine::{BacktestEngine, BacktestConfig, SignalAction};
+use dollarbill::backtesting::{BacktestEngine, BacktestConfig, SignalAction};
 use dollarbill::market_data::csv_loader::load_csv_closes;
 use std::error::Error;
 
@@ -55,12 +55,12 @@ fn test_bull_put_spreads() -> Result<(), Box<dyn Error>> {
         max_positions: 3,
         days_to_expiry: 30,
         risk_free_rate: 0.045,
-        commission_per_trade: 2.0,
         
         max_days_hold: 25,
         stop_loss_pct: Some(2.0),       // 200% loss
         take_profit_pct: Some(0.60),    // 60% profit
         use_portfolio_management: false,
+        ..Default::default()
     };
 
     let symbols = vec!["SPY", "AAPL", "MSFT"];
@@ -136,12 +136,12 @@ fn test_bear_call_spreads() -> Result<(), Box<dyn Error>> {
         max_positions: 3,
         days_to_expiry: 30,
         risk_free_rate: 0.045,
-        commission_per_trade: 2.0,
         
         max_days_hold: 25,
         stop_loss_pct: Some(2.0),
         take_profit_pct: Some(0.60),
         use_portfolio_management: false,
+        ..Default::default()
     };
 
     let symbols = vec!["SPY", "QQQ", "IWM"];

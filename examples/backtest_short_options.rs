@@ -1,7 +1,7 @@
 // Short options strategy backtesting example
 // Demonstrates selling calls and puts for premium collection
 
-use dollarbill::backtesting::engine::{BacktestEngine, BacktestConfig, SignalAction};
+use dollarbill::backtesting::{BacktestEngine, BacktestConfig, SignalAction};
 use dollarbill::market_data::csv_loader::load_csv_closes;
 use std::error::Error;
 
@@ -18,13 +18,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         max_positions: 3,
         days_to_expiry: 30,
         risk_free_rate: 0.045,
-        commission_per_trade: 2.0,
         
         // Exit conditions
         max_days_hold: 25,        // Exit before expiration
         stop_loss_pct: Some(2.0),      // 200% loss (let winners run on shorts)
         take_profit_pct: Some(0.50),   // 50% profit on premium
         use_portfolio_management: false,
+        ..Default::default()
     };
 
     let symbols = vec!["AAPL", "TSLA"];

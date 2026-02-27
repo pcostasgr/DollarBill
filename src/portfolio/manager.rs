@@ -308,6 +308,7 @@ impl PortfolioManager {
 mod tests {
     use super::*;
     use crate::backtesting::position::{Position, PositionStatus, OptionType};
+    use crate::models::american::ExerciseStyle;
     use crate::models::bs_mod::Greeks;
 
     fn create_test_position(id: usize, quantity: i32, price: f64) -> Position {
@@ -315,6 +316,7 @@ mod tests {
             id,
             symbol: "TEST".to_string(),
             option_type: OptionType::Call,
+            exercise_style: ExerciseStyle::European,
             strike: 100.0,
             quantity,
             entry_price: price,

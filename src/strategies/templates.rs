@@ -1,7 +1,7 @@
 // Multi-leg option strategy templates
 // Provides configurable templates for common options strategies
 
-use crate::backtesting::engine::SignalAction;
+use crate::strategies::SignalAction;
 
 /// Configuration for Iron Condor strategy
 #[derive(Debug, Clone)]

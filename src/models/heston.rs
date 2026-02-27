@@ -17,6 +17,52 @@ pub struct HestonParams {
     pub t: f64,         // Time to maturity
 }
 
+impl HestonParams {
+    /// Validate Heston parameters including Feller condition
+    /// Returns Ok(()) if valid, Err(message) if invalid
+    pub fn validate(&self) -> Result<(), String> {
+        // Basic parameter bounds
+        if self.s0 <= 0.0 {
+            return Err("Initial stock price must be positive".to_string());
+        }
+        if self.v0 < 0.0 {
+            return Err("Initial variance cannot be negative".to_string());
+        }
+        if self.kappa <= 0.0 {
+            return Err("Mean reversion rate must be positive".to_string());
+        }
+        if self.theta <= 0.0 {
+            return Err("Long-term variance must be positive".to_string());
+        }
+        if self.sigma <= 0.0 {
+            return Err("Volatility of volatility must be positive".to_string());
+        }
+        if self.rho < -1.0 || self.rho > 1.0 {
+            return Err("Correlation must be between -1 and 1".to_string());
+        }
+        if self.t <= 0.0 {
+            return Err("Time to maturity must be positive".to_string());
+        }
+
+        // Feller condition: 2κθ > σ² (prevents negative variance)
+        let feller_ratio = 2.0 * self.kappa * self.theta / (self.sigma * self.sigma);
+        if feller_ratio <= 1.0 {
+            return Err(format!(
+                "Feller condition violated: 2κθ/σ² = {:.3} ≤ 1.0. \
+                 Variance can become negative - increase κ or θ, or decrease σ",
+                feller_ratio
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Check if parameters satisfy Feller condition
+    pub fn satisfies_feller(&self) -> bool {
+        2.0 * self.kappa * self.theta > self.sigma * self.sigma
+    }
+}
+
 /// Greeks for Heston model options
 #[derive(Debug, Clone)]
 pub struct HestonGreeks {
@@ -113,8 +159,11 @@ pub fn heston_start(
 }
 
 impl HestonMonteCarlo {
-    pub fn new(params: HestonParams, config: MonteCarloConfig) -> Self {
-        HestonMonteCarlo { params, config }
+    pub fn new(params: HestonParams, config: MonteCarloConfig) -> Result<Self, String> {
+        // Validate Heston parameters before creating simulator
+        params.validate()?;
+        
+        Ok(HestonMonteCarlo { params, config })
     }
 
     /// Simulate a single path using Milstein scheme with full truncation
@@ -142,11 +191,17 @@ impl HestonMonteCarlo {
             // Update stock price (Euler is sufficient for log-normal process)
             let s_new = s * (1.0 + self.params.r * dt + sqrt_v * sqrt_dt * dw_s);
             
-            // Update variance using Milstein scheme (more accurate)
+            // Update variance using Milstein scheme with boundary protection
             // Adds second-order correction term: 0.25 * sigma^2 * dt * (dW^2 - 1)
-            let v_new = v + self.params.kappa * (self.params.theta - v_pos) * dt 
-                        + self.params.sigma * sqrt_v * sqrt_dt * dw_v
-                        + 0.25 * self.params.sigma * self.params.sigma * dt * (dw_v * dw_v - 1.0);
+            let mut v_new = v + self.params.kappa * (self.params.theta - v_pos) * dt 
+                           + self.params.sigma * sqrt_v * sqrt_dt * dw_v
+                           + 0.25 * self.params.sigma * self.params.sigma * dt * (dw_v * dw_v - 1.0);
+            
+            // Apply reflection boundary: if variance would be negative, reflect it back
+            // This preserves the distribution better than absorption (setting to 0)
+            if v_new < 0.0 {
+                v_new = -v_new; // Reflect negative values back to positive
+            }
             
             stock_prices.push(s_new.max(0.0)); // Ensure non-negative stock price
             variances.push(v_new);
@@ -182,9 +237,14 @@ impl HestonMonteCarlo {
             
             let s_new = s * (1.0 + self.params.r * dt + sqrt_v * sqrt_dt * dw_s_anti);
             
-            let v_new = v + self.params.kappa * (self.params.theta - v_pos) * dt 
-                        + self.params.sigma * sqrt_v * sqrt_dt * dw_v_anti
-                        + 0.25 * self.params.sigma * self.params.sigma * dt * (dw_v_anti * dw_v_anti - 1.0);
+            let mut v_new = v + self.params.kappa * (self.params.theta - v_pos) * dt 
+                           + self.params.sigma * sqrt_v * sqrt_dt * dw_v_anti
+                           + 0.25 * self.params.sigma * self.params.sigma * dt * (dw_v_anti * dw_v_anti - 1.0);
+            
+            // Apply reflection boundary for antithetic path as well
+            if v_new < 0.0 {
+                v_new = -v_new;
+            }
             
             stock_prices.push(s_new.max(0.0));
             variances.push(v_new);
@@ -391,12 +451,14 @@ impl HestonMonteCarlo {
         // Delta: ∂V/∂S
         let mut params_up = self.params.clone();
         params_up.s0 = self.params.s0 * (1.0 + bump_s);
-        let mc_up = HestonMonteCarlo::new(params_up, self.config.clone());
+        let mc_up = HestonMonteCarlo::new(params_up, self.config.clone())
+            .unwrap_or_else(|_| panic!("Invalid Heston parameters for delta calculation"));
         let price_up = mc_up.price_european_call(strike);
         
         let mut params_down = self.params.clone();
         params_down.s0 = self.params.s0 * (1.0 - bump_s);
-        let mc_down = HestonMonteCarlo::new(params_down, self.config.clone());
+        let mc_down = HestonMonteCarlo::new(params_down, self.config.clone())
+            .unwrap_or_else(|_| panic!("Invalid Heston parameters for delta calculation"));
         let price_down = mc_down.price_european_call(strike);
         
         let delta = (price_up - price_down) / (2.0 * self.params.s0 * bump_s);
@@ -407,7 +469,8 @@ impl HestonMonteCarlo {
         // Vega: ∂V/∂v0 (sensitivity to initial variance)
         let mut params_vega_up = self.params.clone();
         params_vega_up.v0 = self.params.v0 + bump_v;
-        let mc_vega = HestonMonteCarlo::new(params_vega_up, self.config.clone());
+        let mc_vega = HestonMonteCarlo::new(params_vega_up, self.config.clone())
+            .unwrap_or_else(|_| panic!("Invalid Heston parameters for vega calculation"));
         let price_vega_up = mc_vega.price_european_call(strike);
         
         // Convert to volatility units (multiply by 2*sqrt(v0) since ∂v/∂σ = 2σ)
@@ -417,7 +480,8 @@ impl HestonMonteCarlo {
         if self.params.t > bump_t {
             let mut params_theta = self.params.clone();
             params_theta.t = self.params.t - bump_t;
-            let mc_theta = HestonMonteCarlo::new(params_theta, self.config.clone());
+            let mc_theta = HestonMonteCarlo::new(params_theta, self.config.clone())
+                .unwrap_or_else(|_| panic!("Invalid Heston parameters for theta calculation"));
             let price_theta = mc_theta.price_european_call(strike);
             
             let theta = (price_theta - price) / bump_t;
@@ -425,7 +489,8 @@ impl HestonMonteCarlo {
             // Rho: ∂V/∂r
             let mut params_rho = self.params.clone();
             params_rho.r = self.params.r + bump_r;
-            let mc_rho = HestonMonteCarlo::new(params_rho, self.config.clone());
+            let mc_rho = HestonMonteCarlo::new(params_rho, self.config.clone())
+                .unwrap_or_else(|_| panic!("Invalid Heston parameters for rho calculation"));
             let price_rho = mc_rho.price_european_call(strike);
             
             let rho = (price_rho - price) / bump_r;
@@ -465,12 +530,14 @@ impl HestonMonteCarlo {
         // Delta
         let mut params_up = self.params.clone();
         params_up.s0 = self.params.s0 * (1.0 + bump_s);
-        let mc_up = HestonMonteCarlo::new(params_up, self.config.clone());
+        let mc_up = HestonMonteCarlo::new(params_up, self.config.clone())
+            .unwrap_or_else(|_| panic!("Invalid Heston parameters for put delta calculation"));
         let price_up = mc_up.price_european_put(strike);
         
         let mut params_down = self.params.clone();
         params_down.s0 = self.params.s0 * (1.0 - bump_s);
-        let mc_down = HestonMonteCarlo::new(params_down, self.config.clone());
+        let mc_down = HestonMonteCarlo::new(params_down, self.config.clone())
+            .unwrap_or_else(|_| panic!("Invalid Heston parameters for put delta calculation"));
         let price_down = mc_down.price_european_put(strike);
         
         let delta = (price_up - price_down) / (2.0 * self.params.s0 * bump_s);
@@ -481,7 +548,8 @@ impl HestonMonteCarlo {
         // Vega
         let mut params_vega_up = self.params.clone();
         params_vega_up.v0 = self.params.v0 + bump_v;
-        let mc_vega = HestonMonteCarlo::new(params_vega_up, self.config.clone());
+        let mc_vega = HestonMonteCarlo::new(params_vega_up, self.config.clone())
+            .unwrap_or_else(|_| panic!("Invalid Heston parameters for put vega calculation"));
         let price_vega_up = mc_vega.price_european_put(strike);
         
         let vega = (price_vega_up - price) / bump_v * 2.0 * self.params.v0.sqrt();
@@ -490,7 +558,8 @@ impl HestonMonteCarlo {
         if self.params.t > bump_t {
             let mut params_theta = self.params.clone();
             params_theta.t = self.params.t - bump_t;
-            let mc_theta = HestonMonteCarlo::new(params_theta, self.config.clone());
+            let mc_theta = HestonMonteCarlo::new(params_theta, self.config.clone())
+                .unwrap_or_else(|_| panic!("Invalid Heston parameters for put theta calculation"));
             let price_theta = mc_theta.price_european_put(strike);
             
             let theta = (price_theta - price) / bump_t;
@@ -498,7 +567,8 @@ impl HestonMonteCarlo {
             // Rho
             let mut params_rho = self.params.clone();
             params_rho.r = self.params.r + bump_r;
-            let mc_rho = HestonMonteCarlo::new(params_rho, self.config.clone());
+            let mc_rho = HestonMonteCarlo::new(params_rho, self.config.clone())
+                .unwrap_or_else(|_| panic!("Invalid Heston parameters for put rho calculation"));
             let price_rho = mc_rho.price_european_put(strike);
             
             let rho = (price_rho - price) / bump_r;
@@ -617,7 +687,7 @@ mod tests {
             use_antithetic: false,
         };
 
-        let mc = HestonMonteCarlo::new(params, config);
+        let mc = HestonMonteCarlo::new(params, config).unwrap();
         let call_price = mc.price_european_call(100.0);
         
         // Call price should be positive and reasonable
@@ -646,7 +716,7 @@ mod tests {
         };
 
         let strike = 100.0;
-        let mc = HestonMonteCarlo::new(params.clone(), config);
+        let mc = HestonMonteCarlo::new(params.clone(), config).unwrap();
         
         let call_price = mc.price_european_call(strike);
         let put_price = mc.price_european_put(strike);
@@ -681,7 +751,7 @@ mod tests {
             use_antithetic: false,
         };
 
-        let mc = HestonMonteCarlo::new(params.clone(), config);
+        let mc = HestonMonteCarlo::new(params.clone(), config).unwrap();
         let avg_final_var = mc.average_final_variance();
         
         // With strong mean reversion, final variance should be close to theta

@@ -336,6 +336,7 @@ impl PersonalityBasedBot {
                         }
                     }
                     SignalAction::NoAction => None,
+                    _ => None, // Other signals not handled by this bot
                 };
 
                 if let Some(action) = stock_action {

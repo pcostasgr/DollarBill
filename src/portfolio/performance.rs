@@ -317,12 +317,14 @@ pub struct StrategyComparison {
 mod tests {
     use super::*;
     use crate::backtesting::position::{Position, OptionType};
+    use crate::models::american::ExerciseStyle;
 
     fn create_test_position(id: usize, pnl: f64) -> Position {
         let mut pos = Position {
             id,
             symbol: "TEST".to_string(),
             option_type: OptionType::Call,
+            exercise_style: ExerciseStyle::European,
             strike: 100.0,
             quantity: 10,
             entry_price: 2.0,

@@ -280,6 +280,7 @@ impl CorrelationMatrix {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::american::ExerciseStyle;
 
     fn create_test_position_with_greeks(
         id: usize,
@@ -292,6 +293,7 @@ mod tests {
             id,
             symbol: symbol.to_string(),
             option_type: OptionType::Call,
+            exercise_style: ExerciseStyle::European,
             strike: 100.0,
             quantity,
             entry_price: price,

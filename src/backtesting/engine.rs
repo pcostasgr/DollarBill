@@ -3,14 +3,31 @@
 use crate::backtesting::position::{Position, PositionStatus, OptionType};
 use crate::backtesting::trade::{Trade, TradeType};
 use crate::backtesting::metrics::{BacktestResult, PerformanceMetrics, EquityCurve};
+use crate::models::american::{american_call_binomial, american_put_binomial, BinomialConfig, ExerciseStyle};
 use crate::models::bs_mod::{black_scholes_merton_call, black_scholes_merton_put};
 use crate::market_data::csv_loader::HistoricalDay;
 use crate::portfolio::{PortfolioManager, PortfolioConfig, SizingMethod, AllocationMethod, RiskLimits};
+use crate::strategies::SignalAction;
+
+#[derive(Debug, Clone)]
+pub struct TradingCosts {
+    pub commission_per_contract: f64,  // $0.50–$2.50 per contract (realistic)
+    pub bid_ask_spread_percent: f64,   // 0.5–5% of mid price (market impact)
+}
+
+impl Default for TradingCosts {
+    fn default() -> Self {
+        Self {
+            commission_per_contract: 1.0,  // $1 per contract
+            bid_ask_spread_percent: 1.0,   // 1% spread
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct BacktestConfig {
     pub initial_capital: f64,
-    pub commission_per_trade: f64,
+    pub trading_costs: TradingCosts,  // Replace flat commission with realistic costs
     pub risk_free_rate: f64,
     pub max_positions: usize,
     pub position_size_pct: f64,  // Percentage of capital per position (used if no portfolio manager)
@@ -25,7 +42,7 @@ impl Default for BacktestConfig {
     fn default() -> Self {
         Self {
             initial_capital: 100_000.0,
-            commission_per_trade: 1.0,
+            trading_costs: TradingCosts::default(),
             risk_free_rate: 0.05,
             max_positions: 10,
             position_size_pct: 10.0,
@@ -49,6 +66,22 @@ pub struct BacktestEngine {
 }
 
 impl BacktestEngine {
+    /// Calculate effective price including bid-ask spread
+    /// For buying: price * (1 + spread/2) 
+    /// For selling: price * (1 - spread/2)
+    fn effective_price(&self, mid_price: f64, is_buying: bool) -> f64 {
+        let spread_factor = self.config.trading_costs.bid_ask_spread_percent / 100.0;
+        if is_buying {
+            mid_price * (1.0 + spread_factor / 2.0)
+        } else {
+            mid_price * (1.0 - spread_factor / 2.0)
+        }
+    }
+    
+    /// Calculate total commission for a trade
+    fn calculate_commission(&self, quantity: i32) -> f64 {
+        self.config.trading_costs.commission_per_contract * quantity.abs() as f64
+    }
     pub fn new(config: BacktestConfig) -> Self {
         let portfolio_manager = if config.use_portfolio_management {
             Some(PortfolioManager::new(PortfolioConfig {
@@ -129,6 +162,7 @@ impl BacktestEngine {
                         self.config.days_to_expiry,
                         hist_vol,
                         &day.date,
+                        ExerciseStyle::American,  // Use American options by default
                     );
                 }
             }
@@ -184,10 +218,10 @@ impl BacktestEngine {
                 if can_trade && self.can_open_position() {
                     match signal {
                         SignalAction::BuyCall { strike, days_to_expiry, volatility } => {
-                            self.open_call_position(symbol, spot, strike, days_to_expiry, volatility, &day.date);
+                            self.open_call_position(symbol, spot, strike, days_to_expiry, volatility, &day.date, ExerciseStyle::European);
                         },
                         SignalAction::BuyPut { strike, days_to_expiry, volatility } => {
-                            self.open_put_position(symbol, spot, strike, days_to_expiry, volatility, &day.date);
+                            self.open_put_position(symbol, spot, strike, days_to_expiry, volatility, &day.date, ExerciseStyle::European);
                         },
                         SignalAction::SellCall { strike, days_to_expiry, volatility } => {
                             self.open_short_call_position(symbol, spot, strike, days_to_expiry, volatility, &day.date);
@@ -199,6 +233,35 @@ impl BacktestEngine {
                             if let Some(hist_vol) = hist_vols.get(day_idx) {
                                 self.close_position_by_id(position_id, &day.date, spot, *hist_vol, 0);
                             }
+                        },
+                        // Phase 6: Multi-leg spread strategies
+                        SignalAction::IronCondor { sell_call_strike, buy_call_strike, sell_put_strike, buy_put_strike, days_to_expiry } => {
+                            self.open_iron_condor(symbol, spot, sell_call_strike, buy_call_strike, sell_put_strike, buy_put_strike, days_to_expiry, &day.date);
+                        },
+                        SignalAction::CreditCallSpread { sell_strike, buy_strike, days_to_expiry } => {
+                            self.open_credit_call_spread(symbol, spot, sell_strike, buy_strike, days_to_expiry, &day.date);
+                        },
+                        SignalAction::CreditPutSpread { sell_strike, buy_strike, days_to_expiry } => {
+                            self.open_credit_put_spread(symbol, spot, sell_strike, buy_strike, days_to_expiry, &day.date);
+                        },
+                        SignalAction::CoveredCall { sell_strike, days_to_expiry } => {
+                            self.open_covered_call(symbol, spot, sell_strike, days_to_expiry, &day.date);
+                        },
+                        // Legacy signals (keep for backward compatibility)
+                        SignalAction::SellStraddle => {
+                            // Implement sell straddle logic
+                        },
+                        SignalAction::BuyStraddle => {
+                            // Implement buy straddle logic
+                        },
+                        SignalAction::IronButterfly { wing_width } => {
+                            // Implement iron butterfly logic
+                        },
+                        SignalAction::CashSecuredPut { strike_pct } => {
+                            // Implement cash-secured put logic
+                        },
+                        SignalAction::NoAction => {
+                            // Do nothing
                         },
                     }
                 }
@@ -223,25 +286,39 @@ impl BacktestEngine {
         _days_to_expiry: usize,  // Use config instead
         volatility: f64,
         date: &str,
+        exercise_style: ExerciseStyle,
     ) {
         let time_to_expiry = self.config.days_to_expiry as f64 / 365.0;
-        let greeks = black_scholes_merton_call(
-            spot,
-            strike,
-            time_to_expiry,
-            self.config.risk_free_rate,
-            volatility,
-            0.0,
-        );
+        
+        // Choose pricing model based on exercise style
+        let (price, greeks) = match exercise_style {
+            ExerciseStyle::European => {
+                let greeks = black_scholes_merton_call(
+                    spot,
+                    strike,
+                    time_to_expiry,
+                    self.config.risk_free_rate,
+                    volatility,
+                    0.0,
+                );
+                (greeks.price, greeks)
+            },
+            ExerciseStyle::American => {
+                let config = BinomialConfig::default();
+                let price = american_call_binomial(spot, strike, time_to_expiry, self.config.risk_free_rate, volatility, &config);
+                let greeks = crate::models::american::american_call_greeks(spot, strike, time_to_expiry, self.config.risk_free_rate, volatility, &config);
+                (price, greeks)
+            }
+        };
         
         // Calculate position size first
-        let position_size = self.calculate_position_size_with_vol(greeks.price, volatility);
+        let position_size = self.calculate_position_size_with_vol(price, volatility);
         if position_size == 0 {
             return;
         }
         
         // Check portfolio risk limits if enabled
-        if !self.can_open_position_with_portfolio_check(symbol, greeks.price, volatility, position_size) {
+        if !self.can_open_position_with_portfolio_check(symbol, price, volatility, position_size) {
             return;
         }
         
@@ -249,24 +326,29 @@ impl BacktestEngine {
             self.position_counter,
             symbol.to_string(),
             OptionType::Call,
+            exercise_style,
             strike,
             position_size,
-            greeks.price,
+            price,
             date.to_string(),
             spot,
             Some(greeks),
         );
+        
+        // Calculate effective price with bid-ask spread (buying)
+        let effective_price = self.effective_price(price, true);
+        let commission = self.calculate_commission(position_size);
         
         let trade = Trade::new(
             self.position_counter,
             TradeType::Entry,
             date.to_string(),
             symbol.to_string(),
-            greeks.price,
+            effective_price,  // Use effective price instead of mid price
             position_size,
             spot,
             Some(greeks),
-            self.config.commission_per_trade,
+            commission,
         );
         
         self.current_capital -= trade.total_cost();
@@ -283,25 +365,39 @@ impl BacktestEngine {
         _days_to_expiry: usize,  // Use config instead
         volatility: f64,
         date: &str,
+        exercise_style: ExerciseStyle,
     ) {
         let time_to_expiry = self.config.days_to_expiry as f64 / 365.0;
-        let greeks = black_scholes_merton_put(
-            spot,
-            strike,
-            time_to_expiry,
-            self.config.risk_free_rate,
-            volatility,
-            0.0,
-        );
+        
+        // Choose pricing model based on exercise style
+        let (price, greeks) = match exercise_style {
+            ExerciseStyle::European => {
+                let greeks = black_scholes_merton_put(
+                    spot,
+                    strike,
+                    time_to_expiry,
+                    self.config.risk_free_rate,
+                    volatility,
+                    0.0,
+                );
+                (greeks.price, greeks)
+            },
+            ExerciseStyle::American => {
+                let config = BinomialConfig::default();
+                let price = american_put_binomial(spot, strike, time_to_expiry, self.config.risk_free_rate, volatility, &config);
+                let greeks = crate::models::american::american_put_greeks(spot, strike, time_to_expiry, self.config.risk_free_rate, volatility, &config);
+                (price, greeks)
+            }
+        };
         
         // Calculate position size first
-        let position_size = self.calculate_position_size_with_vol(greeks.price, volatility);
+        let position_size = self.calculate_position_size_with_vol(price, volatility);
         if position_size == 0 {
             return;
         }
         
         // Check portfolio risk limits if enabled
-        if !self.can_open_position_with_portfolio_check(symbol, greeks.price, volatility, position_size) {
+        if !self.can_open_position_with_portfolio_check(symbol, price, volatility, position_size) {
             return;
         }
         
@@ -309,24 +405,29 @@ impl BacktestEngine {
             self.position_counter,
             symbol.to_string(),
             OptionType::Put,
+            exercise_style,
             strike,
             position_size,
-            greeks.price,
+            price,
             date.to_string(),
             spot,
             Some(greeks),
         );
+        
+        // Calculate effective price with bid-ask spread (buying)
+        let effective_price = self.effective_price(price, true);
+        let commission = self.calculate_commission(position_size);
         
         let trade = Trade::new(
             self.position_counter,
             TradeType::Entry,
             date.to_string(),
             symbol.to_string(),
-            greeks.price,
+            effective_price,  // Use effective price instead of mid price
             position_size,
             spot,
             Some(greeks),
-            self.config.commission_per_trade,
+            commission,
         );
         
         self.current_capital -= trade.total_cost();
@@ -370,6 +471,7 @@ impl BacktestEngine {
             self.position_counter,
             symbol.to_string(),
             OptionType::Call,
+            ExerciseStyle::European,
             strike,
             -(position_size as i32),  // Negative for short
             greeks.price,
@@ -378,20 +480,24 @@ impl BacktestEngine {
             Some(greeks),
         );
         
+        // Calculate effective price with bid-ask spread (selling/short)
+        let effective_price = self.effective_price(greeks.price, false);
+        let commission = self.calculate_commission(position_size as i32);
+        
         let trade = Trade::new(
             self.position_counter,
             TradeType::Entry,
             date.to_string(),
             symbol.to_string(),
-            greeks.price,
+            effective_price,  // Use effective price instead of mid price
             -(position_size as i32),  // Negative for short
             spot,
             Some(greeks),
-            self.config.commission_per_trade,
+            commission,
         );
         
-        // For short options, we receive premium (credit)
-        self.current_capital += greeks.price * position_size as f64 * 100.0 - self.config.commission_per_trade;
+        // For short options, we receive premium (credit) minus commission
+        self.current_capital += trade.total_cost();
         self.positions.push(position);
         self.trades.push(trade);
         self.position_counter += 1;
@@ -432,6 +538,7 @@ impl BacktestEngine {
             self.position_counter,
             symbol.to_string(),
             OptionType::Put,
+            ExerciseStyle::European,
             strike,
             -(position_size as i32),  // Negative for short
             greeks.price,
@@ -440,23 +547,268 @@ impl BacktestEngine {
             Some(greeks),
         );
         
+        // Calculate effective price with bid-ask spread (selling/short)
+        let effective_price = self.effective_price(greeks.price, false);
+        let commission = self.calculate_commission(position_size as i32);
+        
         let trade = Trade::new(
             self.position_counter,
             TradeType::Entry,
             date.to_string(),
             symbol.to_string(),
-            greeks.price,
+            effective_price,  // Use effective price instead of mid price
             -(position_size as i32),  // Negative for short
             spot,
             Some(greeks),
-            self.config.commission_per_trade,
+            commission,
         );
         
-        // For short options, we receive premium (credit)
-        self.current_capital += greeks.price * position_size as f64 * 100.0 - self.config.commission_per_trade;
+        // For short options, we receive premium (credit) minus commission
+        self.current_capital += trade.total_cost();
         self.positions.push(position);
         self.trades.push(trade);
         self.position_counter += 1;
+    }
+    
+    // Phase 6: Multi-leg spread position methods
+    
+    /// Open an iron condor (4-leg spread)
+    /// Sells OTM call and OTM put, buys further OTM call and put for protection
+    fn open_iron_condor(
+        &mut self,
+        symbol: &str,
+        spot: f64,
+        sell_call_strike: f64,
+        buy_call_strike: f64,
+        sell_put_strike: f64,
+        buy_put_strike: f64,
+        days_to_expiry: usize,
+        date: &str,
+    ) {
+        let time_to_expiry = days_to_expiry as f64 / 365.0;
+        let volatility = 0.30; // Simplified - in practice would use market vol
+        
+        // Calculate prices for all legs
+        let sell_call_price = black_scholes_merton_call(spot, sell_call_strike, time_to_expiry, self.config.risk_free_rate, volatility, 0.0).price;
+        let buy_call_price = black_scholes_merton_call(spot, buy_call_strike, time_to_expiry, self.config.risk_free_rate, volatility, 0.0).price;
+        let sell_put_price = black_scholes_merton_put(spot, sell_put_strike, time_to_expiry, self.config.risk_free_rate, volatility, 0.0).price;
+        let buy_put_price = black_scholes_merton_put(spot, buy_put_strike, time_to_expiry, self.config.risk_free_rate, volatility, 0.0).price;
+        
+        // Net premium received (positive for credit)
+        let net_premium = sell_call_price + sell_put_price - buy_call_price - buy_put_price;
+        
+        // Calculate position size based on max loss (spread width - premium)
+        let spread_width = sell_call_strike - sell_put_strike;
+        let max_loss = spread_width - net_premium;
+        let position_size = self.calculate_position_size_for_spread(max_loss.abs());
+        
+        if position_size == 0 {
+            return;
+        }
+        
+        // Open all four legs
+        self.open_spread_leg(symbol, spot, sell_call_strike, -(position_size as i32), OptionType::Call, sell_call_price, date, time_to_expiry, volatility);
+        self.open_spread_leg(symbol, spot, buy_call_strike, position_size as i32, OptionType::Call, buy_call_price, date, time_to_expiry, volatility);
+        self.open_spread_leg(symbol, spot, sell_put_strike, -(position_size as i32), OptionType::Put, sell_put_price, date, time_to_expiry, volatility);
+        self.open_spread_leg(symbol, spot, buy_put_strike, position_size as i32, OptionType::Put, buy_put_price, date, time_to_expiry, volatility);
+    }
+    
+    /// Open a credit call spread (bullish)
+    /// Sells ITM/ATM call, buys OTM call
+    fn open_credit_call_spread(
+        &mut self,
+        symbol: &str,
+        spot: f64,
+        sell_strike: f64,
+        buy_strike: f64,
+        days_to_expiry: usize,
+        date: &str,
+    ) {
+        let time_to_expiry = days_to_expiry as f64 / 365.0;
+        let volatility = 0.30;
+        
+        let sell_price = black_scholes_merton_call(spot, sell_strike, time_to_expiry, self.config.risk_free_rate, volatility, 0.0).price;
+        let buy_price = black_scholes_merton_call(spot, buy_strike, time_to_expiry, self.config.risk_free_rate, volatility, 0.0).price;
+        let net_premium = sell_price - buy_price;
+        
+        // Max loss is spread width minus premium
+        let max_loss = (buy_strike - sell_strike) - net_premium;
+        let position_size = self.calculate_position_size_for_spread(max_loss.abs());
+        
+        if position_size == 0 {
+            return;
+        }
+        
+        self.open_spread_leg(symbol, spot, sell_strike, -(position_size as i32), OptionType::Call, sell_price, date, time_to_expiry, volatility);
+        self.open_spread_leg(symbol, spot, buy_strike, position_size as i32, OptionType::Call, buy_price, date, time_to_expiry, volatility);
+    }
+    
+    /// Open a credit put spread (bearish)
+    /// Sells ITM/ATM put, buys OTM put
+    fn open_credit_put_spread(
+        &mut self,
+        symbol: &str,
+        spot: f64,
+        sell_strike: f64,
+        buy_strike: f64,
+        days_to_expiry: usize,
+        date: &str,
+    ) {
+        let time_to_expiry = days_to_expiry as f64 / 365.0;
+        let volatility = 0.30;
+        
+        let sell_price = black_scholes_merton_put(spot, sell_strike, time_to_expiry, self.config.risk_free_rate, volatility, 0.0).price;
+        let buy_price = black_scholes_merton_put(spot, buy_strike, time_to_expiry, self.config.risk_free_rate, volatility, 0.0).price;
+        let net_premium = sell_price - buy_price;
+        
+        // Max loss is spread width minus premium
+        let max_loss = (sell_strike - buy_strike) - net_premium;
+        let position_size = self.calculate_position_size_for_spread(max_loss.abs());
+        
+        if position_size == 0 {
+            return;
+        }
+        
+        self.open_spread_leg(symbol, spot, sell_strike, -(position_size as i32), OptionType::Put, sell_price, date, time_to_expiry, volatility);
+        self.open_spread_leg(symbol, spot, buy_strike, position_size as i32, OptionType::Put, buy_price, date, time_to_expiry, volatility);
+    }
+    
+    /// Open a covered call
+    /// Buy stock, sell call against it
+    fn open_covered_call(
+        &mut self,
+        symbol: &str,
+        spot: f64,
+        sell_strike: f64,
+        days_to_expiry: usize,
+        date: &str,
+    ) {
+        let time_to_expiry = days_to_expiry as f64 / 365.0;
+        let volatility = 0.30;
+        
+        // Buy 100 shares of stock
+        let shares_to_buy = 100;
+        let stock_cost = spot * shares_to_buy as f64;
+        
+        // Sell call
+        let call_price = black_scholes_merton_call(spot, sell_strike, time_to_expiry, self.config.risk_free_rate, volatility, 0.0).price;
+        let call_premium = call_price * shares_to_buy as f64;
+        
+        // Net debit = stock cost - call premium
+        let net_debit = stock_cost - call_premium;
+        
+        // Check if we have enough capital
+        if net_debit > self.current_capital {
+            return;
+        }
+        
+        // Open stock position (long)
+        self.open_stock_position(symbol, shares_to_buy, spot, date);
+        
+        // Open short call position
+        self.open_spread_leg(symbol, spot, sell_strike, -(shares_to_buy as i32), OptionType::Call, call_price, date, time_to_expiry, volatility);
+    }
+    
+    /// Helper method to open individual spread legs
+    fn open_spread_leg(
+        &mut self,
+        symbol: &str,
+        spot: f64,
+        strike: f64,
+        quantity: i32,
+        option_type: OptionType,
+        price: f64,
+        date: &str,
+        time_to_expiry: f64,
+        volatility: f64,
+    ) {
+        let greeks = match option_type {
+            OptionType::Call => black_scholes_merton_call(spot, strike, time_to_expiry, self.config.risk_free_rate, volatility, 0.0),
+            OptionType::Put => black_scholes_merton_put(spot, strike, time_to_expiry, self.config.risk_free_rate, volatility, 0.0),
+        };
+        
+        let position = Position::new(
+            self.position_counter,
+            symbol.to_string(),
+            option_type,
+            ExerciseStyle::European,
+            strike,
+            quantity,
+            price,
+            date.to_string(),
+            spot,
+            Some(greeks),
+        );
+        
+        let effective_price = self.effective_price(price, quantity > 0);
+        let commission = self.calculate_commission(quantity.abs());
+        
+        let trade = Trade::new(
+            self.position_counter,
+            TradeType::Entry,
+            date.to_string(),
+            symbol.to_string(),
+            effective_price,
+            quantity,
+            spot,
+            Some(greeks),
+            commission,
+        );
+        
+        // Update capital (positive for credits, negative for debits)
+        self.current_capital -= trade.total_cost();
+        self.positions.push(position);
+        self.trades.push(trade);
+        self.position_counter += 1;
+    }
+    
+    /// Open a stock position (for covered calls)
+    fn open_stock_position(&mut self, symbol: &str, shares: i32, price: f64, date: &str) {
+        // Create a synthetic stock position (using a call with strike=0 as proxy)
+        let position = Position::new(
+            self.position_counter,
+            symbol.to_string(),
+            OptionType::Call, // Using Call as proxy for stock
+            ExerciseStyle::European,
+            0.0, // Strike = 0 for stock
+            shares,
+            price,
+            date.to_string(),
+            price,
+            None, // No Greeks for stock
+        );
+        
+        let commission = self.calculate_commission(shares.abs());
+        
+        let trade = Trade::new(
+            self.position_counter,
+            TradeType::Entry,
+            date.to_string(),
+            symbol.to_string(),
+            price,
+            shares,
+            price,
+            None,
+            commission,
+        );
+        
+        self.current_capital -= trade.total_cost();
+        self.positions.push(position);
+        self.trades.push(trade);
+        self.position_counter += 1;
+    }
+    
+    /// Calculate position size for spreads based on max loss
+    fn calculate_position_size_for_spread(&self, max_loss_per_share: f64) -> usize {
+        let max_loss_per_contract = max_loss_per_share * 100.0; // Options are for 100 shares
+        let max_risk_per_position = self.current_capital * 0.02; // 2% of capital max risk
+        
+        if max_loss_per_contract <= 0.0 {
+            return 1; // Minimum 1 contract
+        }
+        
+        let max_contracts = (max_risk_per_position / max_loss_per_contract) as usize;
+        max_contracts.max(1).min(10) // Between 1 and 10 contracts
     }
     
     fn update_open_positions(&mut self, date: &str, spot: f64, hist_vols: &[f64], day_idx: usize) {
@@ -558,8 +910,8 @@ impl BacktestEngine {
             let days_to_expiry = self.config.days_to_expiry.saturating_sub(days_held).max(1);
             let time_to_expiry = days_to_expiry as f64 / 365.0;
             
-            let exit_price = match position.option_type {
-                OptionType::Call => {
+            let exit_price = match (&position.option_type, &position.exercise_style) {
+                (OptionType::Call, ExerciseStyle::European) => {
                     black_scholes_merton_call(
                         spot,
                         position.strike,
@@ -569,7 +921,18 @@ impl BacktestEngine {
                         0.0,
                     ).price
                 },
-                OptionType::Put => {
+                (OptionType::Call, ExerciseStyle::American) => {
+                    let config = BinomialConfig::default();
+                    american_call_binomial(
+                        spot,
+                        position.strike,
+                        time_to_expiry,
+                        self.config.risk_free_rate,
+                        volatility,
+                        &config,
+                    )
+                },
+                (OptionType::Put, ExerciseStyle::European) => {
                     black_scholes_merton_put(
                         spot,
                         position.strike,
@@ -579,23 +942,50 @@ impl BacktestEngine {
                         0.0,
                     ).price
                 },
+                (OptionType::Put, ExerciseStyle::American) => {
+                    let config = BinomialConfig::default();
+                    american_put_binomial(
+                        spot,
+                        position.strike,
+                        time_to_expiry,
+                        self.config.risk_free_rate,
+                        volatility,
+                        &config,
+                    )
+                },
             };
             
             position.close(exit_price, date.to_string(), spot, days_held);
+            
+            // Extract data before calling methods to avoid borrowing issues
+            let quantity = position.quantity;
+            let symbol = position.symbol.clone();
+            let is_selling = quantity > 0;
+            
+            // Now call methods (no mutable borrow conflict)
+            let effective_exit_price = self.effective_price(exit_price, !is_selling);
+            let commission = self.calculate_commission(quantity);
             
             let trade = Trade::new(
                 position_id,
                 TradeType::Exit,
                 date.to_string(),
-                position.symbol.clone(),
-                exit_price,
-                position.quantity,
+                symbol,
+                effective_exit_price,
+                quantity,
                 spot,
                 None,
-                self.config.commission_per_trade,
+                commission,
             );
             
-            self.current_capital += trade.value() - self.config.commission_per_trade;
+            // Calculate P&L: for long positions we sell (credit), for short positions we buy (debit)
+            if quantity > 0 {
+                // Long position: receive exit price minus commission
+                self.current_capital += trade.total_cost();
+            } else {
+                // Short position: pay exit price plus commission
+                self.current_capital -= trade.total_cost();
+            }
             self.trades.push(trade);
         }
     }
@@ -757,12 +1147,4 @@ impl BacktestEngine {
     }
 }
 
-/// Signal actions for custom strategies
-#[derive(Debug, Clone)]
-pub enum SignalAction {
-    BuyCall { strike: f64, days_to_expiry: usize, volatility: f64 },
-    BuyPut { strike: f64, days_to_expiry: usize, volatility: f64 },
-    SellCall { strike: f64, days_to_expiry: usize, volatility: f64 },
-    SellPut { strike: f64, days_to_expiry: usize, volatility: f64 },
-    ClosePosition { position_id: usize },
-}
+

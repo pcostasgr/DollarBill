@@ -223,7 +223,13 @@ async fn main() {
         use_antithetic: true,
     };
     
-    let mc = HestonMonteCarlo::new(heston_params.clone(), config);
+    let mc = match HestonMonteCarlo::new(heston_params.clone(), config) {
+        Ok(mc) => mc,
+        Err(e) => {
+            eprintln!("Invalid Heston parameters: {}", e);
+            return;
+        }
+    };
     
     let mc_start = Instant::now();
     let mc_greeks = mc.greeks_european_call(atm_strike);

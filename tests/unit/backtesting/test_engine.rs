@@ -37,7 +37,7 @@ fn test_backtest_config_default() {
     let config = BacktestConfig::default();
     
     assert_eq!(config.initial_capital, 100_000.0);
-    assert!(config.commission_per_trade > 0.0);
+    assert!(config.trading_costs.commission_per_contract > 0.0);
     assert!(config.max_positions > 0);
     assert!(config.position_size_pct > 0.0 && config.position_size_pct <= 100.0);
 }
@@ -46,7 +46,6 @@ fn test_backtest_config_default() {
 fn test_backtest_custom_config() {
     let config = BacktestConfig {
         initial_capital: 50_000.0,
-        commission_per_trade: 2.0,
         risk_free_rate: 0.03,
         max_positions: 5,
         position_size_pct: 20.0,
@@ -55,6 +54,7 @@ fn test_backtest_custom_config() {
         stop_loss_pct: Some(30.0),
         take_profit_pct: Some(50.0),
         use_portfolio_management: false,
+        ..Default::default()
     };
     
     let _engine = BacktestEngine::new(config.clone());
@@ -92,10 +92,10 @@ fn test_minimal_data() {
 fn test_commission_impact() {
     // Test that commissions are properly deducted
     let mut config_low_commission = BacktestConfig::default();
-    config_low_commission.commission_per_trade = 0.1;
+    config_low_commission.trading_costs.commission_per_contract = 0.1;
     
     let mut config_high_commission = BacktestConfig::default();
-    config_high_commission.commission_per_trade = 10.0;
+    config_high_commission.trading_costs.commission_per_contract = 10.0;
     
     let data = generate_synthetic_stock_data(100.0, 100, 0.1, 0.2);
     

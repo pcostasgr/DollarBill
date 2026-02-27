@@ -32,11 +32,79 @@ pub struct TradeSignal {
 
 #[derive(Debug, Clone)]
 pub enum SignalAction {
+    // Single option signals
+    BuyCall { strike: f64, days_to_expiry: usize, volatility: f64 },
+    BuyPut { strike: f64, days_to_expiry: usize, volatility: f64 },
+    SellCall { strike: f64, days_to_expiry: usize, volatility: f64 },
+    SellPut { strike: f64, days_to_expiry: usize, volatility: f64 },
+    
+    // Position management
+    ClosePosition { position_id: usize },
+    
+    // Multi-leg strategies
     SellStraddle,
     BuyStraddle,
     IronButterfly { wing_width: f64 },
     CashSecuredPut { strike_pct: f64 },
+    
+    // Spread strategies (Phase 5)
+    IronCondor { 
+        sell_call_strike: f64, 
+        buy_call_strike: f64, 
+        sell_put_strike: f64, 
+        buy_put_strike: f64,
+        days_to_expiry: usize 
+    },
+    CreditCallSpread { 
+        sell_strike: f64, 
+        buy_strike: f64, 
+        days_to_expiry: usize 
+    },
+    CreditPutSpread { 
+        sell_strike: f64, 
+        buy_strike: f64, 
+        days_to_expiry: usize 
+    },
+    CoveredCall { 
+        sell_strike: f64, 
+        days_to_expiry: usize 
+    },
+    
     NoAction,
+}
+
+impl SignalAction {
+    /// Get sell put strike for iron condor
+    pub fn iron_condor_sell_put_strike(&self) -> f64 {
+        match self {
+            SignalAction::IronCondor { sell_put_strike, .. } => *sell_put_strike,
+            _ => 0.0,
+        }
+    }
+
+    /// Get sell call strike for iron condor
+    pub fn iron_condor_sell_call_strike(&self) -> f64 {
+        match self {
+            SignalAction::IronCondor { sell_call_strike, .. } => *sell_call_strike,
+            _ => 0.0,
+        }
+    }
+
+    /// Get sell strike for credit call spread
+    pub fn credit_call_spread_sell_strike(&self) -> f64 {
+        match self {
+            SignalAction::CreditCallSpread { sell_strike, .. } => *sell_strike,
+            _ => 0.0,
+        }
+    }
+
+    /// Get buy strike for credit call spread
+    pub fn credit_call_spread_buy_strike(&self) -> f64 {
+        match self {
+            SignalAction::CreditCallSpread { buy_strike, .. } => *buy_strike,
+            _ => 0.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -99,3 +167,12 @@ pub mod tests;
 
 // Multi-leg option strategy templates
 pub mod templates;
+
+// Short options mispricing detection
+pub mod mispricing;
+
+// Multi-leg spread strategies (Phase 5)
+pub mod spreads;
+
+// Short strangle strategy (Phase 6)
+pub mod short_strangle;

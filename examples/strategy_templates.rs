@@ -80,11 +80,11 @@ fn test_iron_condor_variations() -> Result<(), Box<dyn Error>> {
         max_positions: 2,
         days_to_expiry: 45,
         risk_free_rate: 0.045,
-        commission_per_trade: 2.0,
         max_days_hold: 40,
         stop_loss_pct: Some(2.0),
         take_profit_pct: Some(0.50),
         use_portfolio_management: false,
+        ..Default::default()
     });
     
     let result = engine.run_with_signals(
@@ -123,11 +123,11 @@ fn test_iron_condor_variations() -> Result<(), Box<dyn Error>> {
         max_positions: 2,
         days_to_expiry: 30,
         risk_free_rate: 0.045,
-        commission_per_trade: 2.0,
         max_days_hold: 25,
         stop_loss_pct: Some(2.0),
         take_profit_pct: Some(0.60),
         use_portfolio_management: false,
+        ..Default::default()
     });
     
     let result = engine.run_with_signals(
@@ -191,11 +191,11 @@ fn test_credit_spread_variations() -> Result<(), Box<dyn Error>> {
         max_positions: 3,
         days_to_expiry: 30,
         risk_free_rate: 0.045,
-        commission_per_trade: 2.0,
         max_days_hold: 25,
         stop_loss_pct: Some(2.0),
         take_profit_pct: Some(0.60),
         use_portfolio_management: false,
+        ..Default::default()
     });
     
     let result = engine.run_with_signals(
@@ -231,11 +231,11 @@ fn test_credit_spread_variations() -> Result<(), Box<dyn Error>> {
         max_positions: 3,
         days_to_expiry: 30,
         risk_free_rate: 0.045,
-        commission_per_trade: 2.0,
         max_days_hold: 25,
         stop_loss_pct: Some(2.0),
         take_profit_pct: Some(0.60),
         use_portfolio_management: false,
+        ..Default::default()
     });
     
     let result = engine.run_with_signals(

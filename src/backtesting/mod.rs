@@ -8,5 +8,6 @@ pub mod metrics;
 
 pub use position::{Position, PositionStatus};
 pub use trade::{Trade, TradeType};
-pub use engine::{BacktestEngine, BacktestConfig, SignalAction};
+pub use engine::{BacktestEngine, BacktestConfig, TradingCosts};
+pub use crate::strategies::SignalAction;
 pub use metrics::{BacktestResult, PerformanceMetrics, EquityCurve};

@@ -6,6 +6,7 @@ use dollarbill::portfolio::{
     RiskLimits, StrategyStats,
 };
 use dollarbill::backtesting::position::{Position, PositionStatus, OptionType};
+use dollarbill::models::american::ExerciseStyle;
 use dollarbill::models::bs_mod::Greeks;
 use std::collections::HashMap;
 
@@ -265,6 +266,7 @@ fn create_position(id: usize, symbol: &str, quantity: i32, price: f64, delta: f6
         id,
         symbol: symbol.to_string(),
         option_type: if delta > 0.0 { OptionType::Call } else { OptionType::Put },
+        exercise_style: ExerciseStyle::European,
         strike: 100.0,
         quantity,
         entry_price: price,

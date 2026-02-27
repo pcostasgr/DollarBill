@@ -51,8 +51,8 @@ impl Trade {
         self.price * self.quantity.abs() as f64 * 100.0
     }
     
-    /// Total cost including commission
+    /// Total cost including commission (per contract)
     pub fn total_cost(&self) -> f64 {
-        self.value() + self.commission
+        self.value() + (self.commission * self.quantity.abs() as f64)
     }
 }

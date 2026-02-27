@@ -5,7 +5,7 @@
 //! realism (fees eat thin edges), and position-sizing safety.
 
 use crate::helpers::generate_synthetic_stock_data;
-use dollarbill::backtesting::engine::{BacktestEngine, BacktestConfig, SignalAction};
+use dollarbill::backtesting::{BacktestEngine, BacktestConfig, SignalAction};
 use dollarbill::market_data::csv_loader::HistoricalDay;
 
 // ─── 5. Backtesting Engine ────────────────────────────────────────────────────
@@ -131,10 +131,10 @@ fn test_zero_trades_sharpe_undefined_drawdown_zero() {
 #[test]
 fn test_slippage_commission_eats_thin_edge() {
     let mut config_no_commission = BacktestConfig::default();
-    config_no_commission.commission_per_trade = 0.0;
+    config_no_commission.trading_costs.commission_per_contract = 0.0;
 
     let mut config_high_commission = BacktestConfig::default();
-    config_high_commission.commission_per_trade = 50.0; // $50 per trade
+    config_high_commission.trading_costs.commission_per_contract = 50.0; // $50 per trade
 
     let data = generate_synthetic_stock_data(100.0, 100, 0.0, 0.15);
 
