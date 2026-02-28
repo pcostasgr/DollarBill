@@ -2,7 +2,6 @@
 // Demonstrates multi-leg option strategies for premium collection
 
 use dollarbill::strategies::spreads::{detect_iron_condors, detect_credit_call_spreads, SpreadConfig, generate_spread_signals};
-use std::error::Error;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("===============================================================");

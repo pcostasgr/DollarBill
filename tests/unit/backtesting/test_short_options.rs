@@ -2,7 +2,6 @@
 
 use crate::helpers::generate_synthetic_stock_data;
 use dollarbill::backtesting::{BacktestEngine, BacktestConfig, SignalAction};
-use dollarbill::backtesting::position::PositionStatus;
 
 #[test]
 fn test_sell_call_signal_execution() {
@@ -91,7 +90,7 @@ fn test_short_call_and_put_combination() {
 
 #[test]
 fn test_short_options_win_rate() {
-    let mut config = BacktestConfig {
+    let config = BacktestConfig {
         initial_capital: 100_000.0,
         max_positions: 3,
         position_size_pct: 10.0,
@@ -165,7 +164,6 @@ fn test_short_options_with_stop_loss() {
     );
     
     // Should handle stop losses for short positions
-    assert!(result.metrics.total_trades >= 0);
     assert!(result.metrics.total_return_pct.is_finite() || result.metrics.total_return_pct.is_nan());
 }
 
@@ -200,7 +198,6 @@ fn test_short_options_with_early_exit() {
     );
     
     // Should exit positions before expiration
-    assert!(result.metrics.total_trades >= 0);
     if result.metrics.total_trades > 0 {
         assert!(result.metrics.avg_days_held <= 15.0, "Should respect max_days_hold");
     }
@@ -319,7 +316,6 @@ fn test_short_options_different_strikes() {
     );
     
     // Should handle different strike prices
-    assert!(result.metrics.total_trades >= 0);
     assert!(result.metrics.total_return_pct.is_finite() || result.metrics.total_return_pct.is_nan());
 }
 
@@ -467,6 +463,5 @@ fn test_short_options_high_volatility() {
     );
     
     // Should handle high volatility
-    assert!(result.metrics.total_trades >= 0);
     assert!(result.metrics.total_return_pct.is_finite() || result.metrics.total_return_pct.is_nan());
 }

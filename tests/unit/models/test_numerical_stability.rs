@@ -7,6 +7,7 @@ use dollarbill::models::heston_analytical::heston_call_carr_madan;
 use dollarbill::utils::vol_surface::implied_volatility_newton;
 
 const HIGH_PRECISION: f64 = 1e-9;
+#[allow(dead_code)]
 const STANDARD_PRECISION: f64 = 1e-6;
 
 fn bs_call(s: f64, k: f64, r: f64, t: f64, sigma: f64) -> Greeks {

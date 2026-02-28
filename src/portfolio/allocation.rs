@@ -1,8 +1,6 @@
-#![allow(dead_code)]
 // Multi-strategy allocation and portfolio optimization
 
 use std::collections::HashMap;
-use crate::backtesting::position::Position;
 
 /// Strategy allocation
 #[derive(Debug, Clone)]
@@ -197,19 +195,20 @@ impl PortfolioAllocator {
         }
     }
 
-    /// Update current allocations from positions
-    pub fn update_current_allocations(&mut self, positions: &[Position]) {
-        // Group positions by strategy
-        let mut strategy_values = HashMap::new();
-        let mut total_value = 0.0;
-        
-        for pos in positions {
-            let value = pos.entry_price * (pos.quantity.abs() as f64) * 100.0;
-            *strategy_values.entry("default".to_string()).or_insert(0.0) += value;
-            total_value += value;
-        }
-        
-        // Update current percentages
+    /// Update current allocations from strategy→dollar-value mapping.
+    ///
+    /// `Position` carries no strategy field, so the **caller** must group
+    /// positions by strategy and sum their values before calling this.
+    ///
+    /// ```ignore
+    /// let mut strategy_values = HashMap::new();
+    /// strategy_values.insert("IronCondor".to_string(), 25_000.0);
+    /// strategy_values.insert("CreditSpreads".to_string(), 15_000.0);
+    /// allocator.update_current_allocations(&strategy_values);
+    /// ```
+    pub fn update_current_allocations(&mut self, strategy_values: &HashMap<String, f64>) {
+        let total_value: f64 = strategy_values.values().sum();
+
         for (name, allocation) in &mut self.allocations {
             if let Some(&value) = strategy_values.get(name) {
                 allocation.current_pct = if total_value > 0.0 {

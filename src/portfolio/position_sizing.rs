@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 // Position sizing algorithms for portfolio management
 
 /// Position sizing method

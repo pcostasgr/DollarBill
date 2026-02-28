@@ -5,8 +5,7 @@
 
 use dollarbill::backtesting::engine::{BacktestEngine, BacktestConfig};
 use dollarbill::strategies::templates::{
-    IronCondorConfig, BullPutSpreadConfig, BearCallSpreadConfig,
-    ShortStrangleConfig, CoveredCallConfig,
+    IronCondorConfig, BullPutSpreadConfig,
 };
 use dollarbill::market_data::csv_loader::load_csv_closes;
 use std::error::Error;

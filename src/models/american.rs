@@ -1,6 +1,5 @@
 // American options pricing using binomial trees (Cox-Ross-Rubinstein model)
 // Handles early exercise optimally for American calls and puts
-#![allow(dead_code)]
 
 use crate::models::bs_mod::Greeks;
 

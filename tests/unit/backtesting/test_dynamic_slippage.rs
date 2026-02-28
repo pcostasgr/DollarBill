@@ -196,7 +196,7 @@ fn engine_panic_widening_survives_crash() {
     let result = engine.run_with_signals(
         "SPY",
         data,
-        |_sym, spot, idx, hist_vols| {
+        |_sym, spot, idx, _hist_vols| {
             let vol = if idx < 20 { 0.15 } else { 0.85 };
             vec![SignalAction::SellCall {
                 strike: spot * 1.05,
@@ -328,7 +328,7 @@ fn kelly_blowup_2020_panic_with_realistic_costs() {
     let result = engine.run_with_signals(
         "SPY",
         data,
-        |_sym, spot, idx, hist_vols| {
+        |_sym, spot, idx, _hist_vols| {
             // Vol signal: 15% in calm, 85% during crash, 60% in recovery
             let vol = if idx < 60 {
                 0.15

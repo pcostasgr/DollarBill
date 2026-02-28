@@ -1,6 +1,5 @@
 // Heston model pricing tests
 
-use crate::helpers::EPSILON;
 use dollarbill::models::heston::{HestonParams, heston_start};
 use dollarbill::models::heston_analytical::{heston_call_carr_madan, heston_put_carr_madan};
 use dollarbill::models::bs_mod::black_scholes_merton_call;

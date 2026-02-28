@@ -1,6 +1,5 @@
 // src/market_data/real_market_data.rs
 // Fetch real-time market data using Yahoo Finance
-#![allow(dead_code)]
 
 use yahoo_finance_api as yahoo;
 use std::time::{Duration, UNIX_EPOCH};

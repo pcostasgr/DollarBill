@@ -1,5 +1,4 @@
-﻿#![allow(dead_code)]
-// Heston parameter calibration using custom Nelder-Mead optimizer
+﻿// Heston parameter calibration using custom Nelder-Mead optimizer
 
 use crate::models::heston::HestonParams;
 use crate::models::heston_analytical::{heston_call_carr_madan, heston_put_carr_madan};

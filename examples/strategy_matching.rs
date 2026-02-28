@@ -1,7 +1,7 @@
 // Strategy matching example
 // Demonstrates intelligent stock-strategy matching based on personality analysis
 
-use dollarbill::analysis::stock_classifier::{StockClassifier, StockPersonality};
+use dollarbill::analysis::stock_classifier::StockClassifier;
 use dollarbill::analysis::performance_matrix::{PerformanceMatrix, PerformanceMetrics};
 use dollarbill::strategies::matching::StrategyMatcher;
 

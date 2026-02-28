@@ -158,68 +158,16 @@ impl StrategyMatcher {
         }
     }
 
-    /// Load performance data from backtest results
+    /// Load performance data from backtest results.
+    ///
+    /// In production, call `PerformanceMatrix::load_from_file()` with actual
+    /// persisted backtest output. The previous implementation hard-coded five
+    /// fabricated `PerformanceMetrics` entries for NVDA and TSLA — those have
+    /// been removed so the matcher starts empty and is populated only from
+    /// real data.
     fn load_performance_data(&mut self) -> Result<(), Box<dyn Error>> {
-        // This would load actual backtest results
-        // For now, we'll use placeholder data based on our Heston backtest results
-
-        // NVDA results from backtest_heston.rs
-        self.performance_matrix.add_result("NVDA", "Short-Term Momentum",
-            crate::analysis::performance_matrix::PerformanceMetrics {
-                total_return: 2.7, // 270%
-                sharpe_ratio: 2.67,
-                max_drawdown: 0.67,
-                win_rate: 47.5,
-                profit_factor: 5.51,
-                total_trades: 385,
-                avg_holding_period: 10.0,
-            });
-
-        self.performance_matrix.add_result("NVDA", "Medium-Term RSI",
-            crate::analysis::performance_matrix::PerformanceMetrics {
-                total_return: 1.06, // 106%
-                sharpe_ratio: 0.90,
-                max_drawdown: 1.51,
-                win_rate: 55.0,
-                profit_factor: 3.67,
-                total_trades: 236,
-                avg_holding_period: 21.0,
-            });
-
-        self.performance_matrix.add_result("NVDA", "Long-Term Holding",
-            crate::analysis::performance_matrix::PerformanceMetrics {
-                total_return: 0.0437, // 4.37%
-                sharpe_ratio: 0.20,
-                max_drawdown: 1.95,
-                win_rate: 76.0,
-                profit_factor: 4.12,
-                total_trades: 118,
-                avg_holding_period: 45.0,
-            });
-
-        // TSLA results (poor performance)
-        self.performance_matrix.add_result("TSLA", "Short-Term Momentum",
-            crate::analysis::performance_matrix::PerformanceMetrics {
-                total_return: -1.24, // -124%
-                sharpe_ratio: 0.0,
-                max_drawdown: 1.33,
-                win_rate: 38.0,
-                profit_factor: 2.06,
-                total_trades: 353,
-                avg_holding_period: 10.0,
-            });
-
-        self.performance_matrix.add_result("TSLA", "Volatility Mean Reversion",
-            crate::analysis::performance_matrix::PerformanceMetrics {
-                total_return: -2.12, // -212%
-                sharpe_ratio: -0.57,
-                max_drawdown: 2.14,
-                win_rate: 45.0,
-                profit_factor: 1.54,
-                total_trades: 222,
-                avg_holding_period: 21.0,
-            });
-
+        // No-op: real data should be loaded via PerformanceMatrix::load_from_file()
+        // or added incrementally through add_result() after running backtests.
         Ok(())
     }
 
@@ -276,6 +224,7 @@ mod tests {
         let mut matcher = StrategyMatcher::new();
 
         // Add a mock profile for NVDA
+        #[allow(deprecated)]
         let profile = matcher.classifier.classify_stock("NVDA", 0.6, 0.8, 0.3, 0.8);
         assert_eq!(profile.personality, StockPersonality::MomentumLeader);
 

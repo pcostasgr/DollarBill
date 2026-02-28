@@ -1,7 +1,6 @@
 // src/csv_loader.rs
 // Generic CSV loader for Yahoo Finance format (Date,Open,High,Low,Close,Volume,Dividends,Stock Splits)
 // Returns vector of HistoricalDay with closes, newest first
-#![allow(dead_code)]
 
 use std::error::Error;
 use std::fs::File;

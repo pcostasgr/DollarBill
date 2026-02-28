@@ -72,7 +72,7 @@ fn test_empty_data_handling() {
     let result = engine.run_simple_strategy("TEST", empty_data, 0.15);
     
     // Should handle empty data gracefully
-    assert!(result.metrics.total_trades == 0 || result.metrics.total_trades >= 0);
+    assert!(result.metrics.total_trades == 0);
 }
 
 #[test]
@@ -200,7 +200,6 @@ fn test_result_metrics_present() {
     assert!(result.metrics.total_return_pct.is_finite() || result.metrics.total_return_pct.is_nan());
     assert!(result.metrics.max_drawdown.is_finite() || result.metrics.max_drawdown.is_nan());
     assert!(result.metrics.win_rate >= 0.0 && result.metrics.win_rate <= 100.0);
-    assert!(result.metrics.total_trades >= 0);
 }
 
 #[test]

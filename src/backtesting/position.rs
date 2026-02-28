@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 // Position tracking for open options positions
 
 use crate::models::american::ExerciseStyle;

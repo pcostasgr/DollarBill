@@ -1,5 +1,4 @@
 // Load live options data from Python-generated JSON file
-#![allow(dead_code)]
 
 use crate::calibration::market_option::{MarketOption, OptionType};
 use serde::{Deserialize, Serialize};

@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 use dollarbill::calibration::nelder_mead::{NelderMead, NelderMeadConfig};
-use dollarbill::models::bs_mod::{black_scholes_call, black_scholes_put, Greeks};
+use dollarbill::models::bs_mod::{black_scholes_call, Greeks};
 use dollarbill::models::heston::HestonParams;
 use dollarbill::models::heston_analytical::heston_call_carr_madan;
 

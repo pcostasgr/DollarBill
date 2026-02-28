@@ -201,7 +201,7 @@ fn test_position_sizing_never_exceeds_account() {
 /// P&L should be finite and strategy should survive the transition.
 #[test]
 fn test_regime_change_low_to_high_vol_survives() {
-    let mut low_vol_data  = generate_synthetic_stock_data(100.0, 60, 0.0, 0.10);
+    let low_vol_data  = generate_synthetic_stock_data(100.0, 60, 0.0, 0.10);
     let mut high_vol_data = generate_synthetic_stock_data(
         low_vol_data.last().map(|d| d.close).unwrap_or(100.0),
         60, 0.0, 0.60

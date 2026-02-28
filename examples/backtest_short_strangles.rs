@@ -4,7 +4,6 @@
 use dollarbill::backtesting::engine::{BacktestEngine, BacktestConfig};
 use dollarbill::market_data::csv_loader::load_csv_closes;
 use dollarbill::strategies::{short_strangle::ShortStrangleStrategy, TradingStrategy};
-use std::error::Error;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("===============================================================");

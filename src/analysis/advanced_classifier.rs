@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 // Advanced stock personality classification system
 // Multi-dimensional analysis with regime detection and adaptive thresholds
 

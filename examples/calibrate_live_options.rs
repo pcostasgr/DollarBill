@@ -2,7 +2,7 @@
 use dollarbill::market_data::options_json_loader::{load_options_from_json, filter_liquid_options};
 use dollarbill::calibration::heston_calibrator::{calibrate_heston, CalibParams};
 use dollarbill::market_data::symbols::load_enabled_stocks;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json;
 use chrono;
 use std::fs;

@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 // Heston Stochastic Volatility Model - Monte Carlo Implementation
 // This implementation uses no external libraries except std and rayon for parallelization
 
@@ -164,6 +163,7 @@ impl SplitMix64 {
     }
 
     // Generate correlated normal random variables
+    #[allow(dead_code)] // kept as utility; QE scheme uses independent normals
     fn next_correlated_normals(&mut self, rho: f64) -> (f64, f64) {
         let z1 = self.next_normal();
         let z2 = self.next_normal();
@@ -180,6 +180,32 @@ pub struct HestonPath {
     pub stock_prices: Vec<f64>,
     #[allow(dead_code)]
     pub variances: Vec<f64>,
+}
+
+// ── QE scheme helpers (Andersen 2008) ───────────────────────────────────
+// The Quadratic-Exponential discretisation matches the first two conditional
+// moments of the CIR variance process **exactly**, eliminating the negative-
+// variance problem without ad-hoc reflection / truncation.
+
+/// ψ threshold: quadratic branch when ψ ≤ ψ_c, exponential otherwise.
+const QE_PSI_CRIT: f64 = 1.5;
+
+/// Fast standard-normal CDF (Abramowitz & Stegun 7.1.26, max error ~1.5e-7).
+/// Local to avoid a cross-module hot-loop dependency.
+fn norm_cdf_qe(x: f64) -> f64 {
+    const A1: f64 =  0.254829592;
+    const A2: f64 = -0.284496736;
+    const A3: f64 =  1.421413741;
+    const A4: f64 = -1.453152027;
+    const A5: f64 =  1.061405429;
+    const P:  f64 =  0.3275911;
+
+    let sign = if x < 0.0 { -1.0 } else { 1.0 };
+    let ax = x.abs();
+    let t = 1.0 / (1.0 + P * ax);
+    let y = 1.0 - (((((A5 * t + A4) * t) + A3) * t + A2) * t + A1)
+            * t * (-ax * ax * 0.5).exp();
+    0.5 * (1.0 + sign * y)
 }
 
 /// Heston Monte Carlo simulator
@@ -233,141 +259,179 @@ impl HestonMonteCarlo {
         Ok(HestonMonteCarlo { params, config })
     }
 
-    /// Simulate a single path using Milstein scheme with full truncation
+    /// Advance variance one step using the QE scheme (Andersen 2008).
+    ///
+    /// Matches the first two conditional moments of the CIR process exactly.
+    /// When ψ = s²/m² ≤ 1.5 (quadratic branch): V′ = a(b + Z_v)².
+    /// When ψ > 1.5 (exponential branch): V′ drawn from a point-mass /
+    /// exponential mixture using U = Φ(Z_v).
+    #[inline]
+    fn qe_variance_step(&self, v: f64, z_v: f64, dt: f64) -> f64 {
+        let kappa = self.params.kappa;
+        let theta = self.params.theta;
+        let sigma = self.params.sigma;
+
+        let e = (-kappa * dt).exp();
+
+        // Conditional mean   E[V(t+Δt) | V(t) = v]
+        let m = theta + (v - theta) * e;
+
+        // Conditional variance  Var[V(t+Δt) | V(t) = v]
+        let s2 = v * sigma * sigma * e / kappa * (1.0 - e)
+               + theta * sigma * sigma / (2.0 * kappa) * (1.0 - e).powi(2);
+
+        // Guard: degenerate case where mean is tiny
+        if m < 1e-12 {
+            return 0.0;
+        }
+
+        let psi = s2 / (m * m);
+
+        if psi <= QE_PSI_CRIT {
+            // ── Quadratic branch ────────────────────────────────────────
+            let b2 = 2.0 / psi - 1.0 + (2.0 / psi).sqrt() * (2.0 / psi - 1.0).max(0.0).sqrt();
+            let a = m / (1.0 + b2);
+            (a * (b2.sqrt() + z_v).powi(2)).max(0.0)
+        } else {
+            // ── Exponential branch ──────────────────────────────────────
+            let p = (psi - 1.0) / (psi + 1.0);
+            let beta = (1.0 - p) / m;
+            let u = norm_cdf_qe(z_v); // Φ(Z) is U(0,1); antithetic Φ(-Z)=1-U
+
+            if u <= p {
+                0.0
+            } else {
+                // Inverse CDF of exponential: F^{-1}(u) = -ln((1-p)/(1-u)) / β
+                // but we want the right sign → ln((1-p)/(1-u)) / β
+                (((1.0 - p) / (1.0 - u).max(1e-15)).ln() / beta).max(0.0)
+            }
+        }
+    }
+
+    /// Advance stock price one step using the QE log-scheme.
+    ///
+    /// The ρ-correlation between the asset and variance Brownian motions is
+    /// absorbed into the drift through the K-coefficients; `z_s` is an
+    /// **independent** standard normal.
+    #[inline]
+    fn qe_stock_step(&self, s: f64, v_old: f64, v_new: f64, z_s: f64, dt: f64) -> f64 {
+        let r     = self.params.r;
+        let rho   = self.params.rho;
+        let kappa = self.params.kappa;
+        let sigma = self.params.sigma;
+        let theta = self.params.theta;
+
+        // Trapezoidal rule: γ₁ = γ₂ = 0.5
+        let g1 = 0.5_f64;
+        let g2 = 0.5_f64;
+
+        let k0 = -rho * kappa * theta / sigma * dt;
+        let k1 = g1 * dt * (kappa * rho / sigma - 0.5) - rho / sigma;
+        let k2 = g2 * dt * (kappa * rho / sigma - 0.5) + rho / sigma;
+        let k3 = g1 * dt * (1.0 - rho * rho);
+        let k4 = g2 * dt * (1.0 - rho * rho);
+
+        let vol_term = (k3 * v_old + k4 * v_new).max(0.0).sqrt();
+        let log_return = r * dt + k0 + k1 * v_old + k2 * v_new + vol_term * z_s;
+
+        s * log_return.exp()
+    }
+
+    /// Simulate a single path using the QE scheme (Andersen 2008).
+    ///
+    /// Variance is advanced with the Quadratic-Exponential discretisation
+    /// that matches the first two conditional moments of the CIR process,
+    /// eliminating negative variance without ad-hoc reflection / truncation.
+    /// The stock price uses a log-scheme whose drift coefficients absorb the
+    /// ρ-correlation, so the two driving normals are independent.
     fn simulate_path(&self, rng: &mut SplitMix64) -> HestonPath {
         let dt = self.params.t / self.config.n_steps as f64;
-        let sqrt_dt = dt.sqrt();
-        
+
         let mut stock_prices = Vec::with_capacity(self.config.n_steps + 1);
         let mut variances = Vec::with_capacity(self.config.n_steps + 1);
-        
+
         stock_prices.push(self.params.s0);
         variances.push(self.params.v0);
-        
+
         for _ in 0..self.config.n_steps {
             let s = *stock_prices.last().unwrap();
             let v = *variances.last().unwrap();
-            
-            // Generate correlated normal random variables
-            let (dw_s, dw_v) = rng.next_correlated_normals(self.params.rho);
-            
-            // Full truncation scheme: use max(v, 0) to prevent negative variance
-            let v_pos = v.max(0.0);
-            let sqrt_v = v_pos.sqrt();
-            
-            // Update stock price (Euler is sufficient for log-normal process)
-            let s_new = s * (1.0 + self.params.r * dt + sqrt_v * sqrt_dt * dw_s);
-            
-            // Update variance using Milstein scheme with boundary protection
-            // Adds second-order correction term: 0.25 * sigma^2 * dt * (dW^2 - 1)
-            let mut v_new = v + self.params.kappa * (self.params.theta - v_pos) * dt 
-                           + self.params.sigma * sqrt_v * sqrt_dt * dw_v
-                           + 0.25 * self.params.sigma * self.params.sigma * dt * (dw_v * dw_v - 1.0);
-            
-            // Adaptive variance boundary.
-            // • Feller satisfied (2κθ > σ²): reflection — preserves the marginal
-            //   distribution with minimal bias in the well-behaved regime.
-            // • Feller violated              : full truncation at 0 — reflection
-            //   introduces a spurious positive pile-up when the variance process
-            //   spends significant time at the boundary; absorption is less biased.
-            if v_new < 0.0 {
-                v_new = if self.params.satisfies_feller() { -v_new } else { 0.0 };
-            }
-            
-            stock_prices.push(s_new.max(0.0)); // Ensure non-negative stock price
+
+            // Two independent standard normals per step
+            let z_v = rng.next_normal();
+            let z_s = rng.next_normal();
+
+            let v_new = self.qe_variance_step(v, z_v, dt);
+            let s_new = self.qe_stock_step(s, v, v_new, z_s, dt);
+
+            stock_prices.push(s_new);
             variances.push(v_new);
         }
-        
+
         HestonPath {
             stock_prices,
             variances,
         }
     }
 
-    /// Simulate path using antithetic variates (negated random numbers)
+    /// Simulate path using antithetic variates (negated random numbers).
+    /// Uses the same QE scheme as `simulate_path`, but with negated normals
+    /// (for the quadratic branch −Z flips around b; for the exponential
+    /// branch Φ(−Z) = 1 − Φ(Z), which correctly flips the uniform).
     fn simulate_path_antithetic(&self, original_randoms: &[(f64, f64)]) -> HestonPath {
         let dt = self.params.t / self.config.n_steps as f64;
-        let sqrt_dt = dt.sqrt();
-        
+
         let mut stock_prices = Vec::with_capacity(self.config.n_steps + 1);
         let mut variances = Vec::with_capacity(self.config.n_steps + 1);
-        
+
         stock_prices.push(self.params.s0);
         variances.push(self.params.v0);
-        
-        for &(dw_s, dw_v) in original_randoms {
+
+        for &(z_v, z_s) in original_randoms {
             let s = *stock_prices.last().unwrap();
             let v = *variances.last().unwrap();
-            
-            // Use NEGATED random variables (antithetic)
-            let dw_s_anti = -dw_s;
-            let dw_v_anti = -dw_v;
-            
-            let v_pos = v.max(0.0);
-            let sqrt_v = v_pos.sqrt();
-            
-            let s_new = s * (1.0 + self.params.r * dt + sqrt_v * sqrt_dt * dw_s_anti);
-            
-            let mut v_new = v + self.params.kappa * (self.params.theta - v_pos) * dt 
-                           + self.params.sigma * sqrt_v * sqrt_dt * dw_v_anti
-                           + 0.25 * self.params.sigma * self.params.sigma * dt * (dw_v_anti * dw_v_anti - 1.0);
-            
-            // Adaptive boundary — reflection when Feller satisfied, truncation when violated
-            // (same logic as simulate_path; see that function for detailed rationale).
-            if v_new < 0.0 {
-                v_new = if self.params.satisfies_feller() { -v_new } else { 0.0 };
-            }
-            
-            stock_prices.push(s_new.max(0.0));
+
+            // Negate both independent normals for antithetic pair
+            let v_new = self.qe_variance_step(v, -z_v, dt);
+            let s_new = self.qe_stock_step(s, v, v_new, -z_s, dt);
+
+            stock_prices.push(s_new);
             variances.push(v_new);
         }
-        
+
         HestonPath {
             stock_prices,
             variances,
         }
     }
 
-    /// Simulate path and capture random numbers for antithetic pair
+    /// Simulate path and capture random numbers for antithetic pair.
+    /// Records (z_v, z_s) independent normal pairs per step.
     fn simulate_path_with_randoms(&self, rng: &mut SplitMix64) -> (HestonPath, Vec<(f64, f64)>) {
         let dt = self.params.t / self.config.n_steps as f64;
-        let sqrt_dt = dt.sqrt();
-        
+
         let mut stock_prices = Vec::with_capacity(self.config.n_steps + 1);
         let mut variances = Vec::with_capacity(self.config.n_steps + 1);
         let mut randoms = Vec::with_capacity(self.config.n_steps);
-        
+
         stock_prices.push(self.params.s0);
         variances.push(self.params.v0);
-        
+
         for _ in 0..self.config.n_steps {
             let s = *stock_prices.last().unwrap();
             let v = *variances.last().unwrap();
-            
-            let (dw_s, dw_v) = rng.next_correlated_normals(self.params.rho);
-            randoms.push((dw_s, dw_v));
-            
-            let v_pos = v.max(0.0);
-            let sqrt_v = v_pos.sqrt();
-            
-            let s_new = s * (1.0 + self.params.r * dt + sqrt_v * sqrt_dt * dw_s);
-            
-            let v_new = v + self.params.kappa * (self.params.theta - v_pos) * dt 
-                        + self.params.sigma * sqrt_v * sqrt_dt * dw_v
-                        + 0.25 * self.params.sigma * self.params.sigma * dt * (dw_v * dw_v - 1.0);
-            
-            // Adaptive boundary — reflection when Feller satisfied, truncation when violated
-            // (same logic as simulate_path; see that function for detailed rationale).
-            let v_new = if v_new < 0.0 {
-                if self.params.satisfies_feller() { -v_new } else { 0.0 }
-            } else {
-                v_new
-            };
 
-            stock_prices.push(s_new.max(0.0));
+            let z_v = rng.next_normal();
+            let z_s = rng.next_normal();
+            randoms.push((z_v, z_s));
+
+            let v_new = self.qe_variance_step(v, z_v, dt);
+            let s_new = self.qe_stock_step(s, v, v_new, z_s, dt);
+
+            stock_prices.push(s_new);
             variances.push(v_new);
         }
-        
+
         (HestonPath { stock_prices, variances }, randoms)
     }
 

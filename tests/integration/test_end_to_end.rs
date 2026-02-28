@@ -18,7 +18,7 @@ fn test_complete_trading_pipeline() {
     let spot_prices = vec![150.0, 200.0, 800.0];
     let vols = vec![0.25, 0.45, 0.35];
 
-    let mut total_positions = 0;
+    let mut _total_positions = 0;
     let mut portfolio_delta = 0.0;
     let mut portfolio_vega = 0.0;
 
@@ -37,21 +37,17 @@ fn test_complete_trading_pipeline() {
             if call.price > market_call * 1.02 {
                 portfolio_delta += call.delta;
                 portfolio_vega += call.vega;
-                total_positions += 1;
+                _total_positions += 1;
             }
 
             if put.price < market_put * 0.98 {
                 portfolio_delta -= put.delta;
                 portfolio_vega -= put.vega;
-                total_positions += 1;
+                _total_positions += 1;
             }
         }
     }
 
-    if total_positions == 0 {
-        // Ensure we still validate downstream math even if signals are muted
-        total_positions = 1;
-    }
     assert!(portfolio_delta.is_finite());
     assert!(portfolio_vega.is_finite());
     assert!(portfolio_delta.abs() < 200.0);

@@ -1,9 +1,8 @@
 // Generate trade signals from model-vs-market mispricings
 use dollarbill::market_data::options_json_loader::{load_options_from_json, filter_liquid_options};
 use dollarbill::calibration::heston_calibrator::{calibrate_heston, CalibParams};
-use dollarbill::calibration::market_option::{MarketOption, OptionType};
+use dollarbill::calibration::market_option::OptionType;
 use dollarbill::models::heston_analytical::{heston_call_carr_madan, heston_put_carr_madan};
-use dollarbill::market_data::symbols::load_enabled_stocks;
 use serde::Deserialize;
 use std::fs;
 

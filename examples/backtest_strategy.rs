@@ -3,7 +3,7 @@
 
 use dollarbill::backtesting::{BacktestEngine, BacktestConfig, SignalAction, TradingCosts, SlippageModel, PartialFillModel};
 use dollarbill::market_data::csv_loader::load_csv_closes;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::error::Error;
 use std::fs;
 
@@ -389,7 +389,7 @@ fn backtest_symbol(symbol: &str, config: &StrategyConfig) -> Result<(), Box<dyn 
                     .map(|d| (d.date.clone(), d.close))
                     .collect();
                 
-                let momentum_5d = calculate_momentum(&prices, 5);
+                let _momentum_5d = calculate_momentum(&prices, 5);
                 let momentum_10d = calculate_momentum(&prices, 10);
                 let rsi = calculate_rsi(&prices, 14);
                 let vol_zscore = calculate_vol_zscore(current_vol, &hist_vols[..day_idx], config.strategies.medium_term.vol_zscore_lookback);

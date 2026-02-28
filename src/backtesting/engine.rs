@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 // Backtesting engine - orchestrates historical simulation
 
 use crate::backtesting::position::{Position, PositionStatus, OptionType};
@@ -1312,6 +1311,7 @@ impl BacktestEngine {
         }
     }
     
+    #[allow(dead_code)] // convenience wrapper, callers use calculate_position_size_with_vol
     fn calculate_position_size(&self, option_price: f64) -> i32 {
         self.calculate_position_size_with_vol(option_price, 0.30)  // Default 30% vol
     }

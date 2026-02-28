@@ -73,7 +73,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // 4. Example: Submit a market order (commented out for safety)
     println!("\n📝 Example Order (not executed):");
     println!("{}", "-".repeat(60));
-    let example_order = OrderRequest {
+    let _example_order = OrderRequest {
         symbol: "TSLA".to_string(),
         qty: 1.0,
         side: OrderSide::Buy,

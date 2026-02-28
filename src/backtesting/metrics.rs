@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 // Performance metrics and analytics
 
 use crate::backtesting::position::Position;

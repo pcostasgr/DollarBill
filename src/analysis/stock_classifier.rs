@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 // Stock personality classification system
 // Analyzes historical performance to match optimal strategies to stocks
 // Enhanced with advanced multi-dimensional feature analysis
@@ -470,6 +469,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(deprecated)]
     fn test_stock_classification() {
         let mut classifier = StockClassifier::new();
 

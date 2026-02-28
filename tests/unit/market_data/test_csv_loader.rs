@@ -1,7 +1,6 @@
 // CSV data loader tests
 
 use dollarbill::market_data::csv_loader::load_csv_closes;
-use std::fs;
 use std::path::PathBuf;
 
 fn get_test_fixture_path(filename: &str) -> PathBuf {

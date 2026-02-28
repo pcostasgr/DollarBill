@@ -25,8 +25,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("Demonstrating all 6 trading strategies with comprehensive market analysis");
     
     // Initialize the strategy systems
-    let classifier = StockClassifier::new();
-    let mut matcher = StrategyMatcher::new();
+    let _classifier = StockClassifier::new();
+    let matcher = StrategyMatcher::new();
     
     println!("\n🏭 Available Strategies:");
     println!("{}", "-".repeat(40));

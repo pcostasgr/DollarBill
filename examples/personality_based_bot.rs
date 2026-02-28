@@ -154,7 +154,7 @@ impl PersonalityBasedBot {
             let symbol = &pos.symbol;
             let entry_price: f64 = pos.avg_entry_price.parse().unwrap_or(0.0);
             let current_price: f64 = pos.current_price.parse().unwrap_or(entry_price);
-            let unrealized_pl: f64 = pos.unrealized_pl.parse().unwrap_or(0.0);
+            let _unrealized_pl: f64 = pos.unrealized_pl.parse().unwrap_or(0.0);
             let pl_pct = if entry_price > 0.0 { 
                 (current_price - entry_price) / entry_price 
             } else { 

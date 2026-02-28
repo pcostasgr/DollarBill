@@ -1,5 +1,4 @@
 // Trading strategies module
-#![allow(dead_code)]
 
 /// Core trait all strategies must implement
 pub trait TradingStrategy: Send + Sync {

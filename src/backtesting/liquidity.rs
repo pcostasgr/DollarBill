@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 // Liquidity tier system and mid-price market impact.
 //
 // Separates two distinct liquidity effects that are often conflated:

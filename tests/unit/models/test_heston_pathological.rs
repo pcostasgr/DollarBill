@@ -6,7 +6,7 @@
 
 use dollarbill::models::bs_mod::black_scholes_merton_call;
 use dollarbill::models::heston::HestonParams;
-use dollarbill::models::heston_analytical::{heston_call_carr_madan, heston_put_carr_madan};
+use dollarbill::models::heston_analytical::heston_call_carr_madan;
 use dollarbill::calibration::heston_calibrator::{
     calibrate_heston, create_mock_market_data, CalibParams,
 };

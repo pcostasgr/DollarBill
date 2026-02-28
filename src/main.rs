@@ -1,4 +1,8 @@
 // Main entry point - Modular Options Pricing System
+// The binary re-compiles all modules directly (mod declarations below),
+// so many pub library items appear "unused" from main's perspective.
+#![allow(dead_code, unused_imports)]
+
 mod models;
 mod market_data;
 mod strategies;

@@ -1,6 +1,6 @@
 // Black-Scholes pricing model tests
 
-use crate::helpers::{assert_greeks_valid, assert_price_reasonable, EPSILON};
+use crate::helpers::{assert_greeks_valid, EPSILON};
 use dollarbill::models::bs_mod::{black_scholes_merton_call, black_scholes_merton_put, black_scholes_call};
 
 #[test]

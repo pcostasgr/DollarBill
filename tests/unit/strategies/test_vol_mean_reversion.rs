@@ -1,6 +1,6 @@
 // Strategy tests
 
-use dollarbill::strategies::{TradingStrategy, TradeSignal};
+use dollarbill::strategies::TradingStrategy;
 use dollarbill::strategies::vol_mean_reversion::VolMeanReversion;
 
 #[test]
@@ -34,7 +34,7 @@ fn test_identify_high_iv() {
     
     // Should potentially generate a sell signal (overpriced volatility)
     // The exact behavior depends on the zscore threshold
-    assert!(signals.len() >= 0); // May or may not generate signal
+    drop(signals); // signals may be empty — just verify no panic
 }
 
 #[test]
@@ -50,7 +50,7 @@ fn test_identify_low_iv() {
     let signals = strategy.generate_signals("TEST", spot, market_iv, model_iv, historical_vol);
     
     // May generate a buy signal (underpriced volatility)
-    assert!(signals.len() >= 0);
+    drop(signals);
 }
 
 #[test]
@@ -66,7 +66,7 @@ fn test_mean_calculation() {
     let signals = strategy.generate_signals("TEST", spot, market_iv, model_iv, historical_vol);
     
     // Strategy should use historical_vol as the mean
-    assert!(signals.len() >= 0);
+    drop(signals);
 }
 
 #[test]
@@ -86,8 +86,8 @@ fn test_z_score_calculation() {
     let signals_normal = strategy.generate_signals("TEST", spot, normal_iv, 0.25, historical_vol);
     
     // Both should complete without error
-    assert!(signals_high.len() >= 0);
-    assert!(signals_normal.len() >= 0);
+    drop(signals_high);
+    drop(signals_normal);
 }
 
 #[test]
@@ -107,8 +107,8 @@ fn test_entry_signal_threshold() {
     let market_iv_large = 0.40;
     let signals_large = strategy.generate_signals("TEST", spot, market_iv_large, model_iv, historical_vol);
     
-    assert!(signals_small.len() >= 0);
-    assert!(signals_large.len() >= 0);
+    drop(signals_small);
+    drop(signals_large);
 }
 
 #[test]
@@ -127,8 +127,8 @@ fn test_different_symbols() {
     let signals_googl = strategy.generate_signals("GOOGL", params.0, params.1, params.2, params.3);
     
     // Should work with different symbols
-    assert!(signals_aapl.len() >= 0);
-    assert!(signals_googl.len() >= 0);
+    drop(signals_aapl);
+    drop(signals_googl);
 }
 
 #[test]
@@ -140,11 +140,11 @@ fn test_extreme_volatilities() {
     
     // Very high IV
     let signals_high = strategy.generate_signals("TEST", spot, 1.0, 0.25, historical_vol);
-    assert!(signals_high.len() >= 0);
+    drop(signals_high);
     
     // Very low IV
     let signals_low = strategy.generate_signals("TEST", spot, 0.01, 0.25, historical_vol);
-    assert!(signals_low.len() >= 0);
+    drop(signals_low);
 }
 
 #[test]
@@ -159,8 +159,8 @@ fn test_edge_threshold_sensitivity() {
     let signals_aggressive = aggressive.generate_signals("TEST", params.0, params.1, params.2, params.3);
     
     // Aggressive should potentially generate more signals
-    assert!(signals_conservative.len() >= 0);
-    assert!(signals_aggressive.len() >= 0);
+    drop(signals_conservative);
+    drop(signals_aggressive);
 }
 
 #[test]
@@ -174,8 +174,8 @@ fn test_zscore_threshold_sensitivity() {
     let signals_conservative = conservative.generate_signals("TEST", params.0, params.1, params.2, params.3);
     let signals_aggressive = aggressive.generate_signals("TEST", params.0, params.1, params.2, params.3);
     
-    assert!(signals_conservative.len() >= 0);
-    assert!(signals_aggressive.len() >= 0);
+    drop(signals_conservative);
+    drop(signals_aggressive);
 }
 
 #[test]
@@ -190,7 +190,7 @@ fn test_zero_edge() {
     let signals = strategy.generate_signals("TEST", spot, iv, iv, historical_vol);
     
     // Should handle zero edge gracefully
-    assert!(signals.len() >= 0);
+    drop(signals);
 }
 
 #[test]
@@ -206,7 +206,7 @@ fn test_negative_edge() {
     let signals = strategy.generate_signals("TEST", spot, market_iv, model_iv, historical_vol);
     
     // Should handle negative edge (potential buy signal)
-    assert!(signals.len() >= 0);
+    drop(signals);
 }
 
 #[test]
@@ -221,7 +221,7 @@ fn test_realistic_market_conditions() {
     
     let signals = strategy.generate_signals("NVDA", spot, market_iv, model_iv, historical_vol);
     
-    assert!(signals.len() >= 0);
+    drop(signals);
 }
 
 #[test]

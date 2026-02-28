@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 // Alpaca API client for paper trading and market data
 
 use std::error::Error;

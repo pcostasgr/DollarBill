@@ -81,6 +81,7 @@ impl TradingStrategy for ShortStrangleStrategy {
 
 impl ShortStrangleStrategy {
     /// Find the optimal short strangle for given parameters
+    #[allow(dead_code)] // not yet wired into signal dispatch
     fn find_optimal_strangle(
         &self,
         symbol: &str,
@@ -186,6 +187,7 @@ impl ShortStrangleStrategy {
     }
 
     /// Estimate win probability for short strangle
+    #[allow(dead_code)] // not yet wired into signal dispatch
     fn estimate_win_probability(
         &self,
         spot: f64,

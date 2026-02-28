@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 // Portfolio manager - orchestrates position sizing, risk analytics, allocation, and performance tracking
 
 use crate::backtesting::position::Position;

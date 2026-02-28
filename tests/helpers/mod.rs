@@ -44,6 +44,7 @@ pub fn assert_greeks_valid(greeks: &Greeks) {
 }
 
 /// Assert price is reasonable (basic sanity checks)
+#[allow(dead_code)]
 pub fn assert_price_reasonable(price: f64, spot: f64, strike: f64) {
     assert!(price.is_finite(), "Price must be finite");
     assert!(price >= 0.0, "Price must be non-negative");
