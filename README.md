@@ -845,6 +845,88 @@ Feel free to use as reference or learning material.
 
 This project proves that complex quantitative finance software can be built entirely through **conversational AI pair programming**. Every line of code, from the Nelder-Mead optimizer to the Carr-Madan FFT implementation, emerged from natural language descriptions transformed into working Rust by AI coding assistants. It's a testament to how AI is democratizing access to sophisticated software engineering.
 
+## 🧪 Testing
+
+DollarBill has a comprehensive test suite covering pricing models, strategies, backtesting, portfolio management, and integration scenarios.
+
+### Running Tests
+
+```bash
+# Run the full test suite
+cargo test
+
+# Run only library unit tests (fastest)
+cargo test --lib
+
+# Run a specific test module
+cargo test models::heston
+cargo test portfolio::allocation
+
+# Run integration tests only
+cargo test --test lib
+```
+
+### Test Summary
+
+| Category | Tests | Description |
+|----------|------:|-------------|
+| **Models — Black-Scholes** | 30 | Pricing, Greeks, put-call parity, dividends, pathological edge cases, numerical stability, 8 absolute-value reference tests (Hull textbook) |
+| **Models — Heston MC** | 22 | QE scheme variance non-negativity, put-call parity, mean reversion, SplitMix64 distribution, stress tests (Feller violation, extreme params) |
+| **Models — Heston Analytical** | 2 | Carr-Madan FFT ATM pricing, put-call parity |
+| **Models — American** | 8 | Binomial tree pricing, convergence, Greeks, early exercise with dividends |
+| **Models — Property-Based** | 13 | Proptest-driven: delta bounds, gamma positivity, vega symmetry, monotonicity, parity with dividends |
+| **Models — Vol Surface** | 6 | Arbitrage-free surface: no calendar spread, no butterfly, no put-call IV inversion |
+| **Models — Portfolio Risk** | 5 | Delta-neutral portfolios, gamma scalping, vega sensitivity, rho sign correctness |
+| **Backtesting — Engine** | 15 | Config, execution, stop-loss, take-profit, position limits, commissions, trend scenarios |
+| **Backtesting — Short Options** | 13 | SellCall, SellPut, straddles, IV-based sizing, early exit, mixed long/short |
+| **Backtesting — Trading Costs** | 12 | Round-trip costs, bid-ask spread, commissions, no-free-lunch invariants |
+| **Backtesting — Liquidity** | 18 | Tier-based spread models, impact coefficients, permanent/temporary decomposition |
+| **Backtesting — Slippage** | 13 | Panic widening, partial fills, vol-scaled fill rates, Kelly blowup survival |
+| **Backtesting — Market Impact** | 8 | Full market impact model, crash vs calm, size monotonicity |
+| **Backtesting — Edge Cases** | 6 | COVID vol explosion, regime change, zero trades, naked call risk, iron condor Greeks |
+| **Strategies** | 28 | Strategy factory, signal generation, 6 strategy types, personality classification, vol mean reversion |
+| **Strategies — Property-Based** | 14 | Classifier stability under noise, boundary flip rates, confidence intervals |
+| **Portfolio** | 37 | Position sizing (5 methods), risk analytics, VaR, Greeks aggregation, allocation (4 methods), performance attribution, Sharpe/Sortino |
+| **Calibration** | 2 | Nelder-Mead optimizer (Rosenbrock, sphere functions) |
+| **Market Data** | 7 | CSV loader validation, date handling, missing file handling |
+| **Concurrency** | 3 | Thread-safe pricing, deadlock prevention, parallel calibration independence |
+| **Integration** | 17 | End-to-end pipeline, multi-model consistency, regime stress (crash, recovery, vol-crush) |
+| **Performance** | 3 | BSM, Heston, Nelder-Mead speed benchmarks |
+| **Other** | 1 | CDF verification |
+| **Doc-tests** | 2 | Alpaca client examples (compile-only) |
+| | **297 + 8** | **Total (297 unit/integration + 7 ignored network tests + 1 ignored doc-test)** |
+
+### Test Architecture
+
+```
+tests/
+├── helpers/              # Shared utilities & synthetic data generation
+├── integration/
+│   ├── test_end_to_end.rs         # Full pipeline: data → calibration → pricing
+│   └── test_regime_stress.rs      # Crash/recovery/vol-crush market regimes
+├── unit/
+│   ├── backtesting/      # Engine, costs, slippage, liquidity, market impact
+│   ├── calibration/      # (via src/ inline tests)
+│   ├── concurrency/      # Thread safety & parallel independence
+│   ├── market_data/      # CSV loader, data validation
+│   ├── models/           # BSM, Heston MC, Heston FFT, American, Greeks,
+│   │                     #   property-based, numerical stability, vol surface
+│   ├── performance/      # Benchmark speed tests
+│   └── strategies/       # Personality props, classifier, vol mean reversion
+├── lib.rs                # Test harness root
+└── verify_cdf.rs         # Standalone CDF accuracy verification
+```
+
+Additionally, each `src/` module contains **89 inline unit tests** (marked `#[cfg(test)]`) covering portfolio management, strategies, matching, and model internals.
+
+### Key Testing Patterns
+
+- **Absolute-value reference tests**: 8 BSM tests verify prices against Hull textbook values with tight tolerances
+- **Property-based testing**: Proptest generates random valid inputs to verify invariants (delta bounds, parity, monotonicity)
+- **Regime stress testing**: Dedicated crash/recovery/vol-crush scenarios with Heston MC paths
+- **No-free-lunch invariants**: Trading cost tests prove round-trip costs are always positive, commissions never turn loss into profit
+- **Variance non-negativity**: Heston QE scheme tested with 10K paths under extreme Feller-violating parameters
+
 ## ⚠️ Disclaimer
 
 This software is for **educational and research purposes only**. It is not financial advice. Options trading involves substantial risk of loss. Always conduct your own research and consult with licensed financial professionals before trading.
