@@ -271,6 +271,7 @@ pub fn american_put_greeks(
 /// Optimal exercise boundary for American options
 /// Returns the stock price at which early exercise becomes optimal
 pub fn optimal_exercise_boundary(
+    spot: f64,
     strike: f64,
     maturity: f64,
     rate: f64,
@@ -282,8 +283,10 @@ pub fn optimal_exercise_boundary(
     let dt = maturity / n as f64;
     let u = (volatility * dt.sqrt()).exp();
     let d = 1.0 / u;
+    let q = if config.use_dividends { config.dividend_yield } else { 0.0 };
+    let fwd_factor = ((rate - q) * dt).exp();
     let r = (rate * dt).exp();
-    let p = (r - d) / (u - d);
+    let p = (fwd_factor - d) / (u - d);
 
     let mut boundaries = Vec::with_capacity(n);
 
@@ -293,7 +296,7 @@ pub fn optimal_exercise_boundary(
 
     // Terminal values
     for i in 0..=n {
-        let stock_price = strike * u.powi(i as i32) * d.powi((n - i) as i32);
+        let stock_price = spot * u.powi(i as i32) * d.powi((n - i) as i32);
         option_values[i] = if is_call {
             (stock_price - strike).max(0.0)
         } else {
@@ -304,7 +307,7 @@ pub fn optimal_exercise_boundary(
     // Work backwards, tracking where early exercise occurs
     for step in (0..n).rev() {
         for i in 0..=step {
-            let stock_price = strike * u.powi(i as i32) * d.powi((step - i) as i32);
+            let stock_price = spot * u.powi(i as i32) * d.powi((step - i) as i32);
             let expected_value = (p * option_values[i + 1] + (1.0 - p) * option_values[i]) / r;
 
             let exercise_value = if is_call {
@@ -326,7 +329,7 @@ pub fn optimal_exercise_boundary(
         let mut boundary_price = 0.0_f64;
         for i in 0..=step {
             if exercise_points[i] {
-                let stock_price = strike * u.powi(i as i32) * d.powi((step - i) as i32);
+                let stock_price = spot * u.powi(i as i32) * d.powi((step - i) as i32);
                 boundary_price = boundary_price.max(stock_price);
             }
         }

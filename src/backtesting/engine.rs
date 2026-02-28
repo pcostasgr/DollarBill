@@ -397,6 +397,7 @@ impl BacktestEngine {
             let signals = signal_fn(symbol, spot, day_idx, &hist_vols);
             
             // Execute signals
+            let current_vol = hist_vols.get(day_idx).copied().unwrap_or(0.25);
             for signal in signals {
                 if can_trade && self.can_open_position() {
                     match signal {
@@ -419,29 +420,45 @@ impl BacktestEngine {
                         },
                         // Phase 6: Multi-leg spread strategies
                         SignalAction::IronCondor { sell_call_strike, buy_call_strike, sell_put_strike, buy_put_strike, days_to_expiry } => {
-                            self.open_iron_condor(symbol, spot, sell_call_strike, buy_call_strike, sell_put_strike, buy_put_strike, days_to_expiry, &day.date);
+                            self.open_iron_condor(symbol, spot, sell_call_strike, buy_call_strike, sell_put_strike, buy_put_strike, days_to_expiry, &day.date, current_vol);
                         },
                         SignalAction::CreditCallSpread { sell_strike, buy_strike, days_to_expiry } => {
-                            self.open_credit_call_spread(symbol, spot, sell_strike, buy_strike, days_to_expiry, &day.date);
+                            self.open_credit_call_spread(symbol, spot, sell_strike, buy_strike, days_to_expiry, &day.date, current_vol);
                         },
                         SignalAction::CreditPutSpread { sell_strike, buy_strike, days_to_expiry } => {
-                            self.open_credit_put_spread(symbol, spot, sell_strike, buy_strike, days_to_expiry, &day.date);
+                            self.open_credit_put_spread(symbol, spot, sell_strike, buy_strike, days_to_expiry, &day.date, current_vol);
                         },
                         SignalAction::CoveredCall { sell_strike, days_to_expiry } => {
-                            self.open_covered_call(symbol, spot, sell_strike, days_to_expiry, &day.date);
+                            self.open_covered_call(symbol, spot, sell_strike, days_to_expiry, &day.date, current_vol);
                         },
-                        // Legacy signals (keep for backward compatibility)
+                        // Multi-leg strategies via legacy signal variants
                         SignalAction::SellStraddle => {
-                            // Implement sell straddle logic
+                            // Sell ATM straddle: short call + short put at spot
+                            self.open_short_call_position(symbol, spot, spot, 30, current_vol, &day.date);
+                            self.open_short_put_position(symbol, spot, spot, 30, current_vol, &day.date);
                         },
                         SignalAction::BuyStraddle => {
-                            // Implement buy straddle logic
+                            // Buy ATM straddle: long call + long put at spot
+                            self.open_call_position(symbol, spot, spot, 30, current_vol, &day.date, ExerciseStyle::European);
+                            self.open_put_position(symbol, spot, spot, 30, current_vol, &day.date, ExerciseStyle::European);
                         },
-                        SignalAction::IronButterfly { .. } => {
-                            // Implement iron butterfly logic
+                        SignalAction::IronButterfly { wing_width } => {
+                            // Iron butterfly: sell ATM call + sell ATM put,
+                            // buy OTM call @ spot+wing, buy OTM put @ spot-wing
+                            let days = 30;
+                            self.open_iron_condor(
+                                symbol, spot,
+                                spot,              // sell call strike (ATM)
+                                spot + wing_width, // buy call strike  (OTM)
+                                spot,              // sell put strike  (ATM)
+                                spot - wing_width, // buy put strike   (OTM)
+                                days, &day.date, current_vol,
+                            );
                         },
-                        SignalAction::CashSecuredPut { .. } => {
-                            // Implement cash-secured put logic
+                        SignalAction::CashSecuredPut { strike_pct } => {
+                            // Cash-secured put: sell OTM put at spot*(1 - strike_pct)
+                            let put_strike = spot * (1.0 - strike_pct);
+                            self.open_short_put_position(symbol, spot, put_strike, 30, current_vol, &day.date);
                         },
                         SignalAction::NoAction => {
                             // Do nothing
@@ -808,9 +825,9 @@ impl BacktestEngine {
         buy_put_strike: f64,
         days_to_expiry: usize,
         date: &str,
+        volatility: f64,
     ) {
         let time_to_expiry = days_to_expiry as f64 / 365.0;
-        let volatility = 0.30; // Simplified - in practice would use market vol
         
         // Calculate prices for all legs
         let sell_call_price = black_scholes_merton_call(spot, sell_call_strike, time_to_expiry, self.config.risk_free_rate, volatility, 0.0).price;
@@ -847,9 +864,9 @@ impl BacktestEngine {
         buy_strike: f64,
         days_to_expiry: usize,
         date: &str,
+        volatility: f64,
     ) {
         let time_to_expiry = days_to_expiry as f64 / 365.0;
-        let volatility = 0.30;
         
         let sell_price = black_scholes_merton_call(spot, sell_strike, time_to_expiry, self.config.risk_free_rate, volatility, 0.0).price;
         let buy_price = black_scholes_merton_call(spot, buy_strike, time_to_expiry, self.config.risk_free_rate, volatility, 0.0).price;
@@ -877,9 +894,9 @@ impl BacktestEngine {
         buy_strike: f64,
         days_to_expiry: usize,
         date: &str,
+        volatility: f64,
     ) {
         let time_to_expiry = days_to_expiry as f64 / 365.0;
-        let volatility = 0.30;
         
         let sell_price = black_scholes_merton_put(spot, sell_strike, time_to_expiry, self.config.risk_free_rate, volatility, 0.0).price;
         let buy_price = black_scholes_merton_put(spot, buy_strike, time_to_expiry, self.config.risk_free_rate, volatility, 0.0).price;
@@ -906,9 +923,9 @@ impl BacktestEngine {
         sell_strike: f64,
         days_to_expiry: usize,
         date: &str,
+        volatility: f64,
     ) {
         let time_to_expiry = days_to_expiry as f64 / 365.0;
-        let volatility = 0.30;
         
         // Buy 100 shares of stock
         let shares_to_buy = 100;
@@ -1230,13 +1247,31 @@ impl BacktestEngine {
         let positions_to_close: Vec<_> = self.positions.iter()
             .enumerate()
             .filter(|(_, p)| matches!(p.status, PositionStatus::Open))
-            .map(|(idx, p)| (idx, p.entry_date.clone()))
+            .map(|(idx, p)| {
+                let is_call = matches!(p.option_type, OptionType::Call);
+                (idx, p.entry_date.clone(), is_call, p.strike, p.quantity)
+            })
             .collect();
         
-        for (idx, entry_date) in positions_to_close {
+        for (idx, entry_date, is_call, strike, quantity) in positions_to_close {
             let days_held = self.calculate_days_between(&entry_date, date);
-            self.positions[idx].expire(date.to_string(), spot, days_held);
-            self.current_capital += 0.0;  // Expired worthless
+            
+            // Calculate intrinsic value at expiry
+            let intrinsic = if is_call {
+                (spot - strike).max(0.0)
+            } else {
+                (strike - spot).max(0.0)
+            };
+            
+            if intrinsic > 0.0 {
+                // ITM: close at intrinsic value and settle capital
+                self.positions[idx].close(intrinsic, date.to_string(), spot, days_held);
+                // Long (qty > 0) receives intrinsic; short (qty < 0) pays intrinsic
+                self.current_capital += intrinsic * quantity as f64 * 100.0;
+            } else {
+                // OTM: expires worthless
+                self.positions[idx].expire(date.to_string(), spot, days_held);
+            }
         }
     }
     

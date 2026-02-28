@@ -1,21 +1,38 @@
-// Mean Reversion Strategy - Buy oversold, sell overbought
+// Mean Reversion Strategy — volatility mean-reversion
+//
+// Rationale: implied volatility tends to mean-revert. When market IV
+// deviates significantly from the model's fair-value IV, the strategy
+// sells or buys straddles betting on a return to fair value.
+//
+// Z-score = (market_iv − model_iv) / (historical_vol × vol_of_vol_scale)
+//   z > +threshold  →  IV overpriced  →  sell straddle
+//   z < −threshold  →  IV underpriced →  buy straddle
+//
+// All signals are deterministic functions of inputs — no SystemTime, no RNG.
+
 use super::{TradingStrategy, TradeSignal, SignalAction, RiskParams};
 
 #[derive(Clone)]
 pub struct MeanReversionStrategy {
     pub lookback_period: usize,
+    /// Z-score below which the market is "oversold" (vol underpriced)
     pub oversold_threshold: f64,
+    /// Z-score above which the market is "overbought" (vol overpriced)
     pub overbought_threshold: f64,
+    /// Minimum market IV to trade (avoid dead markets)
     pub min_volatility: f64,
+    /// Scale factor for vol-of-vol estimate (fraction of historical_vol)
+    pub vol_of_vol_scale: f64,
 }
 
 impl MeanReversionStrategy {
     pub fn new() -> Self {
         Self {
             lookback_period: 20,
-            oversold_threshold: -2.0, // 2 standard deviations below mean
-            overbought_threshold: 2.0, // 2 standard deviations above mean
-            min_volatility: 0.15, // 15% minimum IV
+            oversold_threshold: -2.0,
+            overbought_threshold: 2.0,
+            min_volatility: 0.15,
+            vol_of_vol_scale: 0.25, // assume vol-of-vol ≈ 25% of historical_vol
         }
     }
 
@@ -25,25 +42,18 @@ impl MeanReversionStrategy {
             oversold_threshold: oversold,
             overbought_threshold: overbought,
             min_volatility: min_vol,
+            vol_of_vol_scale: 0.25,
         }
     }
 
-    /// Calculate Z-score for mean reversion signals
-    fn calculate_z_score(&self, symbol: &str, spot: f64) -> f64 {
-        // Simulate price mean and standard deviation
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-        let symbol_hash = symbol.chars().map(|c| c as u32).sum::<u32>() as f64;
-        
-        // Simulate historical mean around current spot
-        let mean = spot * (1.0 + (symbol_hash * 0.0001).sin() * 0.02);
-        let std_dev = spot * 0.05; // 5% standard deviation
-        
-        // Add some time-based variation
-        let price_offset = (now as f64 * 0.001 + symbol_hash * 0.01).sin() * std_dev;
-        let adjusted_spot = spot + price_offset;
-        
-        (adjusted_spot - mean) / std_dev
+    /// Compute a z-score measuring how far market IV is from model fair value,
+    /// scaled by an estimate of vol-of-vol.
+    fn iv_z_score(&self, market_iv: f64, model_iv: f64, historical_vol: f64) -> f64 {
+        let vol_of_vol = historical_vol * self.vol_of_vol_scale;
+        if vol_of_vol <= 1e-9 {
+            return 0.0;
+        }
+        (market_iv - model_iv) / vol_of_vol
     }
 }
 
@@ -58,45 +68,42 @@ impl TradingStrategy for MeanReversionStrategy {
         spot: f64,
         market_iv: f64,
         model_iv: f64,
-        _historical_vol: f64,
+        historical_vol: f64,
     ) -> Vec<TradeSignal> {
-        let z_score = self.calculate_z_score(symbol, spot);
-        let mut signals = vec![];
-
-        // Only trade if sufficient volatility
+        // Only trade if sufficient implied volatility
         if market_iv < self.min_volatility {
-            return signals;
+            return vec![];
         }
 
-        if z_score <= self.oversold_threshold {
-            // Oversold - expect mean reversion upward
-            let confidence = (z_score.abs() - 1.5).max(0.0) / 2.0; // Scale 1.5-3.5 to 0-1
-            
-            signals.push(TradeSignal {
+        let z = self.iv_z_score(market_iv, model_iv, historical_vol);
+
+        if z <= self.oversold_threshold {
+            // IV is well below model fair value → underpriced → buy straddle
+            let confidence = ((z.abs() - 1.5).max(0.0) / 2.0).min(0.85);
+            vec![TradeSignal {
                 symbol: symbol.to_string(),
-                action: SignalAction::BuyStraddle, // Long volatility for reversal
-                strike: spot,
-                expiry_days: 21, // 3 weeks for reversion
-                confidence: confidence.min(0.85),
-                edge: (market_iv - model_iv) * spot * 0.4,
-                strategy_name: self.name().to_string(),
-            });
-        } else if z_score >= self.overbought_threshold {
-            // Overbought - expect mean reversion downward
-            let confidence = (z_score - 1.5).max(0.0) / 2.0;
-            
-            signals.push(TradeSignal {
-                symbol: symbol.to_string(),
-                action: SignalAction::SellStraddle, // Short volatility
+                action: SignalAction::BuyStraddle,
                 strike: spot,
                 expiry_days: 21,
-                confidence: confidence.min(0.85),
+                confidence,
+                edge: (model_iv - market_iv) * spot * 0.4,
+                strategy_name: self.name().to_string(),
+            }]
+        } else if z >= self.overbought_threshold {
+            // IV is well above model fair value → overpriced → sell straddle
+            let confidence = ((z - 1.5).max(0.0) / 2.0).min(0.85);
+            vec![TradeSignal {
+                symbol: symbol.to_string(),
+                action: SignalAction::SellStraddle,
+                strike: spot,
+                expiry_days: 21,
+                confidence,
                 edge: (market_iv - model_iv) * spot * 0.4,
                 strategy_name: self.name().to_string(),
-            });
+            }]
+        } else {
+            vec![]
         }
-
-        signals
     }
 
     fn risk_params(&self) -> RiskParams {

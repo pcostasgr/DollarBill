@@ -61,22 +61,32 @@ mod tests {
         let strategy = MomentumStrategy::new();
         
         // Test different momentum scenarios
+        // New strategy: signal fires when IV/HV ratio deviates > 0.15 from 1.0
         let test_cases = vec![
-            ("TSLA", 200.0, 0.40, 0.35, 0.30, "High vol momentum"),
-            ("AAPL", 150.0, 0.20, 0.18, 0.15, "Low vol momentum"),
-            ("NVDA", 300.0, 0.60, 0.50, 0.45, "Extreme vol momentum"),
+            // market_iv / hist_vol = 0.45/0.30 = 1.50  → score = +0.50 > 0.15 → BuyStraddle
+            ("TSLA", 200.0, 0.45, 0.35, 0.30, "High IV expansion"),
+            // market_iv / hist_vol = 0.12/0.20 = 0.60  → score = -0.40 < -0.15 → SellStraddle
+            ("AAPL", 150.0, 0.12, 0.18, 0.20, "IV compression"),
+            // market_iv / hist_vol = 0.60/0.35 = 1.71  → score = +0.71 > 0.15 → BuyStraddle
+            ("NVDA", 300.0, 0.60, 0.50, 0.35, "Extreme IV expansion"),
         ];
 
         for (symbol, spot, market_iv, model_iv, hist_vol, scenario) in test_cases {
             let signals = strategy.generate_signals(symbol, spot, market_iv, model_iv, hist_vol);
             
-            println!("📈 Momentum test - {}: {} signals generated", scenario, signals.len());
+            println!("Momentum test - {}: {} signals generated", scenario, signals.len());
+            assert!(!signals.is_empty(), "{} should produce a signal", scenario);
             
             for signal in signals {
                 assert!(matches!(signal.action, SignalAction::BuyStraddle | SignalAction::SellStraddle));
+                assert!(signal.confidence > 0.0 && signal.confidence <= 1.0);
                 println!("  Signal: {:?} | Confidence: {:.1}%", signal.action, signal.confidence * 100.0);
             }
         }
+        
+        // Verify no signal when IV/HV is close to 1.0
+        let signals = strategy.generate_signals("SPY", 400.0, 0.21, 0.20, 0.20);
+        assert!(signals.is_empty(), "Neutral IV/HV ratio should produce no signal");
     }
 
     /// Test mean reversion strategy edge cases
@@ -84,23 +94,34 @@ mod tests {
     fn test_mean_reversion_strategy() {
         let strategy = MeanReversionStrategy::new();
         
+        // Z-score = (market_iv - model_iv) / (historical_vol * 0.25)
+        // Triggers at |z| >= 2.0
         let test_cases = vec![
-            ("AAPL", 150.0, 0.30, 0.25, 0.20, "Normal conditions"),
-            ("SPY", 400.0, 0.15, 0.12, 0.10, "Low volatility"),
-            ("COIN", 170.0, 0.80, 0.75, 0.70, "High volatility"),
+            // z = (0.40 - 0.25) / (0.20*0.25) = 0.15/0.05 = 3.0 → SellStraddle
+            ("AAPL", 150.0, 0.40, 0.25, 0.20, "IV overpriced"),
+            // z = (0.15 - 0.30) / (0.20*0.25) = -0.15/0.05 = -3.0 → BuyStraddle
+            ("SPY",  400.0, 0.15, 0.30, 0.20, "IV underpriced"),
+            // z = (0.80 - 0.40) / (0.50*0.25) = 0.40/0.125 = 3.2 → SellStraddle
+            ("COIN", 170.0, 0.80, 0.40, 0.50, "High vol overpriced"),
         ];
 
         for (symbol, spot, market_iv, model_iv, hist_vol, scenario) in test_cases {
             let signals = strategy.generate_signals(symbol, spot, market_iv, model_iv, hist_vol);
             
-            println!("🔄 Mean Reversion test - {}: {} signals", scenario, signals.len());
+            println!("Mean Reversion test - {}: {} signals", scenario, signals.len());
+            assert!(!signals.is_empty(), "{} should produce a signal", scenario);
             
-            for signal in signals {
+            for signal in &signals {
                 assert!(signal.confidence <= 0.85); // Max confidence limit
                 assert!(signal.expiry_days == 21); // Expected expiry
                 println!("  {} -> Confidence: {:.1}%", signal.symbol, signal.confidence * 100.0);
             }
         }
+        
+        // Verify no signal when z-score is small
+        // z = (0.21 - 0.20) / (0.20*0.25) = 0.01/0.05 = 0.2 — well within thresholds
+        let signals = strategy.generate_signals("MSFT", 300.0, 0.21, 0.20, 0.20);
+        assert!(signals.is_empty(), "Small IV deviation should produce no signal");
     }
 
     /// Test cash-secured puts strategy
@@ -135,29 +156,36 @@ mod tests {
     fn test_breakout_strategy() {
         let strategy = BreakoutStrategy::new();
         
-        let high_vol_symbols = vec!["TSLA", "NVDA", "COIN"];
+        // Breakout fires when expansion = market_iv/historical_vol - 1 >= 0.30
+        // AND model_iv/historical_vol >= 1.10 (confirmation)
+        let breakout_cases = vec![
+            // expansion = 0.55/0.30 - 1 = 0.833 → breakout; model 0.45/0.30 = 1.50 → confirmed
+            ("TSLA", 200.0, 0.55, 0.45, 0.30, "Strong IV breakout"),
+            // expansion = 0.70/0.40 - 1 = 0.75 → breakout; model 0.50/0.40 = 1.25 → confirmed
+            ("COIN", 170.0, 0.70, 0.50, 0.40, "Extreme breakout"),
+        ];
         
-        for symbol in high_vol_symbols {
-            let signals = strategy.generate_signals(
-                symbol,
-                200.0, // spot
-                0.45,  // high IV for breakouts
-                0.40,  // model IV
-                0.35   // historical vol
-            );
+        for (symbol, spot, market_iv, model_iv, hist_vol, scenario) in breakout_cases {
+            let signals = strategy.generate_signals(symbol, spot, market_iv, model_iv, hist_vol);
             
-            println!("🚀 Breakout test - {}: {} signals", symbol, signals.len());
+            println!("Breakout test - {}: {} signals", scenario, signals.len());
+            assert!(!signals.is_empty(), "{} should produce a signal", scenario);
             
-            for signal in signals {
-                // Breakout strategy should use appropriate actions
-                assert!(matches!(signal.action, 
-                    SignalAction::IronButterfly { .. } | 
-                    SignalAction::SellStraddle
-                ));
-                
-                assert!(signal.expiry_days <= 30); // Short-term for breakouts
+            for signal in &signals {
+                assert!(matches!(signal.action, SignalAction::IronButterfly { .. }));
+                assert!(signal.expiry_days <= 30);
                 println!("  Breakout signal: {:?} | Days: {} | Conf: {:.1}%", 
                     signal.action, signal.expiry_days, signal.confidence * 100.0);
+            }
+        }
+
+        // Test consolidation case: IV very close to HV → SellStraddle
+        // expansion = 0.21/0.20 - 1 = 0.05  (exactly at boundary, not < 0.05)
+        // expansion = 0.20/0.20 - 1 = 0.0  < 0.05 → consolidation
+        let signals = strategy.generate_signals("SPY", 400.0, 0.20, 0.18, 0.20);
+        if !signals.is_empty() {
+            for signal in &signals {
+                assert!(matches!(signal.action, SignalAction::SellStraddle));
             }
         }
     }

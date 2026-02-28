@@ -239,6 +239,172 @@ fn test_price_monotonicity_in_volatility() {
             "Higher volatility should increase option price");
 }
 
+// ============================================================================
+// ABSOLUTE-VALUE REFERENCE TESTS
+//
+// These tests verify BSM output against externally-published reference values.
+// They exist specifically to catch implementation bugs (e.g. CDF errors) that
+// structural tests (put-call parity, monotonicity, sign checks) cannot detect.
+//
+// Reference: Hull, "Options, Futures, and Other Derivatives" + independent
+// tabulated standard-normal CDF values.
+// ============================================================================
+
+/// Hull textbook example: S=42, K=40, T=0.5, r=0.10, σ=0.20, q=0
+/// Hull gives Call ≈ 4.76.  d1=0.7693, d2=0.6278.
+#[test]
+fn test_absolute_value_hull_example() {
+    let call = black_scholes_merton_call(42.0, 40.0, 0.5, 0.10, 0.20, 0.0);
+    assert!(
+        (call.price - 4.76).abs() < 0.02,
+        "Hull example: expected call ≈ 4.76, got {:.4}",
+        call.price
+    );
+}
+
+/// Standard ATM case: S=100, K=100, T=1, r=0.05, σ=0.20, q=0
+///
+/// d1 = (0 + 0.07)/0.20 = 0.35         N(0.35) ≈ 0.63683
+/// d2 = 0.15                             N(0.15) ≈ 0.55962
+/// Call = 100×0.63683 − 95.123×0.55962 ≈ 10.4506
+/// Put  = Call − 100 + 95.123          ≈  5.5735
+#[test]
+fn test_absolute_value_atm_call() {
+    let call = black_scholes_merton_call(100.0, 100.0, 1.0, 0.05, 0.20, 0.0);
+    assert!(
+        (call.price - 10.4506).abs() < 0.05,
+        "ATM call: expected ≈ 10.4506, got {:.4}",
+        call.price
+    );
+    assert!(
+        (call.delta - 0.6368).abs() < 0.005,
+        "ATM call delta: expected ≈ 0.6368, got {:.4}",
+        call.delta
+    );
+}
+
+#[test]
+fn test_absolute_value_atm_put() {
+    let put = black_scholes_merton_put(100.0, 100.0, 1.0, 0.05, 0.20, 0.0);
+    assert!(
+        (put.price - 5.5735).abs() < 0.05,
+        "ATM put: expected ≈ 5.5735, got {:.4}",
+        put.price
+    );
+    assert!(
+        (put.delta - (-0.3632)).abs() < 0.005,
+        "ATM put delta: expected ≈ -0.3632, got {:.4}",
+        put.delta
+    );
+}
+
+/// Verify Greeks at the standard ATM point: S=100, K=100, T=1, r=0.05, σ=0.20
+///
+/// Gamma = n(d1) / (S σ √T)  = 0.37524 / 20 ≈ 0.01876
+/// Vega  = S √T n(d1)         = 100 × 0.37524 ≈ 37.524
+/// Rho   = K T e^{-rT} N(d2)  ≈ 100 × 0.95123 × 0.55962 ≈ 53.23
+#[test]
+fn test_absolute_value_greeks() {
+    let call = black_scholes_merton_call(100.0, 100.0, 1.0, 0.05, 0.20, 0.0);
+
+    assert!(
+        (call.gamma - 0.01876).abs() < 0.001,
+        "Gamma: expected ≈ 0.01876, got {:.5}",
+        call.gamma
+    );
+    assert!(
+        (call.vega - 37.524).abs() < 0.5,
+        "Vega: expected ≈ 37.524, got {:.3}",
+        call.vega
+    );
+    assert!(
+        (call.rho - 53.23).abs() < 0.5,
+        "Rho: expected ≈ 53.23, got {:.2}",
+        call.rho
+    );
+    // Theta is negative for long options; annual theta ≈ −6.41
+    assert!(
+        call.theta < 0.0,
+        "Call theta should be negative, got {:.4}",
+        call.theta
+    );
+    assert!(
+        (call.theta - (-6.41)).abs() < 0.15,
+        "Theta: expected ≈ -6.41 (annual), got {:.4}",
+        call.theta
+    );
+}
+
+/// OTM call: S=100, K=130, T=0.5, r=0.05, σ=0.30, q=0
+/// This catches scaling bugs that don't show at ATM.
+#[test]
+fn test_absolute_value_otm_call() {
+    let call = black_scholes_merton_call(100.0, 130.0, 0.5, 0.05, 0.30, 0.0);
+    // Price should be small but nonzero (roughly $1–3)
+    assert!(
+        call.price > 0.5 && call.price < 5.0,
+        "OTM call: expected price in [0.5, 5.0], got {:.4}",
+        call.price
+    );
+    assert!(
+        call.delta > 0.05 && call.delta < 0.30,
+        "OTM call delta: expected in [0.05, 0.30], got {:.4}",
+        call.delta
+    );
+}
+
+/// ITM put: S=100, K=130, T=0.5, r=0.05, σ=0.30, q=0
+/// Intrinsic ≈ 130*e^(-0.025) − 100 ≈ 26.78, plus time value.
+#[test]
+fn test_absolute_value_itm_put() {
+    let put = black_scholes_merton_put(100.0, 130.0, 0.5, 0.05, 0.30, 0.0);
+    let disc_strike = 130.0 * (-0.05_f64 * 0.5).exp();
+    let intrinsic = disc_strike - 100.0;
+    assert!(
+        put.price > intrinsic,
+        "ITM put price ({:.4}) should exceed discounted intrinsic ({:.4})",
+        put.price,
+        intrinsic
+    );
+    assert!(
+        put.price < intrinsic + 5.0,
+        "ITM put time value shouldn't be huge; price={:.4} intrinsic={:.4}",
+        put.price,
+        intrinsic
+    );
+}
+
+/// With dividends: S=100, K=100, T=1, r=0.05, σ=0.20, q=0.03
+///
+/// d1 = (0 + (0.05-0.03+0.02)×1)/0.20 = 0.20
+/// d2 = 0.00
+/// N(0.20) ≈ 0.57926, N(0.00) = 0.50000
+/// Call = 100 e^{-0.03} × 0.57926 − 100 e^{-0.05} × 0.50 ≈ 56.22 − 47.56 ≈ 8.66
+#[test]
+fn test_absolute_value_with_dividends() {
+    let call = black_scholes_merton_call(100.0, 100.0, 1.0, 0.05, 0.20, 0.03);
+    assert!(
+        (call.price - 8.66).abs() < 0.10,
+        "With q=0.03: expected call ≈ 8.66, got {:.4}",
+        call.price
+    );
+}
+
+/// Short-dated ATM: S=100, K=100, T=30/365, r=0.05, σ=0.20, q=0
+/// Quick sanity check for near-expiry pricing.
+/// √T ≈ 0.2867, d1 ≈ (0.07×0.08219)/0.05734 ≈ 0.100, d2 ≈ −0.187
+/// Call ≈ 2.3–2.5
+#[test]
+fn test_absolute_value_short_dated() {
+    let t = 30.0 / 365.0;
+    let call = black_scholes_merton_call(100.0, 100.0, t, 0.05, 0.20, 0.0);
+    assert!(
+        call.price > 2.0 && call.price < 3.0,
+        "30-day ATM call: expected ≈ 2.3, got {:.4}",
+        call.price
+    );
+}
+
 #[test]
 fn test_time_decay() {
     // Option price should increase with more time to expiration

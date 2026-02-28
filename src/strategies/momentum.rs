@@ -1,56 +1,61 @@
 // src/strategies/momentum.rs
+//
+// Implied-volatility momentum strategy.
+//
+// Rationale: when market IV significantly exceeds historical (realised) vol,
+// the market is pricing in a forthcoming move — an "IV momentum" signal.
+// Conversely, when IV compresses well below realised vol the market is
+// underpricing future movement and straddles are cheap.
+//
+// All signals are fully deterministic functions of (spot, market_iv,
+// model_iv, historical_vol) — no SystemTime, no RNG.
+
 use super::{TradingStrategy, TradeSignal, SignalAction, RiskParams};
 
-/// Momentum-based trading strategy
-/// Buys when momentum is strong, sells when momentum weakens
+/// IV-momentum trading strategy.
+///
+/// Measures the ratio `market_iv / historical_vol` to detect momentum.
+/// * Ratio > 1 + threshold  →  market expects a move  →  buy straddle
+/// * Ratio < 1 − threshold  →  vol compression          →  sell straddle
 #[derive(Clone)]
-#[allow(dead_code)] // Part of strategy API, may be used by external code
 pub struct MomentumStrategy {
+    /// Lookback period hint (informational; actual vol is supplied externally)
     pub momentum_period: usize,
+    /// Minimum IV-ratio deviation from 1.0 to trigger a signal
     pub threshold: f64,
-    pub min_volume: u64,
+    /// Minimum absolute IV level to avoid trading in dead markets
+    pub min_iv: f64,
 }
 
 impl MomentumStrategy {
     pub fn new() -> Self {
         Self {
             momentum_period: 20,
-            threshold: 0.05, // 5% momentum threshold
-            min_volume: 100000,
+            threshold: 0.15, // 15% ratio deviation (e.g. IV/HV > 1.15)
+            min_iv: 0.10,    // ignore if market IV < 10%
         }
     }
 
-    pub fn with_config(momentum_period: usize, threshold: f64, min_volume: u64) -> Self {
+    pub fn with_config(momentum_period: usize, threshold: f64, min_iv: f64) -> Self {
         Self {
             momentum_period,
             threshold,
-            min_volume,
+            min_iv,
         }
     }
 
-    /// Calculate momentum as percentage change over period
-    fn calculate_momentum(&self, symbol: &str) -> f64 {
-        // In a real implementation, this would fetch historical prices
-        // For demo purposes, we'll simulate momentum calculation with more volatility
-        use std::time::{SystemTime, UNIX_EPOCH};
-
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as f64;
-
-        // Create more dynamic momentum that can be negative
-        let symbol_hash = symbol.chars().map(|c| c as u32).sum::<u32>() as f64;
-        
-        // Use multiple frequency components to create realistic oscillation
-        let fast_cycle = (now * 0.001).sin();  // Fast oscillation
-        let slow_cycle = (now * 0.0001).sin(); // Slow trend
-        let symbol_bias = ((symbol_hash * 0.01).sin() - 0.5) * 0.3; // Per-symbol bias
-        
-        // Combine cycles to create momentum between -0.3 and +0.3
-        let momentum = fast_cycle * 0.15 + slow_cycle * 0.1 + symbol_bias;
-        
-        momentum
+    /// Compute a momentum score from the IV / realised-vol ratio.
+    ///
+    /// Returns a value in roughly [-1, +1].  Positive = IV expanding,
+    /// negative = IV compressing.
+    fn iv_momentum_score(&self, market_iv: f64, historical_vol: f64) -> f64 {
+        if historical_vol <= 1e-9 {
+            return 0.0;
+        }
+        // ratio > 1 → IV leads realised vol upward (momentum)
+        // ratio < 1 → IV compressing (anti-momentum)
+        let ratio = market_iv / historical_vol;
+        (ratio - 1.0).clamp(-1.0, 1.0)
     }
 }
 
@@ -64,35 +69,49 @@ impl TradingStrategy for MomentumStrategy {
         symbol: &str,
         spot: f64,
         market_iv: f64,
-        _model_iv: f64,
-        _historical_vol: f64,
+        model_iv: f64,
+        historical_vol: f64,
     ) -> Vec<TradeSignal> {
-        let momentum_score = self.calculate_momentum(symbol);
+        // Skip if market IV is too low to trade
+        if market_iv < self.min_iv {
+            return vec![];
+        }
 
-        if momentum_score > self.threshold {
-            // Strong upward momentum - buy calls or straddle
+        let score = self.iv_momentum_score(market_iv, historical_vol);
+
+        // Model-IV confirmation: if model agrees with market, boost confidence
+        let model_agrees = if score > 0.0 {
+            model_iv > historical_vol
+        } else {
+            model_iv < historical_vol
+        };
+        let confirmation_bonus = if model_agrees { 0.10 } else { 0.0 };
+
+        if score > self.threshold {
+            // IV expanding well above realised vol — buy straddle
+            let confidence = (score.min(0.8) + confirmation_bonus).min(1.0);
             vec![TradeSignal {
                 symbol: symbol.to_string(),
                 action: SignalAction::BuyStraddle,
                 strike: spot,
                 expiry_days: 30,
-                confidence: momentum_score.min(1.0),
-                edge: spot * market_iv * 0.3, // Rough vega estimate
+                confidence,
+                edge: (market_iv - historical_vol) * spot * 0.4, // rough vega-weighted edge
                 strategy_name: self.name().to_string(),
             }]
-        } else if momentum_score < -self.threshold {
-            // Strong downward momentum - sell straddle or buy puts
+        } else if score < -self.threshold {
+            // IV compressing below realised vol — sell straddle
+            let confidence = (score.abs().min(0.8) + confirmation_bonus).min(1.0);
             vec![TradeSignal {
                 symbol: symbol.to_string(),
                 action: SignalAction::SellStraddle,
                 strike: spot,
                 expiry_days: 30,
-                confidence: momentum_score.abs().min(1.0),
-                edge: spot * market_iv * 0.3,
+                confidence,
+                edge: (historical_vol - market_iv) * spot * 0.4,
                 strategy_name: self.name().to_string(),
             }]
         } else {
-            // No strong momentum signal
             vec![]
         }
     }

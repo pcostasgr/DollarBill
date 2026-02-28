@@ -19,13 +19,15 @@ pub fn norm_cdf_abst(x: f64) -> f64 {
 
     if x >= 0.0 {
         let t = 1.0 / (1.0 + 0.2316419 * x);
+        // Abramowitz & Stegun 26.2.17: N(x) ≈ 1 − φ(x)(b₁t + b₂t² + b₃t³ + b₄t⁴ + b₅t⁵)
+        // Horner form: poly = t·(b₁ + t·(b₂ + t·(b₃ + t·(b₄ + t·b₅)))) already includes all t powers
         let poly = t * (0.319381530 +
                         t * (-0.356563782 +
                              t * (1.781477937 +
                                   t * (-1.821255978 +
                                        t * 1.330274429))));
         let pdf_part = norm_pdf(x);
-        1.0 - pdf_part * poly * t
+        1.0 - pdf_part * poly
     } else {
         1.0 - norm_cdf_abst(-x)
     }
@@ -124,8 +126,8 @@ pub fn black_scholes_merton_put(
     let gamma = e_qt * norm_pdf(d1) / (s * sigma * sqrt_t);
     let vega = s * e_qt * norm_pdf(d1) * sqrt_t;
     let theta = -(s * norm_pdf(d1) * sigma * e_qt) / (2.0 * sqrt_t)
-                + q * s * e_qt * nd1_neg
-                - r * k * e_rt * nd2_neg;
+                - q * s * e_qt * nd1_neg
+                + r * k * e_rt * nd2_neg;
     let rho = -k * t * e_rt * nd2_neg;
 
     Greeks { price, delta, gamma, theta, vega, rho }

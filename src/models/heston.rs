@@ -120,25 +120,39 @@ pub struct MonteCarloConfig {
     pub use_antithetic: bool, // Use antithetic variates for variance reduction
 }
 
-/// Simple Linear Congruential Generator for random numbers
-struct LCG {
+/// SplitMix64 pseudo-random number generator.
+///
+/// Replaces the old 32-bit LCG which had terrible spectral properties
+/// (lattice structure, period only 2^32, correlated sequences from
+/// adjacent seeds).  SplitMix64 has:
+///   - Period 2^64
+///   - Excellent avalanche — adjacent seeds produce uncorrelated streams
+///   - Passes BigCrush / PractRand
+struct SplitMix64 {
     state: u64,
 }
 
-impl LCG {
+impl SplitMix64 {
     fn new(seed: u64) -> Self {
-        LCG { state: seed }
+        SplitMix64 { state: seed }
     }
 
-    // Generate uniform random number in [0, 1)
+    /// Advance state and return a 64-bit pseudo-random integer.
+    #[inline]
+    fn next_u64(&mut self) -> u64 {
+        self.state = self.state.wrapping_add(0x9e3779b97f4a7c15);
+        let mut z = self.state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
+        z ^ (z >> 31)
+    }
+
+    /// Generate uniform random number in (0, 1).
+    /// Uses the upper 53 bits for full f64 mantissa precision.
     fn next_uniform(&mut self) -> f64 {
-        // Using parameters from Numerical Recipes
-        const A: u64 = 1664525;
-        const C: u64 = 1013904223;
-        const M: u64 = 4294967296; // 2^32
-        
-        self.state = (A.wrapping_mul(self.state).wrapping_add(C)) % M;
-        self.state as f64 / M as f64
+        // Shift right by 11 to get 53 bits, add 0.5 ULP to avoid exact 0.0
+        // (needed for Box-Muller ln(u1) safety)
+        (self.next_u64() >> 11) as f64 * (1.0 / (1u64 << 53) as f64) + f64::EPSILON
     }
 
     // Box-Muller transform to generate standard normal random variable
@@ -220,7 +234,7 @@ impl HestonMonteCarlo {
     }
 
     /// Simulate a single path using Milstein scheme with full truncation
-    fn simulate_path(&self, rng: &mut LCG) -> HestonPath {
+    fn simulate_path(&self, rng: &mut SplitMix64) -> HestonPath {
         let dt = self.params.t / self.config.n_steps as f64;
         let sqrt_dt = dt.sqrt();
         
@@ -315,7 +329,7 @@ impl HestonMonteCarlo {
     }
 
     /// Simulate path and capture random numbers for antithetic pair
-    fn simulate_path_with_randoms(&self, rng: &mut LCG) -> (HestonPath, Vec<(f64, f64)>) {
+    fn simulate_path_with_randoms(&self, rng: &mut SplitMix64) -> (HestonPath, Vec<(f64, f64)>) {
         let dt = self.params.t / self.config.n_steps as f64;
         let sqrt_dt = dt.sqrt();
         
@@ -359,7 +373,7 @@ impl HestonMonteCarlo {
 
     /// Run Monte Carlo simulation and return all paths
     pub fn simulate_paths(&self) -> Vec<HestonPath> {
-        let mut rng = LCG::new(self.config.seed);
+        let mut rng = SplitMix64::new(self.config.seed);
         let mut paths = Vec::with_capacity(self.config.n_paths);
         
         for _ in 0..self.config.n_paths {
@@ -384,7 +398,7 @@ impl HestonMonteCarlo {
         let payoff_sum: f64 = (0..self.config.n_paths)
             .into_par_iter()
             .map(|i| {
-                let mut rng = LCG::new(self.config.seed + i as u64);
+                let mut rng = SplitMix64::new(self.config.seed + i as u64);
                 let path = self.simulate_path(&mut rng);
                 let final_price = *path.stock_prices.last().unwrap();
                 (final_price - strike).max(0.0)
@@ -402,7 +416,7 @@ impl HestonMonteCarlo {
         let payoff_sum: f64 = (0..n_pairs)
             .into_par_iter()
             .map(|i| {
-                let mut rng = LCG::new(self.config.seed + i as u64);
+                let mut rng = SplitMix64::new(self.config.seed + i as u64);
                 
                 // Simulate pair
                 let (path1, randoms) = self.simulate_path_with_randoms(&mut rng);
@@ -438,7 +452,7 @@ impl HestonMonteCarlo {
         let payoff_sum: f64 = (0..self.config.n_paths)
             .into_par_iter()
             .map(|i| {
-                let mut rng = LCG::new(self.config.seed + i as u64);
+                let mut rng = SplitMix64::new(self.config.seed + i as u64);
                 let path = self.simulate_path(&mut rng);
                 let final_price = *path.stock_prices.last().unwrap();
                 (strike - final_price).max(0.0)
@@ -456,7 +470,7 @@ impl HestonMonteCarlo {
         let payoff_sum: f64 = (0..n_pairs)
             .into_par_iter()
             .map(|i| {
-                let mut rng = LCG::new(self.config.seed + i as u64);
+                let mut rng = SplitMix64::new(self.config.seed + i as u64);
                 
                 let (path1, randoms) = self.simulate_path_with_randoms(&mut rng);
                 let path2 = self.simulate_path_antithetic(&randoms);
@@ -479,7 +493,7 @@ impl HestonMonteCarlo {
         let sum: f64 = (0..self.config.n_paths)
             .into_par_iter()
             .map(|i| {
-                let mut rng = LCG::new(self.config.seed + i as u64);
+                let mut rng = SplitMix64::new(self.config.seed + i as u64);
                 let path = self.simulate_path(&mut rng);
                 *path.stock_prices.last().unwrap()
             })
@@ -493,7 +507,7 @@ impl HestonMonteCarlo {
         let sum: f64 = (0..self.config.n_paths)
             .into_par_iter()
             .map(|i| {
-                let mut rng = LCG::new(self.config.seed + i as u64);
+                let mut rng = SplitMix64::new(self.config.seed + i as u64);
                 let path = self.simulate_path(&mut rng);
                 *path.variances.last().unwrap()
             })
@@ -674,7 +688,7 @@ impl HestonMonteCarlo {
         let final_prices: Vec<f64> = (0..self.config.n_paths)
             .into_par_iter()
             .map(|i| {
-                let mut rng = LCG::new(self.config.seed + i as u64);
+                let mut rng = SplitMix64::new(self.config.seed + i as u64);
                 let path = self.simulate_path(&mut rng);
                 *path.stock_prices.last().unwrap()
             })
@@ -826,8 +840,8 @@ mod tests {
     }
 
     #[test]
-    fn test_lcg_uniform_distribution() {
-        let mut rng = LCG::new(42);
+    fn test_splitmix64_uniform_distribution() {
+        let mut rng = SplitMix64::new(42);
         let n_samples = 10000;
         let mut sum = 0.0;
         

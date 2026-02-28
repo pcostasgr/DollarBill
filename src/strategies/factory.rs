@@ -20,9 +20,9 @@ impl StrategyFactory {
             },
             "momentum" => {
                 let period = config["momentum_period"].as_u64().unwrap_or(20) as usize;
-                let threshold = config["threshold"].as_f64().unwrap_or(0.05);
-                let min_volume = config["min_volume"].as_u64().unwrap_or(100000);
-                Ok(Box::new(MomentumStrategy::with_config(period, threshold, min_volume)))
+                let threshold = config["threshold"].as_f64().unwrap_or(0.15);
+                let min_iv = config["min_iv"].as_f64().unwrap_or(0.10);
+                Ok(Box::new(MomentumStrategy::with_config(period, threshold, min_iv)))
             },
             "cash_secured_puts" => {
                 let premium_thresh = config["premium_threshold"].as_f64().unwrap_or(0.02);
@@ -39,10 +39,10 @@ impl StrategyFactory {
             },
             "breakout" => {
                 let period = config["consolidation_period"].as_u64().unwrap_or(15) as usize;
-                let threshold = config["breakout_threshold"].as_f64().unwrap_or(0.03);
-                let volume = config["volume_threshold"].as_f64().unwrap_or(1.5);
-                let range = config["min_range"].as_f64().unwrap_or(0.02);
-                Ok(Box::new(BreakoutStrategy::with_config(period, threshold, volume, range)))
+                let threshold = config["breakout_threshold"].as_f64().unwrap_or(0.30);
+                let confirmation = config["confirmation_threshold"].as_f64().unwrap_or(1.10);
+                let min_iv = config["min_iv"].as_f64().unwrap_or(0.12);
+                Ok(Box::new(BreakoutStrategy::with_config(period, threshold, confirmation, min_iv)))
             },
             "vol_arbitrage" => {
                 let iv_thresh = config["iv_threshold"].as_f64().unwrap_or(0.02);

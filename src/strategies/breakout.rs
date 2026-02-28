@@ -1,63 +1,65 @@
-// Breakout Strategy - Capture momentum breakouts from consolidation
+// Breakout Strategy — IV expansion / compression detection
+//
+// Rationale: a large gap between implied and realised volatility signals
+// that the market is pricing in a regime change ("breakout").  When IV
+// expands sharply above historical vol *and* the model confirms, we buy
+// an iron butterfly to capture the expected large move with limited risk.
+// Conversely, when IV is compressing toward historical vol (consolidation),
+// we sell straddles to harvest theta.
+//
+// All signals are deterministic functions of inputs — no SystemTime, no RNG.
+
 use super::{TradingStrategy, TradeSignal, SignalAction, RiskParams};
 
 #[derive(Clone)]
 pub struct BreakoutStrategy {
+    /// Informational lookback hint
     pub consolidation_period: usize,
+    /// Minimum IV-expansion ratio (market_iv / historical_vol − 1) to fire a
+    /// breakout signal.
     pub breakout_threshold: f64,
-    pub volume_threshold: f64,
-    pub min_range: f64,
+    /// Minimum model-IV / historical-vol ratio for confirmation
+    pub confirmation_threshold: f64,
+    /// Minimum market IV (absolute) to trade at all
+    pub min_iv: f64,
 }
 
 impl BreakoutStrategy {
     pub fn new() -> Self {
         Self {
             consolidation_period: 15,
-            breakout_threshold: 0.03, // 3% breakout from range
-            volume_threshold: 1.5, // 1.5x average volume
-            min_range: 0.02, // 2% minimum trading range
+            breakout_threshold: 0.30, // IV must be ≥ 30% above realised vol
+            confirmation_threshold: 1.10, // model IV must also be ≥ 10% above HV
+            min_iv: 0.12,
         }
     }
 
-    pub fn with_config(period: usize, threshold: f64, volume: f64, range: f64) -> Self {
+    pub fn with_config(period: usize, threshold: f64, confirmation: f64, min_iv: f64) -> Self {
         Self {
             consolidation_period: period,
             breakout_threshold: threshold,
-            volume_threshold: volume,
-            min_range: range,
+            confirmation_threshold: confirmation,
+            min_iv,
         }
     }
 
-    /// Detect breakout from consolidation pattern
-    fn detect_breakout(&self, symbol: &str, spot: f64) -> (bool, f64, f64) {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-        let symbol_hash = symbol.chars().map(|c| c as u32).sum::<u32>() as f64;
-        
-        // Simulate consolidation range
-        let range_size = spot * (0.02 + (symbol_hash * 0.001).sin().abs() * 0.03);
-        let _range_high = spot * (1.0 + range_size * 0.5);
-        let _range_low = spot * (1.0 - range_size * 0.5);
-        
-        // Simulate current price relative to range
-        let time_factor = (now as f64 * 0.01 + symbol_hash * 0.1).sin();
-        let current_relative = 0.5 + time_factor * 0.6; // -0.1 to 1.1 range
-        
-        let is_breakout = current_relative > 1.0 + self.breakout_threshold || 
-                         current_relative < -self.breakout_threshold;
-        
-        let breakout_strength = if current_relative > 1.0 {
-            (current_relative - 1.0) * 10.0
-        } else if current_relative < 0.0 {
-            current_relative.abs() * 10.0
-        } else {
-            0.0
-        };
-        
-        // Simulate volume surge
-        let volume_multiplier = 1.0 + breakout_strength * 2.0;
-        
-        (is_breakout, breakout_strength.min(1.0), volume_multiplier)
+    /// Measure the IV-expansion factor: how far market IV exceeds realised vol.
+    ///
+    /// Returns (expansion_factor, model_confirms).
+    ///   expansion_factor = market_iv / historical_vol − 1   (positive = IV expanding)
+    ///   model_confirms   = model_iv / historical_vol ≥ confirmation_threshold
+    fn detect_iv_breakout(
+        &self,
+        market_iv: f64,
+        model_iv: f64,
+        historical_vol: f64,
+    ) -> (f64, bool) {
+        if historical_vol <= 1e-9 {
+            return (0.0, false);
+        }
+        let expansion = market_iv / historical_vol - 1.0;
+        let model_ratio = model_iv / historical_vol;
+        (expansion, model_ratio >= self.confirmation_threshold)
     }
 }
 
@@ -74,42 +76,49 @@ impl TradingStrategy for BreakoutStrategy {
         model_iv: f64,
         historical_vol: f64,
     ) -> Vec<TradeSignal> {
-        let (is_breakout, strength, volume_mult) = self.detect_breakout(symbol, spot);
-        let mut signals = vec![];
+        if market_iv < self.min_iv {
+            return vec![];
+        }
 
-        if is_breakout && volume_mult > self.volume_threshold {
-            // Strong breakout with volume confirmation
-            let iv_edge = market_iv - model_iv;
-            let confidence = (strength * 0.6 + (volume_mult - 1.0) * 0.4).min(0.9);
-            
-            // Use Iron Butterfly for limited risk breakout play
-            signals.push(TradeSignal {
+        let (expansion, model_confirms) = self.detect_iv_breakout(market_iv, model_iv, historical_vol);
+
+        if expansion >= self.breakout_threshold && model_confirms {
+            // IV expanding sharply and model agrees → breakout regime.
+            // Buy an iron butterfly: limited risk, profits from large move.
+            let strength = ((expansion - self.breakout_threshold) * 5.0).min(1.0);
+            let confidence = (strength * 0.7 + 0.2).min(0.9); // 20%–90%
+
+            vec![TradeSignal {
                 symbol: symbol.to_string(),
                 action: SignalAction::IronButterfly { wing_width: spot * 0.05 },
                 strike: spot,
-                expiry_days: 14, // Short term for breakout momentum
+                expiry_days: 14,
                 confidence,
-                edge: iv_edge * spot * 0.5 + historical_vol * spot * 0.2,
+                edge: (market_iv - model_iv).abs() * spot * 0.5
+                    + historical_vol * spot * 0.2,
                 strategy_name: self.name().to_string(),
-            });
-        } else if !is_breakout {
-            // Consolidation - sell premium
-            let consolidation_confidence = (1.0 - strength) * 0.5; // Lower confidence for range-bound
-            
-            if consolidation_confidence > 0.2 {
-                signals.push(TradeSignal {
+            }]
+        } else if expansion < 0.05 {
+            // IV close to or below realised vol → consolidation.
+            // Sell straddle to harvest theta in a range-bound market.
+            let compression = (1.0 - expansion.max(0.0) / 0.05) * 0.5; // 0–0.5
+            if compression > 0.2 {
+                vec![TradeSignal {
                     symbol: symbol.to_string(),
                     action: SignalAction::SellStraddle,
                     strike: spot,
                     expiry_days: 30,
-                    confidence: consolidation_confidence,
+                    confidence: compression.min(0.85),
                     edge: market_iv * spot * 0.3,
                     strategy_name: self.name().to_string(),
-                });
+                }]
+            } else {
+                vec![]
             }
+        } else {
+            // Moderate IV expansion, no clear breakout — no signal
+            vec![]
         }
-
-        signals
     }
 
     fn risk_params(&self) -> RiskParams {
