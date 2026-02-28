@@ -939,8 +939,10 @@ start docs/benchmarks/report/index.html  # Open the report (Windows)
 | Benchmark | Time |
 |-----------|------|
 | Heston Carr-Madan FFT (ATM call) | ~491 μs |
+| QuantLib AnalyticHestonEngine (ATM call) | ~0.79 μs |
 | BSM call + full Greeks | ~70 ns |
-| 11-strike sweep | ~6.2 ms |
+| 11-strike sweep (DollarBill) | ~6.2 ms |
+| 11-strike sweep (QuantLib) | ~567 μs |
 
 Pre-generated reports are committed in [`docs/benchmarks/`](docs/benchmarks/report/index.html). A QuantLib-Python comparison script is available at [`py/bench_quantlib_heston.py`](py/bench_quantlib_heston.py).
 
