@@ -927,6 +927,23 @@ Additionally, each `src/` module contains **89 inline unit tests** (marked `#[cf
 - **No-free-lunch invariants**: Trading cost tests prove round-trip costs are always positive, commissions never turn loss into profit
 - **Variance non-negativity**: Heston QE scheme tested with 10K paths under extreme Feller-violating parameters
 
+### Benchmarks
+
+Performance benchmarks use [Criterion.rs](https://github.com/bheisler/criterion.rs) with HTML reports:
+
+```bash
+cargo bench                      # Run all benchmarks
+start docs/benchmarks/report/index.html  # Open the report (Windows)
+```
+
+| Benchmark | Time |
+|-----------|------|
+| Heston Carr-Madan FFT (ATM call) | ~491 μs |
+| BSM call + full Greeks | ~70 ns |
+| 11-strike sweep | ~6.2 ms |
+
+Pre-generated reports are committed in [`docs/benchmarks/`](docs/benchmarks/report/index.html). A QuantLib-Python comparison script is available at [`py/bench_quantlib_heston.py`](py/bench_quantlib_heston.py).
+
 ## ⚠️ Disclaimer
 
 This software is for **educational and research purposes only**. It is not financial advice. Options trading involves substantial risk of loss. Always conduct your own research and consult with licensed financial professionals before trading.
