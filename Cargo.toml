@@ -19,3 +19,8 @@ num-complex = "0.4"                                 # Complex numbers for Carr-M
 
 [dev-dependencies]
 proptest = "1"   # Property-based testing: 1000-case fuzzing for numerical stability
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "heston_pricing"
+harness = false
