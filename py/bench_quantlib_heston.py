@@ -49,6 +49,7 @@ option.setPricingEngine(engine)
 
 
 def price():
+    option.recalculate()
     return option.NPV()
 
 
@@ -87,6 +88,7 @@ def price_sweep():
         payoff_k = ql.PlainVanillaPayoff(ql.Option.Call, float(k))
         opt = ql.EuropeanOption(payoff_k, exercise)
         opt.setPricingEngine(engine)
+        opt.recalculate()
         total += opt.NPV()
     return total
 
