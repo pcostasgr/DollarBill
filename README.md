@@ -934,12 +934,12 @@ Additionally, each `src/` module contains **89 inline unit tests** (marked `#[cf
 | Engine | Benchmark | Latency | Throughput |
 |--------|-----------|--------:|-----------:|
 | **DollarBill** | BSM call + full Greeks | **70 ns** | 14.3M ops/s |
-| **QuantLib** | Heston ATM call (Gauss-Laguerre) | **0.79 μs** | 1.26M ops/s |
+| **QuantLib** | Heston ATM call (Gauss-Laguerre) | **39.25 μs** | 25,480 ops/s |
 | **DollarBill** | Heston ATM call (Carr-Madan) | 491 μs | 2,040 ops/s |
 | **DollarBill** | 11-strike sweep | 6.2 ms | — |
-| **QuantLib** | 11-strike sweep | 567 μs | — |
+| **QuantLib** | 11-strike sweep | 531 μs | — |
 
-Both engines agree on price to 4 decimal places (10.3942). The 620× Heston latency gap is purely integration strategy — Gauss-Laguerre (~64 nodes) vs adaptive Simpson (~1000 nodes). See the [full benchmark analysis](docs/benchmarks/SUMMARY.md) for maturity sensitivity, optimization roadmap, and detailed wins/losses.
+Both engines agree on price to 4 decimal places (10.3942). **Correction applied per QuantLib maintainer feedback: forced recalculate() in timed loop. New uncached QuantLib single-call latency: 39.25 μs → revised gap 12.5×.** The gap is due to integration strategy — Gauss-Laguerre (~64 nodes) vs adaptive Simpson (~1000 nodes). See the [full benchmark analysis](docs/benchmarks/SUMMARY.md) for maturity sensitivity, optimization roadmap, and detailed wins/losses.
 
 <p align="center">
   <img src="images/heston_fft_violin.svg" alt="Heston Carr-Madan FFT — Criterion violin plot" width="700">

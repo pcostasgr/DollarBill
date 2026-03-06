@@ -24,6 +24,8 @@ All Heston benchmarks use the same classic literature example:
 
 Feller condition satisfied: 2κθ/σ² = 1.78 > 1.
 
+**Correction applied per QuantLib maintainer feedback: forced recalculate() in timed loop. New uncached QuantLib single-call latency: 39.25 μs → revised gap 12.5×.**
+
 ---
 
 ## Results
@@ -32,20 +34,20 @@ Feller condition satisfied: 2κθ/σ² = 1.78 > 1.
 
 | Engine | Method | Price | Latency | Throughput |
 |--------|--------|------:|--------:|-----------:|
-| **QuantLib** | Gauss-Laguerre quadrature (~64 nodes) | 10.3942 | **0.79 μs** | 1,261,670 ops/s |
+| **QuantLib** | Gauss-Laguerre quadrature (~64 nodes) | 10.3942 | **39.25 μs** | 25,480 ops/s |
 | **DollarBill** | Adaptive Simpson (Carr-Madan P₁/P₂) | 10.3942 | 491 μs | 2,040 ops/s |
 
 **Price agreement**: Identical to 4 decimal places.  
-**Latency gap**: ~620×. Root cause: DollarBill evaluates the characteristic function at ~1000 quadrature points (adaptive Simpson over [0.001, 50+]). QuantLib uses ~64 Gauss-Laguerre nodes with exponential weighting that naturally concentrates effort where the integrand matters.
+**Latency gap**: ~12.5×. Root cause: DollarBill evaluates the characteristic function at ~1000 quadrature points (adaptive Simpson over [0.001, 50+]). QuantLib uses ~64 Gauss-Laguerre nodes with exponential weighting that naturally concentrates effort where the integrand matters.
 
 ### 2. Heston Analytical — 11-Strike Sweep (K = 80 to 120, step 4)
 
 | Engine | Total | Per-Option | Notes |
 |--------|------:|-----------:|-------|
-| **QuantLib** | 567 μs | 51.5 μs | Python object rebuild overhead per strike |
+| **QuantLib** | 531 μs | 48.3 μs | Python object rebuild overhead per strike |
 | **DollarBill** | 6.2 ms | 564 μs | Pure integration cost, no object overhead |
 
-QuantLib's per-option cost jumps from 0.79 μs (cached) to 51.5 μs (rebuild) — a ~65× Python-side penalty. DollarBill stays flat (~491 → 564 μs), confirming the bottleneck is entirely integration effort.
+QuantLib's per-option cost jumps from 39.25 μs (cached) to 48.3 μs (rebuild) — a ~1.2× Python-side penalty. DollarBill stays flat (~491 → 564 μs), confirming the bottleneck is entirely integration effort.
 
 ### 3. BSM Closed-Form (DollarBill)
 
@@ -96,7 +98,7 @@ Negligible overhead vs the call (~10 μs for the parity arithmetic). Confirms th
 
 ### Optimization Roadmap
 
-The 620× gap is addressable:
+The 12.5× gap is addressable:
 
 1. **Replace Simpson with Gauss-Laguerre** (15–64 nodes): Expected ~100× speedup, bringing DollarBill to ~5 μs/call
 2. **True FFT pricing** (N=4096 grid): Price the *entire* strike surface in one shot (~500 μs for 4096 strikes vs 6.2 ms for 11)
