@@ -257,7 +257,13 @@ fn backtest_symbol_with_heston(
         winner = "Long-Term";
     }
 
-    println!("\n🏆 WINNER: {} - Best Sharpe Ratio: {:.2}", winner, best_sharpe);
+    const MIN_WINNER_SHARPE: f64 = 1.0;
+    if best_sharpe >= MIN_WINNER_SHARPE {
+        println!("\n🏆 WINNER: {} - Best Sharpe Ratio: {:.2}", winner, best_sharpe);
+    } else {
+        println!("\n⚠️  No strategy qualified (min Sharpe {:.1}) — best was {} at {:.2}",
+                 MIN_WINNER_SHARPE, winner, best_sharpe);
+    }
 
     Ok(())
 }
@@ -309,7 +315,8 @@ fn run_heston_backtest_impl<T>(
 where
     T: StrategyConfigTrait,
 {
-    let mut capital = strategy_config.get_initial_capital();
+    let initial_cap = strategy_config.get_initial_capital();
+    let mut capital = initial_cap;
     let mut positions: Vec<Position> = Vec::new();
     let mut equity_curve = vec![capital];
     let mut trade_log = Vec::new();
@@ -363,8 +370,8 @@ where
             positions.remove(idx);
         }
 
-        // Check for new signals
-        if positions.len() < config.backtest.max_positions {
+        // Check for new signals (halt new entries if 20% portfolio drawdown reached)
+        if positions.len() < config.backtest.max_positions && capital >= initial_cap * 0.80 {
             if let Some(signal) = generate_signal(historical_data, i, lookback_period, &heston_params.symbol) {
                 // Calculate option price using Heston
                 let time_to_expiry = strategy_config.get_days_to_expiry() as f64 / 365.0;
@@ -377,9 +384,10 @@ where
                     signal.is_call,
                 );
 
-                let position_size = capital * config.backtest.position_size_pct;
+                // Fixed 2% of initial capital per trade — avoids runaway exponential sizing
+                let position_size = initial_cap * 0.02;
                 let max_quantity = (position_size / (option_price * 100.0)).floor() as i32; // Each contract = 100 shares
-                let quantity = max_quantity.min(10).max(1); // Limit to 1-10 contracts
+                let quantity = max_quantity.min(5).max(1); // Cap at 5 contracts to limit concentration
 
                 if quantity > 0 {
                     positions.push(Position {

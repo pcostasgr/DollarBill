@@ -779,7 +779,13 @@ impl AdvancedStockClassifier {
         if features.support_resistance_strength > 0.5 {
             scores[4].1 += 1.5;
         }
-        
+        // High systematic-beta penalty: genuine stable accumulators (SPY, GLD, TLT)
+        // have market_beta ≤ 1.5; high-beta stocks (AMD β≈2.7) should not qualify.
+        // Penalty = min(2.0, β − 1.0) so β=2.66 → −1.66, β=3.0 → −2.0.
+        if features.market_beta > 2.0 {
+            scores[4].1 -= (features.market_beta - 1.0).min(2.0);
+        }
+
         // Find best match — deterministic: scans left-to-right, last equal wins.
         let max_entry = scores.into_iter()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
