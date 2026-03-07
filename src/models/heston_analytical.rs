@@ -624,6 +624,154 @@ pub fn heston_put_gauss_laguerre(
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// Batch pricing with CF cache  (many strikes, same maturity)
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Cached CF evaluations at every GL node for a single maturity.
+///
+/// For a given (τ, params), the Heston characteristic function
+/// φ(z) and φ(z−i) are **strike-independent**.  This struct stores
+/// them so that pricing across many strikes only requires the cheap
+/// phase-factor multiplication `exp(−i·z·ln(K/S))` per strike.
+pub struct HestonCfCache {
+    /// Scaled GL nodes: u_j = c · x_j
+    u_nodes: Vec<f64>,
+    /// Exponential-modified GL weights (w̃_j · c)
+    scaled_weights: Vec<f64>,
+    /// Cached φ(z_j − i) / (i·z_j)  for P₁  (z_j = u_j + 0i)
+    cf1_over_iz: Vec<Complex64>,
+    /// Cached φ(z_j)     / (i·z_j)  for P₂
+    cf2_over_iz: Vec<Complex64>,
+    /// Pre-multiplier for P₁: e^{−rτ} / π
+    p1_prefactor: f64,
+    /// Pre-multiplier for P₂: 1 / π
+    p2_prefactor: f64,
+    /// Discount factor e^{−rτ}
+    discount: f64,
+    /// Spot price (needed for final call value)
+    spot: f64,
+}
+
+impl HestonCfCache {
+    /// Build a CF cache for the given maturity.
+    ///
+    /// Cost: one `heston_cf` per node × 2 (P₁ and P₂) — identical to
+    /// pricing a single strike.  All subsequent `price_call` / `price_calls`
+    /// calls reuse the cached CF values.
+    pub fn new(
+        spot: f64,
+        maturity: f64,
+        rate: f64,
+        params: &HestonParams,
+        rule: &GaussLaguerreRule,
+    ) -> Self {
+        let d_eff = (params.kappa * params.theta * maturity + params.v0)
+            / params.sigma.max(0.01);
+        let c = (1.0 / d_eff.max(0.01)).max(1.0).min(30.0);
+
+        let i = Complex64::i();
+        let n = rule.node_count();
+
+        let mut u_nodes = Vec::with_capacity(n);
+        let mut scaled_weights = Vec::with_capacity(n);
+        let mut cf1_over_iz = Vec::with_capacity(n);
+        let mut cf2_over_iz = Vec::with_capacity(n);
+
+        for j in 0..n {
+            let x = rule.nodes[j];
+            let u = c * x;
+            let w = rule.exp_weights[j] * c;
+
+            if u.abs() < 1e-8 {
+                u_nodes.push(u);
+                scaled_weights.push(w);
+                cf1_over_iz.push(Complex64::new(0.0, 0.0));
+                cf2_over_iz.push(Complex64::new(0.0, 0.0));
+                continue;
+            }
+
+            let z = Complex64::new(u, 0.0);
+
+            // P₁: stock-price measure CF
+            let cf1 = heston_cf(
+                z - i, maturity, rate, params.v0, params.kappa,
+                params.theta, params.sigma, params.rho,
+            );
+            // P₂: risk-neutral measure CF
+            let cf2 = heston_cf(
+                z, maturity, rate, params.v0, params.kappa,
+                params.theta, params.sigma, params.rho,
+            );
+
+            let iz = i * z;
+            let c1 = cf1 / iz;
+            let c2 = cf2 / iz;
+
+            u_nodes.push(u);
+            scaled_weights.push(w);
+            cf1_over_iz.push(if c1.is_finite() { c1 } else { Complex64::new(0.0, 0.0) });
+            cf2_over_iz.push(if c2.is_finite() { c2 } else { Complex64::new(0.0, 0.0) });
+        }
+
+        let discount = (-rate * maturity).exp();
+
+        HestonCfCache {
+            u_nodes,
+            scaled_weights,
+            cf1_over_iz,
+            cf2_over_iz,
+            p1_prefactor: discount / PI,  // e^{-rτ}/π
+            p2_prefactor: 1.0 / PI,
+            discount,
+            spot,
+        }
+    }
+
+    /// Price a single European call using the cached CF values.
+    ///
+    /// Cost: one `exp` per node × 2 integrals — no CF evaluations.
+    #[inline]
+    pub fn price_call(&self, strike: f64) -> f64 {
+        let k = (strike / self.spot).ln();
+        let i = Complex64::i();
+
+        let mut sum_p1 = 0.0_f64;
+        let mut sum_p2 = 0.0_f64;
+
+        for j in 0..self.u_nodes.len() {
+            let u = self.u_nodes[j];
+            let w = self.scaled_weights[j];
+
+            if u.abs() < 1e-8 { continue; }
+
+            let z = Complex64::new(u, 0.0);
+            let phase = (-i * z * k).exp();
+
+            let v1 = (phase * self.cf1_over_iz[j]).re;
+            let v2 = (phase * self.cf2_over_iz[j]).re;
+
+            if v1.is_finite() && v1.abs() < 1e8 { sum_p1 += w * v1; }
+            if v2.is_finite() && v2.abs() < 1e8 { sum_p2 += w * v2; }
+        }
+
+        let p1 = (0.5 + self.p1_prefactor * sum_p1).clamp(0.0, 1.0);
+        let p2 = (0.5 + self.p2_prefactor * sum_p2).clamp(0.0, 1.0);
+
+        let price = self.spot * p1 - strike * self.discount * p2;
+        let intrinsic = (self.spot - strike * self.discount).max(0.0);
+        price.max(intrinsic)
+    }
+
+    /// Price European calls for many strikes, returning a vec of prices.
+    ///
+    /// This is the primary batch entry-point.  The CF is evaluated **once**
+    /// (during `HestonCfCache::new`) and reused across all strikes.
+    pub fn price_calls(&self, strikes: &[f64]) -> Vec<f64> {
+        strikes.iter().map(|&k| self.price_call(k)).collect()
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // Gatheral single-integral formula  (independent cross-check)
 // ═══════════════════════════════════════════════════════════════════════
 

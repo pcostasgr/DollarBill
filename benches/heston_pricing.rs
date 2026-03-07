@@ -12,6 +12,7 @@ use dollarbill::models::heston_analytical::{
     heston_call_carr_madan, heston_put_carr_madan,
     heston_call_gauss_laguerre, heston_put_gauss_laguerre,
     heston_call_price, heston_put_price, IntegrationMethod,
+    HestonCfCache,
 };
 use dollarbill::models::gauss_laguerre::GaussLaguerreRule;
 
@@ -130,6 +131,7 @@ criterion_group!(
     bench_gauss_laguerre_strike_sweep,
     bench_gauss_laguerre_precomputed,
     bench_unified_dispatch,
+    bench_batch_pricing,
 );
 criterion_main!(benches);
 
@@ -273,6 +275,85 @@ fn bench_unified_dispatch(c: &mut Criterion) {
             },
         );
     }
+
+    group.finish();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Batch pricing benchmark: 50 strikes × N maturities, with CF cache
+// ═══════════════════════════════════════════════════════════════════════════════
+
+fn bench_batch_pricing(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Batch pricing (50 strikes × N maturities)");
+    group.sample_size(100);
+    group.measurement_time(Duration::from_secs(10));
+
+    let params = heston_params();
+    let rule64 = GaussLaguerreRule::new(64);
+
+    // 50 strikes: 60% to 140% of spot in equal steps
+    let n_strikes = 50_usize;
+    let strikes: Vec<f64> = (0..n_strikes)
+        .map(|i| SPOT * (0.60 + 0.80 * (i as f64) / (n_strikes - 1) as f64))
+        .collect();
+
+    let maturities_5  = vec![0.25, 0.50, 1.0, 2.0, 5.0];
+    let maturities_10 = vec![0.08, 0.17, 0.25, 0.50, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0];
+
+    // ── Naïve: call heston_call_gauss_laguerre individually ─────────────
+    for (label, mats) in &[("5 mat", &maturities_5), ("10 mat", &maturities_10)] {
+        let total = n_strikes * mats.len();
+        group.bench_function(
+            &format!("naïve GL-64 ({total} opts, {label})"),
+            |b| {
+                b.iter(|| {
+                    let mut sum = 0.0_f64;
+                    for &tau in mats.iter() {
+                        for &k in &strikes {
+                            sum += heston_call_gauss_laguerre(
+                                SPOT, k, tau, RATE, &params, &rule64,
+                            );
+                        }
+                    }
+                    black_box(sum)
+                })
+            },
+        );
+    }
+
+    // ── Cached: build HestonCfCache per maturity, batch price strikes ───
+    for (label, mats) in &[("5 mat", &maturities_5), ("10 mat", &maturities_10)] {
+        let total = n_strikes * mats.len();
+        group.bench_function(
+            &format!("cached GL-64 ({total} opts, {label})"),
+            |b| {
+                b.iter(|| {
+                    let mut sum = 0.0_f64;
+                    for &tau in mats.iter() {
+                        let cache = HestonCfCache::new(
+                            SPOT, tau, RATE, &params, &rule64,
+                        );
+                        let prices = cache.price_calls(&strikes);
+                        for p in &prices {
+                            sum += p;
+                        }
+                    }
+                    black_box(sum)
+                })
+            },
+        );
+    }
+
+    // ── Cached, cache-only overhead (just building caches, no pricing) ──
+    group.bench_function("cache build only (10 maturities)", |b| {
+        b.iter(|| {
+            for &tau in &maturities_10 {
+                black_box(HestonCfCache::new(
+                    SPOT, tau, RATE, &params, &rule64,
+                ));
+            }
+        })
+    });
 
     group.finish();
 }
