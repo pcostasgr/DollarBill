@@ -60,6 +60,7 @@ DollarBill/
 
 ### Heston Pricing
 - **Gauss-Laguerre (recommended)**: `IntegrationMethod::GaussLaguerre(64)` — 33 µs/call, matches QuantLib to 6 sig figs
+- **Batch pricing (CF cache)**: `HestonCfCache::new()` + `price_calls()` — **2.3 µs/opt** amortized across strikes (10× faster) 🆕
 - **Carr-Madan (legacy)**: `IntegrationMethod::CarrMadan` — 474 µs/call, uses original characteristic function
 - Configure in `config/vol_surface_config.json` (`integration_method` + `gauss_laguerre_nodes`)
 

@@ -122,7 +122,7 @@ Top 10 Positions (1 contract each):
 - **Comprehensive P&L tracking** with realistic commissions and slippage
 
 **Key Features:**
-- **Gauss-Laguerre Pricing**: 33 µs/call (GL-64), 14.4× faster than Carr-Madan, matches QuantLib to 6 sig figs 🆕
+- **Gauss-Laguerre Pricing**: 33 µs/call single (GL-64), **2.3 µs/opt batch** with CF cache, 14.4× faster than Carr-Madan, matches QuantLib to 6 sig figs 🆕
 - **Volatility Smile Capture**: Accounts for OTM/ITM pricing differences
 - **Parameter Calibration**: Fits κ, θ, σ, ρ, v₀ to live market options
 - **Strategy Optimization**: Tests multiple timeframes and holding periods
@@ -330,7 +330,7 @@ cargo run --release --example strategy_deployment
 | 3D visualization | ❌ | ✅ Interactive plotly charts |
 | Pipeline consistency | ❌ | ✅ All components use same config |
 | Strategy deployment | ❌ | ✅ Modular, configurable deployment patterns |
-| Gauss-Laguerre quadrature | ❌ | ✅ Pure Rust GL (2–128 nodes), 33 µs/call 🆕 |
+| Gauss-Laguerre quadrature | ❌ | ✅ Pure Rust GL (2–128 nodes), 33 µs single / 2.3 µs batch 🆕 |
 | QuantLib cross-validation | ❌ | ✅ 10 tests, 6 sig fig agreement 🆕 |
 | Lord-Kahl CF | ❌ | ✅ Numerically stable Formulation 2 🆕 |
 
@@ -338,11 +338,11 @@ cargo run --release --example strategy_deployment
 
 ## ✨ Next Potential Enhancements
 
-1. **True FFT pricing** - N=4096 grid for entire strike surface in one shot
-2. **CF caching** - Cache characteristic function across strikes for same (T, params)
-3. **SIMD vectorization** - Vectorize GL inner loop for ~2× single-call speedup
-4. **Real-time Greeks updates** - WebSocket streaming
-5. **Position optimizer** - Kelly criterion sizing
+1. **True FFT pricing** — N=4096 grid for entire strike surface in one shot
+2. ~~**CF caching**~~ — ✅ **DONE**: `HestonCfCache` caches CF across strikes for 10× batch speedup (2.3 µs/opt amortized)
+3. **SIMD vectorization** — Vectorize GL inner loop for ~2× single-call speedup
+4. **Real-time Greeks updates** — WebSocket streaming
+5. **Position optimizer** — Kelly criterion sizing
 6. **Volatility forecasting** - GARCH models
 7. **Risk limits** - Automatic position sizing
 

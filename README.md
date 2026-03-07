@@ -16,7 +16,8 @@ No traditional programming sessions. Just prompts, iterations, and Rust. 🚀
 
 ### ✅ **Real Capabilities**
 - **Options Pricing**: Black-Scholes-Merton and Heston stochastic volatility models
-- **Gauss-Laguerre Quadrature**: Pure Rust GL engine (2–128 nodes) — matches QuantLib to 6 significant figures 🆕 NEW
+- **Gauss-Laguerre Quadrature**: Pure Rust GL engine (2–128 nodes) — matches QuantLib to 6 significant figures
+- **Batch Pricing with CF Cache**: 50 strikes × 10 maturities in 1.16 ms (2.3 µs/opt amortized, 10× faster) 🆕 NEW
 - **Greeks Calculation**: Delta, Gamma, Vega, Theta, Rho for risk analysis
 - **Model Calibration**: Heston parameter fitting using custom Nelder-Mead optimizer
 - **Volatility Analysis**: IV extraction, volatility surfaces, and smile analysis
@@ -156,7 +157,7 @@ ATM IV: 40.5% | Put Skew: 1.6% premium
 
 ### Core Models
 - **Black-Scholes-Merton**: Analytical European pricing with dividends
-- **Heston (Gauss-Laguerre)**: Lord-Kahl CF with pure Rust GL quadrature — **33 µs/call**, matches QuantLib to 6 sig figs 🆕
+- **Heston (Gauss-Laguerre)**: Lord-Kahl CF with pure Rust GL quadrature — **33 µs/call** single, **2.3 µs/opt** batch with CF cache 🆕
 - **Heston (Carr-Madan)**: Legacy adaptive Simpson integration path
 - **Greeks**: All first-order sensitivities
 - **Implied Volatility**: Newton-Raphson solver
@@ -221,8 +222,10 @@ DollarBill/
 
 - **BSM Pricing**: 79 ns/call (full Greeks) — 12.7M ops/s
 - **Heston GL-64**: 33 µs/call — 14.4× faster than Carr-Madan, matches QuantLib to 6 sig figs
+- **Heston GL-64 Batch (CF Cache)**: **2.3 µs/opt** amortized — 10× faster for multi-strike surfaces 🆕 NEW
 - **Heston GL-32**: 15 µs/call — 31.6× faster than Carr-Madan, converged to full precision
 - **Heston Carr-Madan**: 474 µs/call (legacy path)
+- **Vol Surface (500 options)**: 1.16 ms total (50 strikes × 10 maturities, GL-64 + CF cache) 🆕 NEW
 - **Heston Calibration**: ~2-3 seconds per symbol
 - **Multi-symbol Analysis**: Parallel processing with Rayon
 - **Memory Usage**: Efficient with zero-copy parsing

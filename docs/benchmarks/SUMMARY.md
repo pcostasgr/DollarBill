@@ -54,6 +54,20 @@ Feller condition satisfied: 2κθ/σ² = 1.78 > 1.
 
 DollarBill GL-64 sweep is **13.6× faster** than Carr-Madan and **1.3× faster** than QuantLib for the 11-strike batch.
 
+### 2b. Batch Pricing with CF Cache — 50 Strikes × N Maturities (GL-64) 🆕
+
+`HestonCfCache` evaluates the characteristic function **once** per GL node per maturity, then reuses the cached CF/iz values across all strikes. Only the cheap phase factor `exp(−i·z·ln(K/S))` is computed per strike.
+
+| Approach | Options | Total | Per-Option | Speedup |
+|----------|--------:|------:|-----------:|--------:|
+| Naïve GL-64 | 250 (50K × 5T) | 5.85 ms | 23.4 µs | — |
+| **Cached GL-64** | **250 (50K × 5T)** | **0.58 ms** | **2.3 µs** | **10.0×** |
+| Naïve GL-64 | 500 (50K × 10T) | 12.2 ms | 24.3 µs | — |
+| **Cached GL-64** | **500 (50K × 10T)** | **1.16 ms** | **2.3 µs** | **10.5×** |
+| Cache build only | 10 maturities | 0.21 ms | 20.6 µs/mat | — |
+
+For a full vol surface (50 strikes × 10 maturities = 500 options), total wall time is **1.16 ms** — amortized cost of **2.3 µs per option**.
+
 ### 3. GL Node-Count Sweep (DollarBill)
 
 | Nodes | Latency | Price | Error vs GL-128 |
@@ -149,8 +163,8 @@ High vol-of-vol case (σ=1.0, ρ=−0.9): DollarBill GL-64 = 8.593, QuantLib = 8
 | ~~Replace Simpson with Gauss-Laguerre~~ | ✅ **DONE** | 14.4× speedup (474 → 33 µs) |
 | ~~Lord-Kahl CF (stable formulation)~~ | ✅ **DONE** | QuantLib-matched accuracy |
 | ~~P₁ normalization fix~~ | ✅ **DONE** | Correct 1/φ(−i) factor |
+| ~~CF caching across strikes~~ | ✅ **DONE** | **10× batch speedup** (23 → 2.3 µs/opt) |
 | True FFT pricing (N=4096 grid) | 🔲 Planned | Price entire strike surface in one shot |
-| CF caching across strikes | 🔲 Planned | ~2× for multi-strike batches |
 | SIMD vectorization of GL inner loop | 🔲 Planned | Potential ~2× for single-call |
 
 ---

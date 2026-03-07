@@ -6,6 +6,7 @@
 
 ### Performance Advantages 🚀
 - **14.4× faster Heston pricing** (Gauss-Laguerre vs Carr-Madan, QuantLib-validated)
+- **10× batch speedup** with CF caching — 2.3 µs/opt amortized for vol surfaces 🆕
 - **QuantLib-matched accuracy** — GL prices agree to 6 significant figures (10.394219)
 - **Parallel calibration** of 8 symbols in <12 seconds
 - **Personality-driven optimization** delivering 200%+ performance gains
@@ -195,7 +196,7 @@ Improvement: +80% better returns with Heston pricing!
 ```
 
 **What makes it special:**
-- **Gauss-Laguerre analytical pricing**: 33 µs/call (GL-64), 14.4× faster than Carr-Madan, QuantLib-validated 🆕
+- **Gauss-Laguerre analytical pricing**: 33 µs/call single (GL-64), **2.3 µs/opt batch** with CF cache, 14.4× faster than Carr-Madan, QuantLib-validated 🆕
 - **Multi-timeframe testing**: Short-term (14-day), medium-term (30-day), long-term (60-day)
 - **Proper position sizing**: Accounts for option contracts (100 shares each)
 - **Realistic P&L**: Includes commissions, proper contract sizing, time decay
@@ -279,6 +280,15 @@ Strike     Moneyness    IV %       Volume
 | GL-64 (precomputed) | 33 µs | **14.4× faster** |
 | GL-128 (precomputed) | 69 µs | **6.9× faster** |
 | Carr-Madan (adaptive Simpson) | 474 µs | baseline |
+
+**Batch Pricing with CF Cache (GL-64):** 🆕
+
+| Approach | Options | Per-Option | Speedup vs Naïve |
+|----------|--------:|-----------:|------------------:|
+| Naïve GL-64 | 500 (50K × 10T) | 24.3 µs | — |
+| **Cached GL-64** | **500 (50K × 10T)** | **2.3 µs** | **10.5×** |
+
+`HestonCfCache` evaluates the CF once per GL node per maturity, then reuses cached values across all strikes. Full vol surface (50 strikes × 10 maturities) in **1.16 ms**.
 
 **Convergence:** GL converges by 16 nodes (error < 1e-6 vs GL-128). Even GL-8 is within 50 µ$ of the converged price.
 
