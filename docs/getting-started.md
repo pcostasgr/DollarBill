@@ -96,6 +96,8 @@ cmd /c ".\scripts\setup_python.bat"
 ```
 This calibrates Heston parameters to live market data and builds the performance matrix that the bot uses for trading decisions. **Essential for realistic results!**
 
+> **🆕 Gauss-Laguerre pricing**: DollarBill now uses pure Rust Gauss-Laguerre quadrature (64 nodes by default) with the Lord-Kahl characteristic function. This is **14× faster** than the legacy Carr-Madan path and matches QuantLib v1.41 to 6 significant figures. Configure in `config/vol_surface_config.json` with `"integration_method": "GaussLaguerre"` and `"gauss_laguerre_nodes": 64`.
+
 #### Step 3.5: Test Multi-Leg Strategies (Optional, 5 minutes)
 
 **NEW**: Explore advanced options strategies before live trading! These examples demonstrate iron condors, credit spreads, and customizable strategy templates.

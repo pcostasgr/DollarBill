@@ -1,6 +1,6 @@
 # Benchmark Summary
 
-**Date**: February 28, 2026  
+**Date**: March 7, 2026  
 **Machine**: Windows, Rust 2021 edition (release profile)  
 **Harness**: [Criterion.rs](https://github.com/bheisler/criterion.rs) v0.5 (200 samples, 10s measurement)  
 **QuantLib**: v1.41 via Python bindings (`AnalyticHestonEngine`)
@@ -24,59 +24,103 @@ All Heston benchmarks use the same classic literature example:
 
 Feller condition satisfied: 2κθ/σ² = 1.78 > 1.
 
-**Correction applied per QuantLib maintainer feedback: forced recalculate() in timed loop. New uncached QuantLib single-call latency: 39.25 μs → revised gap 12.5×.**
-
 ---
 
 ## Results
 
-### 1. Heston Analytical — ATM Call
+### 1. Heston Analytical — ATM Call (all engines)
 
 | Engine | Method | Price | Latency | Throughput |
 |--------|--------|------:|--------:|-----------:|
-| **QuantLib** | Gauss-Laguerre quadrature (~64 nodes) | 10.3942 | **39.25 μs** | 25,480 ops/s |
-| **DollarBill** | Adaptive Simpson (Carr-Madan P₁/P₂) | 10.3942 | 491 μs | 2,040 ops/s |
+| **DollarBill** | GL-32 (precomputed rule) | 10.3942 | **15 µs** | 66,700 ops/s |
+| **DollarBill** | GL-64 (precomputed rule) | 10.3942 | **33 µs** | 30,300 ops/s |
+| **QuantLib** | Gauss-Laguerre (~64 nodes) | 10.3942 | 39.25 µs | 25,480 ops/s |
+| **DollarBill** | GL-128 (precomputed rule) | 10.3942 | 69 µs | 14,500 ops/s |
+| **DollarBill** | Carr-Madan (adaptive Simpson) | 10.4506* | 474 µs | 2,040 ops/s |
 
-**Price agreement**: Identical to 4 decimal places.  
-**Latency gap**: ~12.5×. Root cause: DollarBill evaluates the characteristic function at ~1000 quadrature points (adaptive Simpson over [0.001, 50+]). QuantLib uses ~64 Gauss-Laguerre nodes with exponential weighting that naturally concentrates effort where the integrand matters.
+\* Carr-Madan uses the legacy `characteristic_function()`; GL uses the corrected Lord-Kahl Formulation 2 CF.
+
+**Price agreement**: DollarBill GL-64 matches QuantLib to **6 significant figures** (10.394219 vs 10.394218).
+
+**GL-32 is now faster than QuantLib** (15 µs vs 39 µs) while being fully converged — the optimization roadmap from the previous benchmark report has been **completed**.
 
 ### 2. Heston Analytical — 11-Strike Sweep (K = 80 to 120, step 4)
 
-| Engine | Total | Per-Option | Notes |
-|--------|------:|-----------:|-------|
-| **QuantLib** | 531 μs | 48.3 μs | Python object rebuild overhead per strike |
-| **DollarBill** | 6.2 ms | 564 μs | Pure integration cost, no object overhead |
+| Engine | Method | Total | Per-Option |
+|--------|--------|------:|-----------:|
+| **DollarBill** | GL-64 (precomputed) | **398 µs** | **36 µs** |
+| **QuantLib** | AnalyticHestonEngine | 531 µs | 48 µs |
+| **DollarBill** | Carr-Madan (adaptive Simpson) | 5.43 ms | 494 µs |
 
-QuantLib's per-option cost jumps from 39.25 μs (cached) to 48.3 μs (rebuild) — a ~1.2× Python-side penalty. DollarBill stays flat (~491 → 564 μs), confirming the bottleneck is entirely integration effort.
+DollarBill GL-64 sweep is **13.6× faster** than Carr-Madan and **1.3× faster** than QuantLib for the 11-strike batch.
 
-### 3. BSM Closed-Form (DollarBill)
+### 3. GL Node-Count Sweep (DollarBill)
+
+| Nodes | Latency | Price | Error vs GL-128 |
+|------:|--------:|------:|-----------------:|
+| 8 | — | 10.394168 | 5.0e-5 |
+| 16 | — | 10.394218 | 1.0e-6 |
+| 32 | 15 µs | 10.394219 | 0.0 |
+| 48 | 22 µs | 10.394219 | 0.0 |
+| 64 | 33 µs | 10.394219 | 0.0 |
+| 96 | 51 µs | 10.394219 | 0.0 |
+| 128 | 69 µs | 10.394219 | 0.0 |
+
+GL converges by 16 nodes (error < 1e-6). Even GL-8 is within 50 µ$ of the converged price. **32 nodes is the sweet spot** for production use: 15 µs with full convergence.
+
+### 4. GL Precomputed vs On-the-Fly Rule
+
+| Setup | Latency |
+|-------|--------:|
+| Pre-computed `GaussLaguerreRule` | 37 µs |
+| New rule each call | 307 µs |
+
+Rule construction costs ~270 µs (Newton root-finding + eigenvalue decomposition). **Always cache the `GaussLaguerreRule` when pricing multiple options** with the same node count.
+
+### 5. BSM Closed-Form (DollarBill)
 
 | What | Latency | Throughput |
 |------|--------:|-----------:|
-| Call price + full Greeks (δ, γ, θ, ν, ρ) | **70 ns** | 14.3M ops/s |
+| Call price + full Greeks (δ, γ, θ, ν, ρ) | **79 ns** | 12.7M ops/s |
 
 Pure closed-form via `exp`/`ln`/`erf`. This is the fast path for vanilla pricing, IV inversion, and delta hedging.
 
-### 4. Heston Maturity Sensitivity (DollarBill)
+### 6. Heston Maturity Sensitivity — Carr-Madan (DollarBill)
 
 | Maturity | Latency |
 |---------:|--------:|
-| 0.1y | 494 μs |
-| 0.25y | 473 μs |
-| 0.5y | 467 μs |
-| 1.0y | 496 μs |
-| 2.0y | 489 μs |
-| 5.0y | 488 μs |
+| 0.1y | 397 µs |
+| 0.25y | 439 µs |
+| 0.5y | 457 µs |
+| 1.0y | 457 µs |
+| 2.0y | 492 µs |
+| 5.0y | 546 µs |
 
 Flat profile across T = 0.1 to 5.0 years. Integration node count dominates; the characteristic function itself is cheap regardless of maturity.
 
-### 5. Heston ATM Put (via Put-Call Parity)
+### 7. Unified Dispatch Overhead
 
-| Benchmark | Latency |
-|-----------|--------:|
-| ATM put | 501 μs |
+| Method | Latency |
+|--------|--------:|
+| `heston_call_price(CarrMadan)` | 472 µs |
+| `heston_call_price(GL-32)` | 63 µs |
+| `heston_call_price(GL-64)` | 328 µs |
 
-Negligible overhead vs the call (~10 μs for the parity arithmetic). Confirms the integration is the sole bottleneck.
+The unified `heston_call_price()` dispatch adds negligible overhead vs direct function calls. The GL-64 dispatch number (328 µs) is higher than the precomputed benchmark (33 µs) because it constructs a new `GaussLaguerreRule` each call.
+
+### 8. QuantLib Cross-Validation — Strike Sweep
+
+| Strike | DollarBill GL-64 | QuantLib | Abs Error |
+|-------:|-----------------:|---------:|----------:|
+| 80 | 25.044557 | 25.0446 | < 0.0001 |
+| 90 | 17.075310 | 17.0753 | < 0.0001 |
+| 100 | 10.394219 | 10.3942 | < 0.0001 |
+| 110 | 5.430339 | 5.4303 | < 0.0001 |
+| 120 | 2.332633 | 2.3326 | < 0.0001 |
+
+Put-call parity holds to **machine precision** (< 1e-12) across all strikes.
+
+High vol-of-vol case (σ=1.0, ρ=−0.9): DollarBill GL-64 = 8.593, QuantLib = 8.557 (0.04 abs error — GL converges but this extreme case needs more nodes or a different integration strategy).
 
 ---
 
@@ -84,25 +128,30 @@ Negligible overhead vs the call (~10 μs for the parity arithmetic). Confirms th
 
 ### Where DollarBill Wins
 
-- **Price accuracy**: Matches QuantLib to 4+ decimal places — the Fourier math is correct
-- **BSM throughput**: 70 ns / 14.3M ops/s for full Greeks is production-grade
+- **Price accuracy**: Matches QuantLib to **6 significant figures** — verified via QuantLib v1.41 cross-validation
+- **GL-32 latency**: 15 µs/call, **faster than QuantLib** (39 µs) while fully converged
+- **BSM throughput**: 79 ns / 12.7M ops/s for full Greeks is production-grade
 - **Zero C++ dependencies**: Pure Rust, no SWIG bindings, no QuantLib build toolchain
-- **Heston MC (QE scheme)**: Andersen (2008) with variance non-negativity guarantees — competitive with QuantLib's MC for equivalent path counts
+- **11-strike sweep**: GL-64 batch (398 µs) beats QuantLib (531 µs) by 1.3×
+- **Heston MC (QE scheme)**: Andersen (2008) with variance non-negativity guarantees
 - **Deterministic**: No external state, no global singletons, thread-safe by construction
 
 ### Where QuantLib Wins
 
-- **Heston analytical latency**: 620× faster via optimized Gauss-Laguerre quadrature
 - **Decades of production use**: Battle-tested across major banks and hedge funds
 - **Broader model coverage**: 100+ pricing engines vs DollarBill's focused set
+- **High vol-of-vol**: More robust for extreme parameters (σ > 0.8)
 
-### Optimization Roadmap
+### Optimization Roadmap — Status
 
-The 12.5× gap is addressable:
-
-1. **Replace Simpson with Gauss-Laguerre** (15–64 nodes): Expected ~100× speedup, bringing DollarBill to ~5 μs/call
-2. **True FFT pricing** (N=4096 grid): Price the *entire* strike surface in one shot (~500 μs for 4096 strikes vs 6.2 ms for 11)
-3. **Cache characteristic function** across strikes for a given (T, params) tuple
+| Optimization | Status | Impact |
+|-------------|--------|--------|
+| ~~Replace Simpson with Gauss-Laguerre~~ | ✅ **DONE** | 14.4× speedup (474 → 33 µs) |
+| ~~Lord-Kahl CF (stable formulation)~~ | ✅ **DONE** | QuantLib-matched accuracy |
+| ~~P₁ normalization fix~~ | ✅ **DONE** | Correct 1/φ(−i) factor |
+| True FFT pricing (N=4096 grid) | 🔲 Planned | Price entire strike surface in one shot |
+| CF caching across strikes | 🔲 Planned | ~2× for multi-strike batches |
+| SIMD vectorization of GL inner loop | 🔲 Planned | Potential ~2× for single-call |
 
 ---
 
@@ -111,12 +160,17 @@ The 12.5× gap is addressable:
 ```bash
 # Rust benchmarks (Criterion)
 cargo bench
-start docs/benchmarks/report/index.html   # Windows
-open docs/benchmarks/report/index.html    # macOS/Linux
+cargo bench -- "Gauss-Laguerre"            # GL benchmarks only
+cargo bench -- "Carr-Madan"                 # CM benchmarks only
+start docs/benchmarks/report/index.html     # Windows — open full HTML report
 
 # QuantLib comparison
 pip install QuantLib
-python py/bench_quantlib_heston.py
+python py/bench_quantlib_heston.py          # Timing comparison
+python py/quantlib_ref.py                   # Reference prices
+
+# QuantLib cross-validation tests
+cargo test --test lib quantlib -- --nocapture
 ```
 
 ## Report Files
@@ -126,3 +180,6 @@ python py/bench_quantlib_heston.py
 - [Strike Sweep](heston%20strike%20sweep%20(11%20strikes)/report/index.html) — 11-strike batch
 - [Maturity Sensitivity](heston%20maturity%20sensitivity/report/index.html) — T=0.1 to T=5.0
 - [BSM Baseline](bsm%20baseline%20(flat%20vol)/report/index.html) — closed-form comparison
+- [GL Node Sweep](gl%20node-count%20sweep/report/index.html) — 32 to 128 node comparison 🆕
+- [GL Precomputed vs On-the-fly](gl%20precomputed%20vs%20on-the-fly/report/index.html) — Rule caching impact 🆕
+- [Unified Dispatch](unified%20dispatch%20comparison/report/index.html) — CarrMadan vs GL dispatch 🆕

@@ -16,6 +16,7 @@ No traditional programming sessions. Just prompts, iterations, and Rust. 🚀
 
 ### ✅ **Real Capabilities**
 - **Options Pricing**: Black-Scholes-Merton and Heston stochastic volatility models
+- **Gauss-Laguerre Quadrature**: Pure Rust GL engine (2–128 nodes) — matches QuantLib to 6 significant figures 🆕 NEW
 - **Greeks Calculation**: Delta, Gamma, Vega, Theta, Rho for risk analysis
 - **Model Calibration**: Heston parameter fitting using custom Nelder-Mead optimizer
 - **Volatility Analysis**: IV extraction, volatility surfaces, and smile analysis
@@ -25,7 +26,7 @@ No traditional programming sessions. Just prompts, iterations, and Rust. 🚀
 - **Short Options**: SellCall and SellPut support for premium collection strategies
 - **Multi-Leg Strategies**: Iron condors, credit spreads, straddles, strangles with customizable templates
 - **Strategy Templates**: Configurable strategy builders for quick backtesting
-- **Portfolio Management**: Position sizing, risk analytics, multi-strategy allocation, performance attribution 🆕 NEW
+- **Portfolio Management**: Position sizing, risk analytics, multi-strategy allocation, performance attribution
 
 ### ❌ **What It's NOT**
 - Production trading system
@@ -155,7 +156,8 @@ ATM IV: 40.5% | Put Skew: 1.6% premium
 
 ### Core Models
 - **Black-Scholes-Merton**: Analytical European pricing with dividends
-- **Heston**: Carr-Madan FFT method (no Monte Carlo)
+- **Heston (Gauss-Laguerre)**: Lord-Kahl CF with pure Rust GL quadrature — **33 µs/call**, matches QuantLib to 6 sig figs 🆕
+- **Heston (Carr-Madan)**: Legacy adaptive Simpson integration path
 - **Greeks**: All first-order sensitivities
 - **Implied Volatility**: Newton-Raphson solver
 
@@ -177,7 +179,7 @@ DollarBill/
 ├── config/
 │   └── stocks.json              # Stock configuration
 ├── src/
-│   ├── models/                  # Pricing models (BS, Heston)
+│   ├── models/                  # Pricing models (BS, Heston, GL quadrature)
 │   ├── calibration/             # Parameter fitting
 │   ├── market_data/             # Data loading
 │   ├── analysis/                # Stock classification
@@ -199,9 +201,10 @@ DollarBill/
 
 ### Mathematical Concepts Demonstrated
 - **Stochastic Calculus**: Heston model implementation
-- **Numerical Methods**: FFT, Newton-Raphson, Nelder-Mead
+- **Numerical Methods**: Gauss-Laguerre quadrature, FFT, Newton-Raphson, Nelder-Mead
 - **Financial Mathematics**: Options pricing, Greeks, volatility
 - **Risk Management**: Portfolio analytics and hedging
+- **QuantLib Cross-Validation**: Verified against QuantLib v1.41 analytical engine
 
 ### Programming Techniques Showcased
 - **Rust Best Practices**: Zero-cost abstractions, ownership
@@ -216,6 +219,10 @@ DollarBill/
 
 ## 📈 Performance Notes
 
+- **BSM Pricing**: 79 ns/call (full Greeks) — 12.7M ops/s
+- **Heston GL-64**: 33 µs/call — 14.4× faster than Carr-Madan, matches QuantLib to 6 sig figs
+- **Heston GL-32**: 15 µs/call — 31.6× faster than Carr-Madan, converged to full precision
+- **Heston Carr-Madan**: 474 µs/call (legacy path)
 - **Heston Calibration**: ~2-3 seconds per symbol
 - **Multi-symbol Analysis**: Parallel processing with Rayon
 - **Memory Usage**: Efficient with zero-copy parsing
@@ -223,25 +230,30 @@ DollarBill/
 
 ## ✅ Testing
 
-**Comprehensive Test Suite: 254 tests, 100% passing**
+**Comprehensive Test Suite: 421+ tests, 100% passing**
 
 ### Test Coverage
-- **Unit Tests (26)**: Core library functionality in `src/`
-- **Integration Tests (118)**: Comprehensive test suite in `tests/`
-  - Black-Scholes Pricing: 15 tests
-  - Greeks Calculations: 19 tests
-  - Heston Model: 22 tests
-  - Property-Based Tests: 7 tests (mathematical invariants)
+- **Library Unit Tests (110)**: Core pricing, GL quadrature, strategies, portfolio in `src/`
+- **Integration Tests (307)**: Full test suite in `tests/`
+  - Black-Scholes Pricing: 30 tests (incl. Hull textbook references)
+  - Heston Analytical: 9 tests (GL + Carr-Madan + diagnostics)
+  - Heston Monte Carlo: 22 tests (QE scheme, variance non-negativity)
+  - QuantLib Reference: 10 tests (cross-validated vs QuantLib v1.41) 🆕
+  - Gauss-Laguerre Quadrature: 14 tests (nodes, weights, convergence) 🆕
+  - Property-Based Tests: 13 tests (proptest invariants)
   - Numerical Stability: 8 tests (convergence & precision)
-  - Edge Cases: Multiple tests (boundary conditions)
-  - Nelder-Mead Optimization: 14 tests
-  - Backtest Engine: 17 tests
-  - Short Options: 13 tests (premium collection strategies)
-  - Market Data Loading: 8 tests
-  - Volatility Mean Reversion Strategy: 17 tests
-  - Thread Safety: 3 tests (concurrent calculations)
-  - Performance Benchmarks: 3 tests (speed validation)
-- **Doc Tests (2)**: API documentation examples
+  - American Options: 8 tests (binomial tree, early exercise)
+  - Vol Surface: 6 tests (arbitrage-free constraints)
+  - Portfolio Risk: 5 tests (delta-neutral, gamma scalping)
+  - Backtest Engine: 15 tests + Short Options: 13 tests
+  - Trading Costs & Liquidity: 30 tests (slippage, market impact)
+  - Strategies: 42 tests (factory, signals, classifier, property-based)
+  - Portfolio Management: 37 tests (sizing, allocation, attribution)
+  - Concurrency: 3 tests (thread-safe pricing)
+  - Performance: 3 tests (speed validation)
+  - Integration & Regime Stress: 17 tests
+- **Standalone Tests (1)**: CDF verification
+- **Doc Tests (3)**: API documentation examples
 
 ### Running Tests
 ```bash
@@ -249,7 +261,9 @@ DollarBill/
 cargo test
 
 # Run specific test categories
-cargo test --lib                    # Library tests only
+cargo test --lib                    # Library unit tests (110)
+cargo test --test lib quantlib      # QuantLib reference tests
+cargo test --test lib gauss_lag     # Gauss-Laguerre tests
 cargo test test_black_scholes       # Black-Scholes tests
 cargo test test_property_based      # Property-based tests
 cargo test test_numerical_stability # Stability tests
@@ -563,7 +577,9 @@ DollarBill/
 │   ├── models/                         # Pricing models
 │   │   ├── bs_mod.rs                   # Black-Scholes-Merton + Greeks
 │   │   ├── heston.rs                   # Heston model structures
-│   │   └── heston_analytical.rs        # Carr-Madan FFT pricing
+│   │   ├── heston_analytical.rs        # Heston semi-analytical (GL + Carr-Madan)
+│   │   ├── gauss_laguerre.rs           # Pure Rust GL quadrature engine 🆕
+│   │   └── american.rs                 # American options (binomial tree)
 │   ├── calibration/                    # Model calibration
 │   │   ├── heston_calibrator.rs        # Heston parameter fitting
 │   │   ├── nelder_mead.rs              # Custom optimizer
@@ -655,10 +671,11 @@ DollarBill/
 - Zero-expiry handling
 
 **Heston Stochastic Volatility:**
-- Carr-Madan FFT method (analytical, no Monte Carlo)
-- Complex characteristic function
-- Adaptive integration
-- ITM/OTM handling for numerical stability
+- **Gauss-Laguerre quadrature** (primary): Lord-Kahl Formulation 2 CF, 2–128 GL nodes 🆕
+- **Carr-Madan / adaptive Simpson** (legacy): original characteristic function path
+- QuantLib-validated: matches `AnalyticHestonEngine` to 6 significant figures
+- Put-call parity to machine precision
+- Configurable via `IntegrationMethod` enum and JSON config
 
 ### Optimization
 
@@ -683,10 +700,13 @@ Greeks {
 
 ### Performance
 
+- **BSM closed-form**: 79 ns/call (full Greeks) — 12.7M ops/s
+- **Heston GL-64**: 33 µs/call — 14.4× faster than Carr-Madan
+- **Heston GL-32**: 15 µs/call — 31.6× faster than Carr-Madan, fully converged
+- **GL rule caching**: Pre-compute once, reuse across strikes (saves ~270 µs/call)
 - **Parallel calibration** - Rayon for multi-symbol processing
 - **Zero-copy parsing** - CSV crate optimizations
 - **Analytical pricing** - No Monte Carlo overhead
-- **Typical runtime** - 500-1000ms for full multi-symbol analysis
 - **Release builds** - LLVM optimizations enabled
 
 ## 🎓 Understanding the Output
@@ -724,6 +744,7 @@ Greeks {
 | Market Data | yahoo_finance_api |
 | Parallelism | Rayon |
 | Complex Math | num-complex |
+| Quadrature | Pure Rust Gauss-Laguerre (2–128 nodes) |
 | Time/Date | Chrono, Time |
 
 ## � Data Coverage
@@ -800,10 +821,12 @@ Greeks {
 **Build Status:**
 - ✅ Compiles successfully (with warnings)
 - ✅ Optimized `--release` builds available  
-- ✅ **146 comprehensive tests** (100% passing)
-  - 118 integration tests
-  - 26 unit tests
-  - 2 doc tests
+- ✅ **421+ comprehensive tests** (100% passing)
+  - 307 integration tests
+  - 110 library unit tests (incl. 7 ignored network tests)
+  - 1 standalone CDF verification
+  - 3 doc tests
+- ✅ **QuantLib-validated**: Heston GL prices match QuantLib v1.41 to 6 significant figures
 - ✅ **Mathematical accuracy verified** across all core models
 
 ## 🔮 Potential Enhancements
@@ -872,8 +895,10 @@ cargo test --test lib
 |----------|------:|-------------|
 | **Models — Black-Scholes** | 30 | Pricing, Greeks, put-call parity, dividends, pathological edge cases, numerical stability, 8 absolute-value reference tests (Hull textbook) |
 | **Models — Heston MC** | 22 | QE scheme variance non-negativity, put-call parity, mean reversion, SplitMix64 distribution, stress tests (Feller violation, extreme params) |
-| **Models — Heston Analytical** | 2 | Carr-Madan FFT ATM pricing, put-call parity |
+| **Models — Heston Analytical** | 9 | Carr-Madan FFT, GL P₁/P₂, put-call parity, unified dispatch, diagnostic cross-checks |
 | **Models — American** | 8 | Binomial tree pricing, convergence, Greeks, early exercise with dividends |
+| **Models — Gauss-Laguerre** | 14 | Node/weight accuracy, convergence, exp-modified weights, edge cases | 🆕
+| **Models — QuantLib Reference** | 10 | Cross-validated vs QuantLib v1.41: ATM, strike sweep, high vol-of-vol, convergence, timing | 🆕
 | **Models — Property-Based** | 13 | Proptest-driven: delta bounds, gamma positivity, vega symmetry, monotonicity, parity with dividends |
 | **Models — Vol Surface** | 6 | Arbitrage-free surface: no calendar spread, no butterfly, no put-call IV inversion |
 | **Models — Portfolio Risk** | 5 | Delta-neutral portfolios, gamma scalping, vega sensitivity, rho sign correctness |
@@ -893,8 +918,8 @@ cargo test --test lib
 | **Integration** | 17 | End-to-end pipeline, multi-model consistency, regime stress (crash, recovery, vol-crush) |
 | **Performance** | 3 | BSM, Heston, Nelder-Mead speed benchmarks |
 | **Other** | 1 | CDF verification |
-| **Doc-tests** | 2 | Alpaca client examples (compile-only) |
-| | **297 + 8** | **Total (297 unit/integration + 7 ignored network tests + 1 ignored doc-test)** |
+| **Doc-tests** | 3 | Alpaca client examples (compile-only, 1 ignored) |
+| | **307 + 110 + 4** | **Total (307 integration + 110 lib unit + 3 doc-tests + 1 CDF; 8 ignored)** |
 
 ### Test Architecture
 
@@ -910,14 +935,15 @@ tests/
 │   ├── concurrency/      # Thread safety & parallel independence
 │   ├── market_data/      # CSV loader, data validation
 │   ├── models/           # BSM, Heston MC, Heston FFT, American, Greeks,
-│   │                     #   property-based, numerical stability, vol surface
+│   │                     #   property-based, numerical stability, vol surface,
+│   │                     #   gauss-laguerre, quantlib-reference 🆕
 │   ├── performance/      # Benchmark speed tests
 │   └── strategies/       # Personality props, classifier, vol mean reversion
 ├── lib.rs                # Test harness root
 └── verify_cdf.rs         # Standalone CDF accuracy verification
 ```
 
-Additionally, each `src/` module contains **89 inline unit tests** (marked `#[cfg(test)]`) covering portfolio management, strategies, matching, and model internals.
+Additionally, each `src/` module contains **110 inline unit tests** (marked `#[cfg(test)]`) covering portfolio management, strategies, matching, model internals, and Gauss-Laguerre quadrature.
 
 ### Key Testing Patterns
 
@@ -926,20 +952,35 @@ Additionally, each `src/` module contains **89 inline unit tests** (marked `#[cf
 - **Regime stress testing**: Dedicated crash/recovery/vol-crush scenarios with Heston MC paths
 - **No-free-lunch invariants**: Trading cost tests prove round-trip costs are always positive, commissions never turn loss into profit
 - **Variance non-negativity**: Heston QE scheme tested with 10K paths under extreme Feller-violating parameters
+- **QuantLib cross-validation**: 10 dedicated tests compare GL pricing against QuantLib v1.41 `AnalyticHestonEngine` with tolerances as tight as 0.05 🆕
+- **GL convergence ladder**: Node sweep (8→128) verifies monotonic convergence; 16 nodes sufficient for 1e-6 accuracy 🆕
 
 ### Benchmarks
 
-[Criterion.rs](https://github.com/bheisler/criterion.rs) benchmarks (200 samples, 10s window) with QuantLib cross-validation on the same machine. Heston params: S=K=100, T=1y, r=5%, v₀=0.04, κ=2, θ=0.04, σ=0.3, ρ=−0.7.
+[Criterion.rs](https://github.com/bheisler/criterion.rs) benchmarks (200 samples, 10s window) with QuantLib v1.41 cross-validation on the same machine. Heston params: S=K=100, T=1y, r=5%, v₀=0.04, κ=2, θ=0.04, σ=0.3, ρ=−0.7.
 
-| Engine | Benchmark | Latency | Throughput |
-|--------|-----------|--------:|-----------:|
-| **DollarBill** | BSM call + full Greeks | **70 ns** | 14.3M ops/s |
-| **QuantLib** | Heston ATM call (Gauss-Laguerre) | **39.25 μs** | 25,480 ops/s |
-| **DollarBill** | Heston ATM call (Carr-Madan) | 491 μs | 2,040 ops/s |
-| **DollarBill** | 11-strike sweep | 6.2 ms | — |
-| **QuantLib** | 11-strike sweep | 531 μs | — |
+| Engine | Method | Price | Latency | Throughput |
+|--------|--------|------:|--------:|-----------:|
+| **DollarBill** | BSM call + full Greeks | 10.4506 | **79 ns** | 12.7M ops/s |
+| **DollarBill** | Heston GL-32 (precomputed) | 10.3942 | **15 µs** | 66,700 ops/s |
+| **DollarBill** | Heston GL-64 (precomputed) | 10.3942 | **33 µs** | 30,300 ops/s |
+| **DollarBill** | Heston GL-128 (precomputed) | 10.3942 | **69 µs** | 14,500 ops/s |
+| **QuantLib** | Heston GL (AnalyticHestonEngine) | 10.3942 | 39.25 µs | 25,480 ops/s |
+| **DollarBill** | Heston Carr-Madan (adaptive Simpson) | 10.4506* | 474 µs | 2,040 ops/s |
+| **DollarBill** | 11-strike sweep (GL-64) | — | **398 µs** | — |
+| **DollarBill** | 11-strike sweep (Carr-Madan) | — | 5.43 ms | — |
+| **QuantLib** | 11-strike sweep | — | 531 µs | — |
 
-Both engines agree on price to 4 decimal places (10.3942). **Correction applied per QuantLib maintainer feedback: forced recalculate() in timed loop. New uncached QuantLib single-call latency: 39.25 μs → revised gap 12.5×.** The gap is due to integration strategy — Gauss-Laguerre (~64 nodes) vs adaptive Simpson (~1000 nodes). See the [full benchmark analysis](docs/benchmarks/SUMMARY.md) for maturity sensitivity, optimization roadmap, and detailed wins/losses.
+\* Carr-Madan uses the legacy characteristic function; GL uses the corrected Lord-Kahl CF.
+
+**Key results:**
+- GL-64 matches QuantLib to **6 significant figures** (10.394219 vs 10.394218)
+- GL-32 is **31.6× faster** than Carr-Madan & already fully converged
+- GL-64 11-strike sweep is **13.6× faster** than Carr-Madan sweep
+- GL converges by 16 nodes (error < 1e-6 vs GL-128)
+- Put-call parity holds to **machine precision** across all strikes
+
+See the [full benchmark analysis](docs/benchmarks/SUMMARY.md) for maturity sensitivity, optimization roadmap, and detailed wins/losses.
 
 <p align="center">
   <img src="images/heston_fft_violin.svg" alt="Heston Carr-Madan FFT — Criterion violin plot" width="700">
@@ -948,7 +989,8 @@ Both engines agree on price to 4 decimal places (10.3942). **Correction applied 
 </p>
 
 ```bash
-cargo bench                                    # Run benchmarks
+cargo bench                                    # Run all benchmarks
+cargo bench -- "Gauss-Laguerre"                  # GL benchmarks only
 python py/bench_quantlib_heston.py             # QuantLib comparison
 start docs/benchmarks/report/index.html        # Open full HTML report
 ```

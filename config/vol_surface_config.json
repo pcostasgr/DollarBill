@@ -1,6 +1,8 @@
 {
   "volatility_surface": {
     "risk_free_rate": 0.05,
+    "integration_method": "Carr_Madan",
+    "gauss_laguerre_nodes": 32,
     "analysis": {
       "min_strikes_around_atm": 3,
       "max_strikes_around_atm": 10,

@@ -112,7 +112,9 @@ Top 10 Positions (1 contract each):
 **Status:** ✅ COMPLETE
 
 **Implementation:**
-- **Advanced options pricing** using Heston model with Carr-Madan analytical solution
+- **Advanced options pricing** using Heston model with Gauss-Laguerre quadrature (primary) and Carr-Madan (legacy)
+- **Lord-Kahl Formulation 2 CF**: Numerically stable characteristic function, QuantLib-validated 🆕
+- **P₁/P₂ decomposition** with correct 1/φ(−i) normalization for the stock-measure probability 🆕
 - **Realistic volatility dynamics** instead of constant Black-Scholes volatility
 - **Live market calibration** for each symbol using Nelder-Mead optimization
 - **Multi-strategy testing** (short-term, medium-term, long-term horizons)
@@ -120,7 +122,7 @@ Top 10 Positions (1 contract each):
 - **Comprehensive P&L tracking** with realistic commissions and slippage
 
 **Key Features:**
-- **Carr-Madan FFT Pricing**: 4161x faster than Monte Carlo simulation
+- **Gauss-Laguerre Pricing**: 33 µs/call (GL-64), 14.4× faster than Carr-Madan, matches QuantLib to 6 sig figs 🆕
 - **Volatility Smile Capture**: Accounts for OTM/ITM pricing differences
 - **Parameter Calibration**: Fits κ, θ, σ, ρ, v₀ to live market options
 - **Strategy Optimization**: Tests multiple timeframes and holding periods
@@ -210,31 +212,40 @@ NVDA Long-Term    +4%             +4%            Similar
 
 **Source Code:**
 1. `src/market_data/symbols.rs` (enhanced) - Added `load_enabled_stocks()` and `load_all_stocks()` functions ⭐ UPDATED
-2. `config/stocks.json` (36 lines) - Central stock configuration ⭐ NEW
-3. `config/trading_bot_config.json` (updated) - Removed symbols array, parameter-only ⭐ UPDATED
-4. `config/paper_trading_config.json` (updated) - Removed symbols array, parameter-only ⭐ UPDATED
-5. `config/signals_config.json` (updated) - Removed symbols array, parameter-only ⭐ UPDATED
-6. `config/vol_surface_config.json` (updated) - Removed symbols array, parameter-only ⭐ UPDATED
-7. `src/utils/vol_surface.rs` (243 lines) - Volatility surface tools
-8. `examples/vol_surface_analysis.rs` (75 lines) - IV extraction example
-9. `examples/multi_symbol_signals.rs` (modified) - Added Greeks + risk metrics
-10. `src/strategies/momentum.rs` (new) - Momentum-based trading strategy ⭐ NEW
-11. `src/strategies/factory.rs` (new) - Configuration-driven strategy factory ⭐ NEW
-12. `src/strategies/ensemble.rs` (new) - Ensemble strategy combining approaches ⭐ NEW
-13. `config/strategy_deployment.json` (new) - Strategy deployment configuration ⭐ NEW
-14. `examples/strategy_deployment.rs` (new) - Comprehensive deployment demo ⭐ NEW
+2. `src/models/gauss_laguerre.rs` (416 lines) - Pure Rust GL quadrature engine + 14 unit tests 🆕
+3. `src/models/heston_analytical.rs` (enhanced) - GL pricing path, Lord-Kahl CF, P₁ normalization fix 🆕
+4. `config/stocks.json` (36 lines) - Central stock configuration ⭐ NEW
+5. `config/trading_bot_config.json` (updated) - Removed symbols array, parameter-only ⭐ UPDATED
+6. `config/paper_trading_config.json` (updated) - Removed symbols array, parameter-only ⭐ UPDATED
+7. `config/signals_config.json` (updated) - Removed symbols array, parameter-only ⭐ UPDATED
+8. `config/vol_surface_config.json` (updated) - Added `integration_method` and `gauss_laguerre_nodes` ⭐ UPDATED
+9. `src/utils/vol_surface.rs` (243 lines) - Volatility surface tools
+10. `examples/vol_surface_analysis.rs` (75 lines) - IV extraction example
+11. `examples/multi_symbol_signals.rs` (modified) - Added Greeks + risk metrics
+12. `src/strategies/momentum.rs` (new) - Momentum-based trading strategy ⭐ NEW
+13. `src/strategies/factory.rs` (new) - Configuration-driven strategy factory ⭐ NEW
+14. `src/strategies/ensemble.rs` (new) - Ensemble strategy combining approaches ⭐ NEW
+15. `config/strategy_deployment.json` (new) - Strategy deployment configuration ⭐ NEW
+16. `examples/strategy_deployment.rs` (new) - Comprehensive deployment demo ⭐ NEW
+
+**Test Files:**
+1. `tests/unit/models/test_quantlib_reference.rs` - 10 QuantLib cross-validation tests 🆕
+2. `benches/heston_pricing.rs` (enhanced) - 5 GL Criterion benchmark groups 🆕
 
 **Python Scripts:**
 1. `plot_vol_surface.py` (230 lines) - 3D visualization with plotly
 2. `py/fetch_multi_stocks.py` (67 lines) - Multi-symbol stock fetcher (config-driven)
 3. `py/fetch_multi_options.py` (115 lines) - Multi-symbol options fetcher (config-driven)
+4. `py/quantlib_ref.py` - QuantLib ground-truth price computation 🆕
+5. `py/heston_cf_debug.py` - CF + pricing comparison script 🆕
 
 **Run Scripts:**
 1. `scripts/run_multi_signals.ps1` - Signals with Greeks
 2. `scripts/run_vol_surface.ps1` - Complete vol surface pipeline
 
 **Documentation:**
-1. `advanced-features.md` - Comprehensive user guide
+1. `advanced-features.md` - Comprehensive user guide (updated with GL section)
+2. `docs/benchmarks/SUMMARY.md` - Complete benchmark refresh with GL results 🆕
 
 ---
 
@@ -292,15 +303,17 @@ cargo run --release --example strategy_deployment
 
 ## 📊 Project Statistics
 
-**Total Lines of Code Added:** ~800 lines
-**New Modules:** 2 (config + vol_surface)
+**Total Lines of Code Added:** ~2,200+ lines (incl. GL engine, tests, benchmarks)
+**New Modules:** 3 (config, vol_surface, gauss_laguerre)
 **New Examples:** 1 (vol_surface_analysis)
 **Modified Examples:** 1 (multi_symbol_signals)
-**Python Scripts:** 3 (all config-driven)
-**Documentation Files:** 1
+**Python Scripts:** 5 (3 config-driven + 2 QuantLib reference)
+**Documentation Files:** 3 (advanced-features, benchmarks, getting-started)
 **Configuration Files:** 1 (stocks.json)
+**Test Files:** 2 (test_quantlib_reference, enhanced heston_pricing bench)
+**Total Tests:** 421+ (110 lib + 307 integration + 1 CDF + 3 doc-tests)
 
-**Compilation Status:** ✅ Clean (4 minor warnings, no errors)
+**Compilation Status:** ✅ Clean (minor warnings, no errors)
 
 ---
 
@@ -317,16 +330,19 @@ cargo run --release --example strategy_deployment
 | 3D visualization | ❌ | ✅ Interactive plotly charts |
 | Pipeline consistency | ❌ | ✅ All components use same config |
 | Strategy deployment | ❌ | ✅ Modular, configurable deployment patterns |
+| Gauss-Laguerre quadrature | ❌ | ✅ Pure Rust GL (2–128 nodes), 33 µs/call 🆕 |
+| QuantLib cross-validation | ❌ | ✅ 10 tests, 6 sig fig agreement 🆕 |
+| Lord-Kahl CF | ❌ | ✅ Numerically stable Formulation 2 🆕 |
 
 ---
 
 ## ✨ Next Potential Enhancements
 
-1. **Real-time Greeks updates** - WebSocket streaming
-2. **Position optimizer** - Kelly criterion sizing
-3. **Backtest framework** - Historical signal performance
-4. **More strategies** - Iron Condor, Calendar spreads
-5. **Greeks hedging calculator** - Delta/vega hedge ratios
+1. **True FFT pricing** - N=4096 grid for entire strike surface in one shot
+2. **CF caching** - Cache characteristic function across strikes for same (T, params)
+3. **SIMD vectorization** - Vectorize GL inner loop for ~2× single-call speedup
+4. **Real-time Greeks updates** - WebSocket streaming
+5. **Position optimizer** - Kelly criterion sizing
 6. **Volatility forecasting** - GARCH models
 7. **Risk limits** - Automatic position sizing
 

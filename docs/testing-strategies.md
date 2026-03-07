@@ -2,17 +2,24 @@
 
 ## Implementation Status
 
-✅ **97 tests implemented - 100% passing**
+✅ **421+ tests implemented - 100% passing**
 
 See [test-implementation-summary.md](test-implementation-summary.md) for detailed results and [failed-tests-analysis.md](failed-tests-analysis.md) for resolved issues.
 
 ### Completed Test Suites
-- ✅ Black-Scholes Pricing (15 tests)
+- ✅ Black-Scholes Pricing (30 tests)
 - ✅ Greeks Calculations (19 tests)  
-- ✅ Heston Model (22 tests)
-- ✅ Nelder-Mead Optimization (14 tests)
-- ✅ Backtest Engine (17 tests)
-- ✅ Market Data Loading (8 tests)
+- ✅ Heston Monte Carlo (22 tests)
+- ✅ Heston Analytical — GL + CM (9 tests)
+- ✅ Gauss-Laguerre Quadrature (14 tests) 🆕
+- ✅ QuantLib Cross-Validation (10 tests) 🆕
+- ✅ American Options (8 tests)
+- ✅ Property-Based / Proptest (13 tests)
+- ✅ Numerical Stability (8 tests)
+- ✅ Nelder-Mead Optimization (2 tests)
+- ✅ Backtest Engine + Short Options (28 tests)
+- ✅ Trading Costs, Liquidity, Slippage, Market Impact (51 tests)
+- ✅ Market Data Loading (7 tests)
 - ✅ Volatility Mean Reversion Strategy (17 tests)
 
 ---

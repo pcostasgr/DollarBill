@@ -24,8 +24,9 @@ Welcome to the DollarBill documentation! This folder contains comprehensive guid
 - **[Implementation Summary](implementation-summary.md)** - Technical details, architecture, and implementation notes
 - **[Parameter Atlas](parameter_atlas.md)** - Complete reference for all configuration parameters
 - **[Testing Strategies](testing-strategies.md)** - Comprehensive test plan and test categories
-- **[Test Implementation Summary](test-implementation-summary.md)** - Test results and coverage (97 tests, 100% passing) ⭐ NEW
-- **[Failed Tests Analysis](failed-tests-analysis.md)** - Resolved test issues and mathematical explanations ⭐ NEW
+- **[Test Implementation Summary](test-implementation-summary.md)** - Test results and coverage (421+ tests, 100% passing) ⭐ UPDATED
+- **[Failed Tests Analysis](failed-tests-analysis.md)** - Resolved test issues and mathematical explanations
+- **[Benchmark Summary](benchmarks/SUMMARY.md)** - Criterion benchmarks with QuantLib cross-validation ⭐ UPDATED
 
 ## 📂 Project Structure
 
@@ -33,13 +34,17 @@ Welcome to the DollarBill documentation! This folder contains comprehensive guid
 DollarBill/
 ├── config/                  # JSON configuration files
 ├── docs/                    # Documentation (this folder)
+│   └── benchmarks/          # Criterion HTML reports & QuantLib comparison
 ├── src/                     # Rust source code
-├── examples/               # Rust example programs
-├── py/                     # Python utilities
-├── scripts/                # Shell/batch scripts
-├── data/                   # CSV/JSON data files
-├── images/                 # Generated charts and visualizations
-└── README.md              # Main project documentation
+│   └── models/              # BS, Heston, Gauss-Laguerre quadrature
+├── benches/                 # Criterion benchmark harnesses
+├── tests/                   # Integration & unit test suite (307 tests)
+├── examples/                # Rust example programs
+├── py/                      # Python utilities & QuantLib reference scripts
+├── scripts/                 # Shell/batch scripts
+├── data/                    # CSV/JSON data files
+├── images/                  # Generated charts and visualizations
+└── README.md                # Main project documentation
 ```
 
 ## 🚀 Quick Links
@@ -51,6 +56,11 @@ DollarBill/
 - [Generate Volatility Surfaces](../scripts/run_vol_surface.ps1)
 - [View Generated Charts](../images/)
 
-## 📞 Support
+## 📞 Getting Started
+
+### Heston Pricing
+- **Gauss-Laguerre (recommended)**: `IntegrationMethod::GaussLaguerre(64)` — 33 µs/call, matches QuantLib to 6 sig figs
+- **Carr-Madan (legacy)**: `IntegrationMethod::CarrMadan` — 474 µs/call, uses original characteristic function
+- Configure in `config/vol_surface_config.json` (`integration_method` + `gauss_laguerre_nodes`)
 
 For questions or issues, check the inline code comments or create an issue in the repository.

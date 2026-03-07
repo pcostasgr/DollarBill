@@ -31,29 +31,41 @@ cargo test test_call_option_atm
 
 ## Current Status
 
-**254 tests implemented, 254 passing (100% ✅)**
+**421+ tests implemented, 421+ passing (100% ✅)**
 
 ### Breakdown by Type
-- **Integration Tests**: 135 passing
-- **Library Unit Tests**: 38 passing
-- **Doc Tests**: 0 passing
+- **Integration Tests**: 307 passing
+- **Library Unit Tests**: 110 passing (7 ignored — network-dependent)
+- **Standalone Tests**: 1 passing (CDF verification)
+- **Doc Tests**: 3 passing (1 ignored)
 
 ### Test Coverage by Category
-- ✅ Black-Scholes Pricing: 15/15 (100%)
+- ✅ Black-Scholes Pricing: 30/30 (100%)
 - ✅ Greeks Calculations: 19/19 (100%)
-- ✅ Heston Model: 22/22 (100%)
-- ✅ Property-Based Tests: 7/7 (100%) **NEW**
-- ✅ Numerical Stability: 8/8 (100%) **NEW**
-- ✅ Edge Cases: Multiple tests (100%) **NEW**
-- ✅ Nelder-Mead Optimization: 14/14 (100%)
-- ✅ Backtest Engine: 17/17 (100%)
-- ✅ Short Options: 13/13 (100%) **NEW**
-- ✅ Strategy Templates: 12/12 (100%) 🆕 NEW
-- ✅ Portfolio Management: 41/41 (100%) 🆕 NEW
-- ✅ Market Data Loading: 8/8 (100%)
-- ✅ Volatility Mean Reversion Strategy: 17/17 (100%)
-- ✅ Thread Safety & Concurrency: 3/3 (100%) **NEW**
-- ✅ Performance Benchmarks: 3/3 (100%) **NEW**
+- ✅ Heston Monte Carlo: 22/22 (100%)
+- ✅ Heston Analytical (GL + CM): 9/9 (100%)
+- ✅ Gauss-Laguerre Quadrature: 14/14 (100%) 🆕 NEW
+- ✅ QuantLib Reference: 10/10 (100%) 🆕 NEW
+- ✅ American Options: 8/8 (100%)
+- ✅ Property-Based Tests: 13/13 (100%)
+- ✅ Numerical Stability: 8/8 (100%)
+- ✅ Vol Surface: 6/6 (100%)
+- ✅ Portfolio Risk: 5/5 (100%)
+- ✅ Nelder-Mead Optimization: 2/2 (100%)
+- ✅ Backtest Engine: 15/15 (100%)
+- ✅ Short Options: 13/13 (100%)
+- ✅ Trading Costs: 12/12 (100%)
+- ✅ Liquidity: 18/18 (100%)
+- ✅ Slippage: 13/13 (100%)
+- ✅ Market Impact: 8/8 (100%)
+- ✅ Edge Cases: 6/6 (100%)
+- ✅ Strategies: 28/28 (100%)
+- ✅ Strategies Property-Based: 14/14 (100%)
+- ✅ Portfolio Management: 37/37 (100%)
+- ✅ Market Data Loading: 7/7 (100%)
+- ✅ Thread Safety & Concurrency: 3/3 (100%)
+- ✅ Performance Benchmarks: 3/3 (100%)
+- ✅ Integration & Regime Stress: 17/17 (100%)
 
 ### New Test Categories
 
@@ -131,28 +143,38 @@ All previous test failures have been resolved:
 tests/
 ├── unit/
 │   ├── models/
-│   │   ├── test_black_scholes.rs      # Option pricing tests (15 tests)
-│   │   ├── test_greeks.rs             # Greeks calculation tests (19 tests)
-│   │   ├── test_heston.rs             # Heston model tests (22 tests)
-│   │   ├── test_property_based.rs     # Mathematical invariants (7 tests) ⭐ NEW
-│   │   ├── test_numerical_stability.rs # Convergence & precision (8 tests) ⭐ NEW
-│   │   └── test_edge_cases.rs         # Boundary conditions ⭐ NEW
-│   ├── calibration/
-│   │   └── test_nelder_mead.rs        # Optimizer tests (14 tests)
+│   │   ├── test_black_scholes.rs          # BSM pricing (30 tests)
+│   │   ├── test_greeks.rs                 # Greeks calculations (19 tests)
+│   │   ├── test_heston.rs                 # Heston MC (22 tests)
+│   │   ├── test_heston_analytical.rs      # GL + CM analytical (9 tests)
+│   │   ├── test_quantlib_reference.rs     # QuantLib cross-validation (10 tests) 🆕
+│   │   ├── test_american.rs               # American options (8 tests)
+│   │   ├── test_property_based.rs         # Proptest invariants (13 tests)
+│   │   ├── test_numerical_stability.rs    # Convergence & precision (8 tests)
+│   │   ├── test_vol_surface.rs            # Arbitrage-free surface (6 tests)
+│   │   └── test_portfolio_risk.rs         # Portfolio Greeks (5 tests)
 │   ├── backtesting/
-│   │   └── test_engine.rs             # Backtest engine tests (17 tests)
-│   ├── market_data/
-│   │   └── test_csv_loader.rs         # Data loading tests (8 tests)
-│   ├── strategies/
-│   │   └── test_vol_mean_reversion.rs # Strategy tests (17 tests)
+│   │   ├── test_engine.rs                # Backtest engine (15 tests)
+│   │   ├── test_short_options.rs         # Short options (13 tests)
+│   │   ├── test_trading_costs.rs         # Costs (12 tests)
+│   │   ├── test_liquidity.rs             # Liquidity (18 tests)
+│   │   ├── test_slippage.rs              # Slippage (13 tests)
+│   │   ├── test_market_impact.rs         # Market impact (8 tests)
+│   │   └── test_edge_cases.rs            # Edge cases (6 tests)
+│   ├── calibration/                    # (via src/ inline tests)
 │   ├── concurrency/
-│   │   └── test_thread_safety.rs      # Thread safety tests (3 tests) ⭐ NEW
+│   │   └── test_thread_safety.rs         # Thread safety (3 tests)
+│   ├── market_data/
+│   │   └── test_csv_loader.rs            # Data loading (7 tests)
+│   ├── strategies/                     # Strategy tests (42 tests)
 │   └── performance/
-│       └── test_benchmarks.rs         # Speed validation (3 tests) ⭐ NEW
+│       └── test_benchmarks.rs            # Speed validation (3 tests)
 ├── integration/
-│   └── test_end_to_end.rs             # End-to-end workflows
-├── helpers/mod.rs                      # Test utilities
-└── fixtures/                           # Test data files
+│   ├── test_end_to_end.rs              # Full pipeline tests
+│   └── test_regime_stress.rs           # Crash/recovery/vol-crush
+├── helpers/mod.rs                       # Test utilities
+├── lib.rs                               # Test harness root
+└── verify_cdf.rs                        # Standalone CDF verification
 ```
 
 ## Adding New Tests

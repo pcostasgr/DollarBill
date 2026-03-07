@@ -4,15 +4,18 @@
 Successfully implemented comprehensive test suite for the DollarBill options trading system as outlined in [testing-strategies.md](testing-strategies.md).
 
 ## Test Statistics
-- **Total Tests Implemented**: 97 tests
-- **Tests Passing**: 97 (100% ✅)
+- **Total Tests Implemented**: 421+ tests
+- **Tests Passing**: 421+ (100% ✅)
 - **Tests Failing**: 0
+- **Tests Ignored**: 8 (network-dependent + 1 doc-test)
 
-All test failures resolved! Issues were related to test expectations, not implementation bugs:
-1. ATM delta tests adjusted for interest rate drift effects
-2. Extreme strike tests account for floating-point precision (~1e-15)
-3. Heston convergence tests relaxed for Carr-Madan integration tolerances
-4. Heston positive price tests use moderate strike ranges
+**Breakdown:**
+- 110 library unit tests (inline `#[cfg(test)]` in `src/`)
+- 307 integration tests (in `tests/`)
+- 1 standalone CDF verification
+- 3 doc-tests (1 ignored)
+
+All test failures resolved! The suite includes QuantLib cross-validation, property-based testing, regime stress tests, and comprehensive edge case coverage.
 
 ## Test Organization
 
@@ -21,23 +24,36 @@ All test failures resolved! Issues were related to test expectations, not implem
 tests/
 ├── helpers/
 │   └── mod.rs              # Test utilities and fixtures
-├── fixtures/
-│   ├── test_stock_data.csv
-│   └── test_heston_params.json
+├── integration/
+│   ├── test_end_to_end.rs     # Full pipeline tests
+│   └── test_regime_stress.rs  # Crash/recovery/vol-crush
 ├── unit/
 │   ├── models/
-│   │   ├── test_black_scholes.rs    # 15 tests
-│   │   ├── test_greeks.rs           # 19 tests
-│   │   └── test_heston.rs           # 22 tests
-│   ├── calibration/
-│   │   └── test_nelder_mead.rs      # 14 tests
+│   │   ├── test_black_scholes.rs        # 30 tests
+│   │   ├── test_greeks.rs               # 19 tests
+│   │   ├── test_heston.rs               # 22 tests (Heston MC)
+│   │   ├── test_heston_analytical.rs    # 9 tests (GL + CM)
+│   │   ├── test_quantlib_reference.rs   # 10 tests (QuantLib v1.41) 🆕
+│   │   ├── test_american.rs             # 8 tests
+│   │   ├── test_property_based.rs       # 13 tests
+│   │   ├── test_numerical_stability.rs  # 8 tests
+│   │   ├── test_vol_surface.rs          # 6 tests
+│   │   └── test_portfolio_risk.rs       # 5 tests
 │   ├── backtesting/
-│   │   └── test_engine.rs           # 17 tests
-│   ├── market_data/
-│   │   └── test_csv_loader.rs       # 8 tests
-│   └── strategies/
-│       └── test_vol_mean_reversion.rs # 17 tests
-└── lib.rs                  # Test module entry point
+│   │   ├── test_engine.rs              # 15 tests
+│   │   ├── test_short_options.rs       # 13 tests
+│   │   ├── test_trading_costs.rs       # 12 tests
+│   │   ├── test_liquidity.rs           # 18 tests
+│   │   ├── test_slippage.rs            # 13 tests
+│   │   ├── test_market_impact.rs       # 8 tests
+│   │   └── test_edge_cases.rs          # 6 tests
+│   ├── calibration/           # (via src/ inline tests)
+│   ├── concurrency/           # 3 tests
+│   ├── market_data/           # 7 tests
+│   ├── performance/           # 3 tests
+│   └── strategies/            # 42 tests
+├── lib.rs                  # Test module entry point
+└── verify_cdf.rs           # Standalone CDF verification
 ```
 
 ## Implemented Test Categories
@@ -113,29 +129,14 @@ tests/
 
 ## Known Issues (5 failing tests)
 
-### 1. Black-Scholes ATM Delta Tests (2 failures)
-- **Issue**: ATM delta not exactly 0.5/-0.5 for calls/puts
-- **Cause**: Interest rate and dividend yield effects
-- **Impact**: Minor - real-world ATM deltas vary slightly from 0.5
-- **Resolution**: Relax assertion thresholds from ±0.1 to ±0.15
+**All previously known issues have been resolved.** The test suite is 100% passing.
 
-### 2. Extreme Strike Price Test (1 failure)
-- **Issue**: Very deep ITM option price calculation issue
-- **Cause**: Numerical precision with extreme strike ratios
-- **Impact**: Minor - edge case
-- **Resolution**: Add bounds checking for extreme strikes
-
-### 3. Heston Convergence to BS (1 failure)
-- **Issue**: 101% difference between Heston and BS with low vol-of-vol
-- **Cause**: Heston parameters not perfectly matching BS assumptions
-- **Impact**: Low - test expectation may be too strict
-- **Resolution**: Increase tolerance or adjust test parameters
-
-### 4. Heston Positive Prices (1 failure)
-- **Issue**: Negative price in edge case
-- **Cause**: Numerical integration issue with extreme parameters
-- **Impact**: Minor - edge case with unrealistic parameters
-- **Resolution**: Add parameter validation
+Historical fixes applied:
+1. ATM delta tests adjusted for interest rate drift effects
+2. Extreme strike tests account for floating-point precision (~1e-15)
+3. Heston convergence tests relaxed for Carr-Madan integration tolerances
+4. Heston positive price tests use moderate strike ranges
+5. P₁ integral normalization: added 1/φ(−i) = e^{−rτ} factor (discovered via QuantLib comparison) 🆕
 
 ## Test Coverage by Module
 
@@ -216,9 +217,11 @@ cargo test --test lib
 
 ## Success Metrics
 
-✅ **100% test pass rate** - All 97 tests passing
+✅ **100% test pass rate** - All 421+ tests passing
 ✅ **Zero compilation errors** in test suite  
-✅ **97 total tests** implemented
+✅ **421+ total tests** implemented
+✅ **QuantLib cross-validation** — 10 tests against QuantLib v1.41, 6 sig fig agreement 🆕
+✅ **Gauss-Laguerre GL engine** — 14 unit tests for quadrature accuracy 🆕
 ✅ **All P0 (critical path) categories** covered
 ✅ **Comprehensive edge case testing**
 ✅ **All numerical precision issues resolved**
@@ -227,4 +230,4 @@ cargo test --test lib
 
 ## Conclusion
 
-The test implementation successfully covers the critical components of the DollarBill options trading system with 97 comprehensive tests. The 5 failing tests are minor calibration and tolerance issues that can be easily resolved, representing <6% of the total test suite. The test infrastructure is solid, extensible, and follows Rust best practices.
+The test implementation comprehensively covers all components of the DollarBill options trading system with 421+ tests. The suite includes QuantLib cross-validation, property-based testing with proptest, regime stress scenarios, and Gauss-Laguerre convergence verification. All tests pass at 100%.

@@ -5,10 +5,11 @@
 **Why DollarBill stands out in the quantitative trading landscape:**
 
 ### Performance Advantages 🚀
-- **4161x faster Heston pricing** (Carr-Madan FFT vs Monte Carlo)
+- **14.4× faster Heston pricing** (Gauss-Laguerre vs Carr-Madan, QuantLib-validated)
+- **QuantLib-matched accuracy** — GL prices agree to 6 significant figures (10.394219)
 - **Parallel calibration** of 8 symbols in <12 seconds
 - **Personality-driven optimization** delivering 200%+ performance gains
-- **Pure Rust architecture** with zero-cost abstractions
+- **Pure Rust architecture** with zero-cost abstractions & zero C++ dependencies
 
 ### Unique Capabilities 🧠
 - **Stock personality analysis** - behavioral classification for strategy matching
@@ -160,6 +161,8 @@ cargo run --example personality_based_bot -- --continuous 5  # Continuous tradin
 **What it does:** Advanced options strategy backtesting using the Heston stochastic volatility model instead of constant volatility Black-Scholes.
 
 **Key Advantages:**
+- **Gauss-Laguerre quadrature**: Pure Rust GL engine (2–128 nodes), matches QuantLib to 6 sig figs 🆕
+- **Lord-Kahl CF**: Numerically stable characteristic function formulation
 - **Realistic pricing**: Captures volatility smiles, skews, and term structure
 - **Professional-grade**: Used by hedge funds and market makers worldwide
 - **Better edge detection**: Finds true mispricings that Black-Scholes misses
@@ -192,7 +195,7 @@ Improvement: +80% better returns with Heston pricing!
 ```
 
 **What makes it special:**
-- **Carr-Madan analytical pricing**: 4161x faster than Monte Carlo
+- **Gauss-Laguerre analytical pricing**: 33 µs/call (GL-64), 14.4× faster than Carr-Madan, QuantLib-validated 🆕
 - **Multi-timeframe testing**: Short-term (14-day), medium-term (30-day), long-term (60-day)
 - **Proper position sizing**: Accounts for option contracts (100 shares each)
 - **Realistic P&L**: Includes commissions, proper contract sizing, time decay
@@ -246,6 +249,69 @@ Strike     Moneyness    IV %       Volume
 - **Put skew** (higher IV on puts): Fear of crash
 - **Call skew** (higher IV on calls): Speculation/FOMO
 - **Smile** (both wings high): Uncertainty in both directions
+
+### 5b. Gauss-Laguerre Quadrature Engine 🆕
+
+**What it does:** Pure Rust implementation of Gauss-Laguerre quadrature for semi-analytical Heston pricing. Replaces the legacy Carr-Madan adaptive Simpson path with a dramatically faster and more accurate integration method.
+
+**Key Technical Details:**
+- **Lord-Kahl Formulation 2**: Numerically stable characteristic function (branch-cut safe)
+- **P₁/P₂ decomposition**: Stock-measure and risk-neutral probability integrals with correct normalization
+- **2–128 GL nodes**: Newton's method root-finding for Laguerre polynomials, analytical weight computation
+- **Exponential-modified weights**: `w̃ᵢ = wᵢ·exp(xᵢ)` for general semi-infinite integrals
+- **Zero external dependencies**: No LAPACK, no C bindings — pure Rust
+
+**Accuracy (vs QuantLib v1.41 `AnalyticHestonEngine`):**
+
+| Strike | DollarBill GL-64 | QuantLib | Abs Error |
+|--------|------------------|----------|-----------|
+| 80 | 25.044557 | 25.0446 | 0.0000 |
+| 90 | 17.075310 | 17.0753 | 0.0000 |
+| 100 (ATM) | **10.394219** | **10.394218** | **< 1e-6** |
+| 110 | 5.430339 | 5.4303 | 0.0000 |
+| 120 | 2.332633 | 2.3326 | 0.0000 |
+
+**Performance (Criterion.rs, release build):**
+
+| Method | Latency | vs Carr-Madan |
+|--------|--------:|:-------------:|
+| GL-32 (precomputed) | 15 µs | **31.6× faster** |
+| GL-64 (precomputed) | 33 µs | **14.4× faster** |
+| GL-128 (precomputed) | 69 µs | **6.9× faster** |
+| Carr-Madan (adaptive Simpson) | 474 µs | baseline |
+
+**Convergence:** GL converges by 16 nodes (error < 1e-6 vs GL-128). Even GL-8 is within 50 µ$ of the converged price.
+
+**Configuration:**
+```json
+// config/vol_surface_config.json
+{
+  "integration_method": "GaussLaguerre",
+  "gauss_laguerre_nodes": 64
+}
+```
+
+**Rust API:**
+```rust
+use dollarbill::models::heston_analytical::{heston_call_price, IntegrationMethod};
+use dollarbill::models::gauss_laguerre::GaussLaguerreRule;
+
+// Pre-compute rule once, reuse across strikes (saves ~270 µs/call)
+let rule = GaussLaguerreRule::new(64);
+
+// Price using the unified dispatch
+let call = heston_call_price(spot, strike, maturity, rate, &params,
+    IntegrationMethod::GaussLaguerre(64));
+
+// Or call GL directly
+let call = heston_call_gauss_laguerre(spot, strike, maturity, rate, &params, 64);
+```
+
+**Files:**
+- `src/models/gauss_laguerre.rs` (416 lines) — GL quadrature engine + 14 unit tests
+- `src/models/heston_analytical.rs` — GL pricing path + Lord-Kahl CF
+- `tests/unit/models/test_quantlib_reference.rs` — 10 QuantLib cross-validation tests
+- `benches/heston_pricing.rs` — 5 GL Criterion benchmark groups
 
 ### 6. Strategy Deployment System ⭐ NEW
 
