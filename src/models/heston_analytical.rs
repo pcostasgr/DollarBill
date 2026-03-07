@@ -417,6 +417,28 @@ pub fn classify_moneyness(strike: f64, spot: f64, threshold: f64) -> Moneyness {
 // Gauss-Laguerre pricing  (correct Heston char function + GL scaling)
 // ═══════════════════════════════════════════════════════════════════════
 
+/// Trig-free complex square root.
+///
+/// The standard `num_complex` sqrt goes through `to_polar` → `from_polar`
+/// which requires `atan2` + `sin` + `cos`.  This direct formula uses only
+/// `hypot` + two real `sqrt` calls — roughly 2× faster.
+#[inline(always)]
+fn fast_complex_sqrt(z: Complex64) -> Complex64 {
+    let a = z.re;
+    let b = z.im;
+    if a == 0.0 && b == 0.0 {
+        return Complex64::new(0.0, 0.0);
+    }
+    let modulus = a.hypot(b);                       // |z|
+    let t = ((modulus + a) * 0.5).sqrt();           // re(√z) when b ≥ 0
+    let u = ((modulus - a) * 0.5).sqrt();           // |im(√z)|
+    if b >= 0.0 {
+        Complex64::new(t, u)
+    } else {
+        Complex64::new(t, -u)
+    }
+}
+
 /// Correct Heston risk-neutral characteristic function for the log-return
 /// X = ln(S(T)/S(0)).
 ///
@@ -437,11 +459,11 @@ fn heston_cf(
 
     let beta = kappa - rho * sigma * i * z; // κ − ρσiz
     let d_sq = beta * beta + sigma * sigma * (z * z + i * z);
-    let d = d_sq.sqrt();
+    let d = fast_complex_sqrt(d_sq);
 
     let g_num = beta - d;
     let g_den = beta + d;
-    let g = if g_den.norm() < 1e-14 {
+    let g = if g_den.norm_sqr() < 1e-28 {
         Complex64::new(0.0, 0.0)
     } else {
         g_num / g_den
@@ -457,7 +479,7 @@ fn heston_cf(
     let one_minus_g_exp = 1.0 - g * exp_d_tau;
 
     // C = (κθ/σ²) · [(β−d)τ − 2·ln((1−g·e^{−dτ})/(1−g))]
-    let big_c = if one_minus_g.norm() < 1e-14 || one_minus_g_exp.norm() < 1e-14 {
+    let big_c = if one_minus_g.norm_sqr() < 1e-28 || one_minus_g_exp.norm_sqr() < 1e-28 {
         Complex64::new(0.0, 0.0)
     } else {
         let log_ratio = (one_minus_g_exp / one_minus_g).ln();
@@ -470,7 +492,7 @@ fn heston_cf(
     };
 
     // D = ((β−d)/σ²) · (1−e^{−dτ}) / (1−g·e^{−dτ})
-    let big_d = if one_minus_g_exp.norm() < 1e-14 {
+    let big_d = if one_minus_g_exp.norm_sqr() < 1e-28 {
         Complex64::new(0.0, 0.0)
     } else {
         let ratio = (beta - d) / (sigma * sigma);
@@ -489,8 +511,9 @@ fn heston_cf(
 }
 
 /// Heston (1993) integrand for P₁ using the corrected char function.
+#[inline(always)]
 fn integrand_p1_gl(
-    u: f64, spot: f64, strike: f64, tau: f64, rate: f64,
+    u: f64, log_moneyness: f64, tau: f64, rate: f64,
     params: &HestonParams,
 ) -> f64 {
     if u.abs() < 1e-8 { return 0.0; }
@@ -502,14 +525,14 @@ fn integrand_p1_gl(
         z - i, tau, rate, params.v0, params.kappa,
         params.theta, params.sigma, params.rho,
     );
-    let k = (strike / spot).ln();
-    let result = ((-i * z * k).exp() * cf / (i * z)).re;
+    let result = ((-i * z * log_moneyness).exp() * cf / (i * z)).re;
     if result.is_finite() && result.abs() < 1e8 { result } else { 0.0 }
 }
 
 /// Heston (1993) integrand for P₂ using the corrected char function.
+#[inline(always)]
 fn integrand_p2_gl(
-    u: f64, spot: f64, strike: f64, tau: f64, rate: f64,
+    u: f64, log_moneyness: f64, tau: f64, rate: f64,
     params: &HestonParams,
 ) -> f64 {
     if u.abs() < 1e-8 { return 0.0; }
@@ -520,8 +543,7 @@ fn integrand_p2_gl(
         z, tau, rate, params.v0, params.kappa,
         params.theta, params.sigma, params.rho,
     );
-    let k = (strike / spot).ln();
-    let result = ((-i * z * k).exp() * cf / (i * z)).re;
+    let result = ((-i * z * log_moneyness).exp() * cf / (i * z)).re;
     if result.is_finite() && result.abs() < 1e8 { result } else { 0.0 }
 }
 
@@ -547,6 +569,9 @@ pub fn heston_call_gauss_laguerre(
         / params.sigma.max(0.01);
     let c = (1.0 / d_eff.max(0.01)).max(1.0).min(30.0);
 
+    // Pre-compute log-moneyness once (was inside every integrand call before).
+    let log_moneyness = (strike / spot).ln();
+
     // P₁ uses the stock-price measure CF = φ(u−i)/φ(−i).
     // Since φ(−i) = e^{rτ}, the P₁ integral carries an extra e^{−rτ} factor.
     let phi_neg_i_inv = (-rate * maturity).exp(); // 1/φ(−i) = e^{−rτ}
@@ -556,14 +581,14 @@ pub fn heston_call_gauss_laguerre(
             * c
             * rule.integrate(|x| {
                 let u = c * x;
-                integrand_p1_gl(u, spot, strike, maturity, rate, params)
+                integrand_p1_gl(u, log_moneyness, maturity, rate, params)
             });
     let p2 = 0.5
         + (1.0 / PI)
             * c
             * rule.integrate(|x| {
                 let u = c * x;
-                integrand_p2_gl(u, spot, strike, maturity, rate, params)
+                integrand_p2_gl(u, log_moneyness, maturity, rate, params)
             });
 
     let p1 = p1.clamp(0.0, 1.0);
