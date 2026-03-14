@@ -16,13 +16,14 @@ No traditional programming sessions. Just prompts, iterations, and Rust. 🚀
 
 ### ✅ **Real Capabilities**
 - **Options Pricing**: Black-Scholes-Merton, Heston stochastic volatility, and SABR models
-- **SABR Model**: Hagan et al. (2002) analytic approximation — ATM/OTM branches, CEV backbone, smile generation, and calibration 🆕 NEW
+- **SABR Model**: Hagan et al. (2002) analytic approximation — ATM/OTM branches, CEV backbone, smile generation, and calibration
 - **Gauss-Laguerre Quadrature**: Pure Rust GL engine (2–128 nodes) — matches QuantLib to 6 significant figures
 - **Batch Pricing with CF Cache**: 50 strikes × 10 maturities in 1.16 ms (2.3 µs/opt amortized, 10× faster)
 - **Greeks Calculation**: Delta, Gamma, Vega, Theta, Rho for risk analysis
 - **Model Calibration**: Heston parameter fitting using custom Nelder-Mead optimizer
 - **Volatility Analysis**: IV extraction, volatility surfaces, and smile analysis
-- **Paper Trading**: Live integration with Alpaca API for risk-free testing
+- **Alpaca Trading Integration**: Paper *and* live trading via Alpaca API (`APCA_LIVE=1`) 🆕
+- **Production-Hardened Trading Bot**: Fully safety-gated personality bot with market-hours enforcement, PDT protection, circuit breakers, fill confirmation, audit logging, and crash recovery 🆕
 - **Backtesting**: Historical strategy evaluation with P&L tracking
 - **Stock Classification**: Basic personality-driven strategy selection (3 types)
 - **Short Options**: SellCall and SellPut support for premium collection strategies
@@ -31,11 +32,11 @@ No traditional programming sessions. Just prompts, iterations, and Rust. 🚀
 - **Portfolio Management**: Position sizing, risk analytics, multi-strategy allocation, performance attribution
 
 ### ❌ **What It's NOT**
-- Production trading system
 - Institutional-grade platform  
 - Machine learning enhanced (despite config files suggesting it)
 - Competitor to professional platforms
 - Enterprise solution
+- Real options API support (live options *orders* via Alpaca require a separate approval tier; the bot trades underlying equities only)
 
 ### 🎓 **Perfect For**
 - Learning options pricing mathematics
@@ -122,8 +123,14 @@ cargo run --example strategy_templates
 # Portfolio management (position sizing, risk analytics, allocation)
 cargo run --example portfolio_management
 
-# Paper trade (requires Alpaca API keys)
+# Paper trade (requires Alpaca API keys — paper endpoint)
 cargo run --example personality_based_bot
+
+# Paper trade — continuous mode (runs on schedule, graceful Ctrl+C shutdown)
+cargo run --example personality_based_bot -- --continuous
+
+# Live trade — real money (set APCA_LIVE=1 + live Alpaca keys)
+APCA_LIVE=1 ALPACA_API_KEY=<key> ALPACA_API_SECRET=<secret> cargo run --release --example personality_based_bot -- --continuous
 ```
 
 ## 📊 Example Output
@@ -160,7 +167,7 @@ ATM IV: 40.5% | Put Skew: 1.6% premium
 - **Black-Scholes-Merton**: Analytical European pricing with dividends
 - **Heston (Gauss-Laguerre)**: Lord-Kahl CF with pure Rust GL quadrature — **33 µs/call** single, **2.3 µs/opt** batch with CF cache
 - **Heston (Carr-Madan)**: Legacy adaptive Simpson integration path
-- **SABR**: Hagan et al. (2002) analytic approximation — ATM/OTM branches, β backbone, smile + calibration 🆕
+- **SABR**: Hagan et al. (2002) analytic approximation — ATM/OTM branches, β backbone, smile + calibration
 - **Greeks**: All first-order sensitivities
 - **Implied Volatility**: Newton-Raphson solver
 
@@ -172,10 +179,47 @@ ATM IV: 40.5% | Put Skew: 1.6% premium
 ### Trading Features
 - **Strategy Classification**: 3 basic stock personality types
 - **Signal Generation**: Model vs market price comparison  
-- **Risk Management**: Portfolio Greeks aggregation
-- **Paper Trading**: Alpaca API integration with position tracking
+- **Risk Management**: Portfolio Greeks aggregation, daily drawdown circuit breaker, buying-power validation
+- **Alpaca API Integration**: Paper and live trading with HTTP retries, exponential backoff, and fill confirmation
+- **Persistent State**: `bot_state.json` survives crashes — daily trade counter is restored across restarts
+- **Audit Log**: Every trade decision written to `trade_audit.csv` (append-only, atomic header check)
 
-## 📂 Project Structure
+## �️ Production Safety Features (Trading Bot)
+
+`examples/personality_based_bot.rs` is fully hardened for real-money operation:
+
+| Guard | Detail |
+|---|---|
+| **Market hours** | Checks Alpaca `/v2/clock`; skips iteration if market is closed |
+| **PDT protection** | Blocks trades if account is flagged as pattern-day-trader with equity < $25 000 |
+| **Daily drawdown circuit breaker** | Halts if daily loss exceeds `max_daily_drawdown_pct` (config-driven) |
+| **Max daily trades** | Hard cap via `max_daily_trades`; counter persists across crashes in `bot_state.json` |
+| **Buying-power validation** | Checks live buying power from Alpaca before every BUY/ADD |
+| **Zero-size guard** | Skips orders where computed quantity ≤ 0 |
+| **Single action per symbol** | `acted` flag ensures at most one order per symbol per iteration |
+| **Duplicate order dedup** | Checks for existing open orders before submitting a new one |
+| **Fill confirmation** | Polls `await_order_fill()` (up to 30 s) after every submission |
+| **Stop-loss retry** | One additional close attempt on failure before logging `STOP_LOSS_FAILED` |
+| **Stale-price guard** | Skips SL/TP evaluation if `current_price` is 0.0 |
+| **Equity sanity check** | Halts iteration immediately if account equity parses to 0.0 |
+| **HTTP retries** | 3 retries with 500 ms / 1 s / 2 s exponential backoff on every API call |
+| **Graceful shutdown** | `Ctrl+C` cancels all open orders before exit |
+| **Audit log** | Every decision (BUY, SELL, SKIP, errors) appended to `trade_audit.csv` |
+| **Crash recovery** | `bot_state.json` written atomically after every confirmed fill |
+
+### Running in Live Mode
+```bash
+# 1. Paper trading (default — uses paper-api.alpaca.markets)
+cargo run --release --example personality_based_bot -- --continuous
+
+# 2. Live trading (CAUTION: real money)
+APCA_LIVE=1 \
+  ALPACA_API_KEY=<your_live_key> \
+  ALPACA_API_SECRET=<your_live_secret> \
+  cargo run --release --example personality_based_bot -- --continuous
+```
+
+## �📂 Project Structure
 
 ```
 DollarBill/
@@ -193,11 +237,13 @@ DollarBill/
 │   ├── multi_symbol_signals.rs  # Main analysis
 │   ├── enhanced_personality_analysis.rs
 │   ├── backtest_strategy.rs
-│   ├── personality_based_bot.rs # Paper trading bot
+│   ├── personality_based_bot.rs # Production-hardened trading bot (paper + live)
 │   └── ...                      # More examples
 ├── py/                          # Python data fetchers
 ├── scripts/                     # Automation scripts  
-└── data/                        # Market data storage
+├── data/                        # Market data storage
+bot_state.json                   # Runtime: daily trade counter (crash recovery)
+trade_audit.csv                  # Runtime: append-only audit log of every decision
 ```
 
 ## 🎓 Educational Value
@@ -224,10 +270,10 @@ DollarBill/
 
 - **BSM Pricing**: 79 ns/call (full Greeks) — 12.7M ops/s
 - **Heston GL-64**: 33 µs/call — 14.4× faster than Carr-Madan, matches QuantLib to 6 sig figs
-- **Heston GL-64 Batch (CF Cache)**: **2.3 µs/opt** amortized — 10× faster for multi-strike surfaces 🆕 NEW
+- **Heston GL-64 Batch (CF Cache)**: **2.3 µs/opt** amortized — 10× faster for multi-strike surfaces
 - **Heston GL-32**: 15 µs/call — 31.6× faster than Carr-Madan, converged to full precision
 - **Heston Carr-Madan**: 474 µs/call (legacy path)
-- **Vol Surface (500 options)**: 1.16 ms total (50 strikes × 10 maturities, GL-64 + CF cache) 🆕 NEW
+- **Vol Surface (500 options)**: 1.16 ms total (50 strikes × 10 maturities, GL-64 + CF cache)
 - **Heston Calibration**: ~2-3 seconds per symbol
 - **Multi-symbol Analysis**: Parallel processing with Rayon
 - **Memory Usage**: Efficient with zero-copy parsing
@@ -235,7 +281,7 @@ DollarBill/
 
 ## ✅ Testing
 
-**Comprehensive Test Suite: 487+ tests, 100% passing**
+**Comprehensive Test Suite: 629 tests, 100% passing**
 
 ### Test Coverage
 - **Library Unit Tests (142)**: Core pricing, GL quadrature, SABR, strategies, portfolio in `src/`
@@ -292,7 +338,9 @@ See [tests/README.md](tests/README.md) for detailed test documentation.
 - [ ] Additional options strategies beyond current types
 - [ ] Better Greeks hedging recommendations  
 - [ ] WebSocket real-time data feeds
-- [ ] SQLite persistence for historical analysis
+- [x] ~~SQLite persistence~~ — lightweight `bot_state.json` crash recovery implemented
+- [x] ~~Graceful shutdown~~ — `Ctrl+C` cancels all open orders and exits cleanly
+- [ ] Real options order support via Alpaca (requires options-approved account)
 
 **Ambitious Goals:**
 - [ ] Actual machine learning integration (not just config files)
@@ -302,11 +350,11 @@ See [tests/README.md](tests/README.md) for detailed test documentation.
 
 ## ⚠️ Important Disclaimers
 
-1. **Educational Purpose**: This is a learning project, not production software
-2. **No Financial Advice**: All analysis is for educational use only
+1. **Educational Purpose**: This project was built as a learning exercise through AI pair programming
+2. **No Financial Advice**: All analysis is for educational use only — nothing here is investment advice
 3. **Options Risk**: Options trading involves substantial risk of loss
-4. **Paper Trading Only**: Live trading integration not recommended
-5. **Mathematical Accuracy**: Models are simplified for educational clarity
+4. **Live Trading Risk**: The bot can connect to Alpaca live markets via `APCA_LIVE=1`. All production safety guards are implemented, but **use real money at your own risk**. Start with paper trading
+5. **Mathematical Accuracy**: Models are simplified for educational clarity — not validated for production pricing
 
 ## 🤝 Contributing
 
