@@ -8,16 +8,17 @@ DollarBill demonstrates options mathematics, Greeks calculations, and basic trad
 
 ## 🤖 Built Entirely with AI
 
-**This project was created through conversational AI development** - every line of code emerged from natural language descriptions with **Claude Sonnet 4.5** and **Grok**. From the Heston FFT implementation to the Nelder-Mead optimizer, it showcases how AI can build sophisticated mathematical software through "vibe coding."
+**This project was created through conversational AI development** - every line of code emerged from natural language descriptions with **Claude Sonnet 4.6** and **Grok**. From the Heston FFT implementation to the Nelder-Mead optimizer, it showcases how AI can build sophisticated mathematical software through "vibe coding."
 
 No traditional programming sessions. Just prompts, iterations, and Rust. 🚀
 
 ## 🎯 What DollarBill Actually Is
 
 ### ✅ **Real Capabilities**
-- **Options Pricing**: Black-Scholes-Merton and Heston stochastic volatility models
+- **Options Pricing**: Black-Scholes-Merton, Heston stochastic volatility, and SABR models
+- **SABR Model**: Hagan et al. (2002) analytic approximation — ATM/OTM branches, CEV backbone, smile generation, and calibration 🆕 NEW
 - **Gauss-Laguerre Quadrature**: Pure Rust GL engine (2–128 nodes) — matches QuantLib to 6 significant figures
-- **Batch Pricing with CF Cache**: 50 strikes × 10 maturities in 1.16 ms (2.3 µs/opt amortized, 10× faster) 🆕 NEW
+- **Batch Pricing with CF Cache**: 50 strikes × 10 maturities in 1.16 ms (2.3 µs/opt amortized, 10× faster)
 - **Greeks Calculation**: Delta, Gamma, Vega, Theta, Rho for risk analysis
 - **Model Calibration**: Heston parameter fitting using custom Nelder-Mead optimizer
 - **Volatility Analysis**: IV extraction, volatility surfaces, and smile analysis
@@ -157,8 +158,9 @@ ATM IV: 40.5% | Put Skew: 1.6% premium
 
 ### Core Models
 - **Black-Scholes-Merton**: Analytical European pricing with dividends
-- **Heston (Gauss-Laguerre)**: Lord-Kahl CF with pure Rust GL quadrature — **33 µs/call** single, **2.3 µs/opt** batch with CF cache 🆕
+- **Heston (Gauss-Laguerre)**: Lord-Kahl CF with pure Rust GL quadrature — **33 µs/call** single, **2.3 µs/opt** batch with CF cache
 - **Heston (Carr-Madan)**: Legacy adaptive Simpson integration path
+- **SABR**: Hagan et al. (2002) analytic approximation — ATM/OTM branches, β backbone, smile + calibration 🆕
 - **Greeks**: All first-order sensitivities
 - **Implied Volatility**: Newton-Raphson solver
 
@@ -233,30 +235,32 @@ DollarBill/
 
 ## ✅ Testing
 
-**Comprehensive Test Suite: 421+ tests, 100% passing**
+**Comprehensive Test Suite: 487+ tests, 100% passing**
 
 ### Test Coverage
-- **Library Unit Tests (110)**: Core pricing, GL quadrature, strategies, portfolio in `src/`
-- **Integration Tests (307)**: Full test suite in `tests/`
-  - Black-Scholes Pricing: 30 tests (incl. Hull textbook references)
-  - Heston Analytical: 9 tests (GL + Carr-Madan + diagnostics)
-  - Heston Monte Carlo: 22 tests (QE scheme, variance non-negativity)
-  - QuantLib Reference: 10 tests (cross-validated vs QuantLib v1.41) 🆕
-  - Gauss-Laguerre Quadrature: 14 tests (nodes, weights, convergence) 🆕
+- **Library Unit Tests (142)**: Core pricing, GL quadrature, SABR, strategies, portfolio in `src/`
+- **Integration Tests (339)**: Full test suite in `tests/`
+  - Black-Scholes Pricing: 33 tests (incl. Hull textbook references, pathological edge cases)
+  - Heston Analytical: 15 tests (GL + Carr-Madan + diagnostics)
+  - Heston Stress & Pathological: 24 tests (QE scheme, variance non-negativity, extreme params)
+  - QuantLib Reference: 10 tests (cross-validated vs QuantLib v1.41)
+  - Gauss-Laguerre Quadrature: 14 tests (nodes, weights, convergence)
+  - Greeks: 16 tests (all first-order sensitivities)
   - Property-Based Tests: 13 tests (proptest invariants)
   - Numerical Stability: 8 tests (convergence & precision)
-  - American Options: 8 tests (binomial tree, early exercise)
-  - Vol Surface: 6 tests (arbitrage-free constraints)
+  - American Options: 7 tests (binomial tree, early exercise)
+  - Vol Surface: 5 tests (arbitrage-free constraints)
   - Portfolio Risk: 5 tests (delta-neutral, gamma scalping)
-  - Backtest Engine: 15 tests + Short Options: 13 tests
-  - Trading Costs & Liquidity: 30 tests (slippage, market impact)
-  - Strategies: 42 tests (factory, signals, classifier, property-based)
-  - Portfolio Management: 37 tests (sizing, allocation, attribution)
+  - Backtest Engine: 17 tests + Short Options: 13 tests
+  - Trading Costs & Liquidity: 34 tests (slippage, market impact, liquidity tiers)
+  - Backtesting Edge Cases: 7 tests
+  - Strategies: 54 tests (factory, signals, 6 strategy types, classifier, vol mean reversion, property-based personality) 🆕
+  - Portfolio Management: 14 tests (sizing, allocation, attribution)
   - Concurrency: 3 tests (thread-safe pricing)
   - Performance: 3 tests (speed validation)
   - Integration & Regime Stress: 17 tests
 - **Standalone Tests (1)**: CDF verification
-- **Doc Tests (3)**: API documentation examples
+- **Doc Tests (5)**: API documentation examples (SABR, GL, vol surface, Alpaca)
 
 ### Running Tests
 ```bash
@@ -264,13 +268,16 @@ DollarBill/
 cargo test
 
 # Run specific test categories
-cargo test --lib                    # Library unit tests (110)
-cargo test --test lib quantlib      # QuantLib reference tests
-cargo test --test lib gauss_lag     # Gauss-Laguerre tests
-cargo test test_black_scholes       # Black-Scholes tests
-cargo test test_property_based      # Property-based tests
-cargo test test_numerical_stability # Stability tests
-cargo test test_thread_safety       # Concurrency tests
+cargo test --lib                       # Library unit tests (142)
+cargo test --test lib quantlib         # QuantLib reference tests
+cargo test --test lib gauss_lag        # Gauss-Laguerre tests
+cargo test test_black_scholes          # Black-Scholes tests
+cargo test test_property_based         # Property-based tests
+cargo test test_numerical_stability    # Stability tests
+cargo test test_thread_safety          # Concurrency tests
+cargo test test_personality_props      # Personality classifier property tests
+cargo test test_core_strategies        # Core strategy tests
+cargo test test_vol_mean_reversion     # Vol mean reversion tests
 
 # See detailed output
 cargo test -- --nocapture
@@ -320,7 +327,7 @@ MIT License - See [LICENSE](LICENSE) for details
 ## 👤 Author
 
 Constantinos 'Costas' Papadopoulos - 720° Software  
-Built through AI pair programming with Claude Sonnet 4.5
+Built through AI pair programming with Claude Sonnet 4.6
 
 ---
 
@@ -581,7 +588,8 @@ DollarBill/
 │   │   ├── bs_mod.rs                   # Black-Scholes-Merton + Greeks
 │   │   ├── heston.rs                   # Heston model structures
 │   │   ├── heston_analytical.rs        # Heston semi-analytical (GL + Carr-Madan)
-│   │   ├── gauss_laguerre.rs           # Pure Rust GL quadrature engine 🆕
+│   │   ├── gauss_laguerre.rs           # Pure Rust GL quadrature engine
+│   │   ├── sabr.rs                     # SABR stochastic volatility model (Hagan et al. 2002) 🆕
 │   │   └── american.rs                 # American options (binomial tree)
 │   ├── calibration/                    # Model calibration
 │   │   ├── heston_calibrator.rs        # Heston parameter fitting
@@ -593,6 +601,18 @@ DollarBill/
 │   │   ├── real_market_data.rs         # Yahoo Finance integration
 │   │   └── symbols.rs                  # Symbol definitions
 │   ├── strategies/                     # Trading strategies
+│   │   ├── factory.rs                  # Strategy factory
+│   │   ├── matching.rs                 # Signal-to-strategy matching
+│   │   ├── momentum.rs                 # Momentum strategy
+│   │   ├── mean_reversion.rs           # Mean reversion strategy
+│   │   ├── breakout.rs                 # Breakout strategy
+│   │   ├── cash_secured_puts.rs        # Cash-secured put selling
+│   │   ├── short_strangle.rs           # Short strangle strategy
+│   │   ├── spreads.rs                  # Iron condors and credit spreads
+│   │   ├── templates.rs                # Configurable strategy templates
+│   │   ├── ensemble.rs                 # Ensemble strategy combiner
+│   │   ├── mispricing.rs               # Model vs market mispricing detection
+│   │   ├── vol_arbitrage.rs            # Volatility arbitrage strategy
 │   │   ├── vol_mean_reversion.rs       # Vol trading strategy
 │   │   └── mod.rs                      # Strategy trait
    ├── analysis/                       # Stock analysis system
@@ -619,12 +639,24 @@ DollarBill/
 │   ├── vol_surface_analysis.rs         # Volatility surface extraction
 │   ├── backtest_strategy.rs            # Black-Scholes strategy backtesting
 │   ├── backtest_heston.rs              # Heston model backtesting
+│   ├── backtest_short_options.rs       # Short options backtesting
+│   ├── backtest_short_strangles.rs     # Short strangle backtesting 🆕
 │   ├── calibrate_live_options.rs       # Heston calibration demo
+│   ├── credit_spreads.rs               # Bull put / bear call spread demo
+│   ├── iron_condor.rs                  # Iron condor neutral income demo
+│   ├── iron_condor_strategy.rs         # Iron condor strategy (extended) 🆕
+│   ├── mispricing_detection.rs         # Model vs market mispricing scanner 🆕
+│   ├── performance_benchmarks.rs       # Pricing engine benchmarks 🆕
+│   ├── portfolio_management.rs         # Portfolio management demo
+│   ├── strategy_matching.rs            # Strategy matching demo 🆕
+│   ├── strategy_showcase.rs            # Strategy showcase 🆕
+│   ├── strategy_templates.rs           # Customizable strategy templates
 │   ├── trade_signals.rs                # Basic signal generation
 │   ├── alpaca_demo.rs                  # Alpaca API demo
 │   ├── paper_trading.rs                # Paper trading with momentum
 │   ├── trading_bot.rs                  # Continuous trading bot
 │   ├── test_keys.rs                    # Alpaca API key testing
+│   ├── test_yahoo_options.rs           # Yahoo Finance options validation 🆕
 │   ├── personality_driven_pipeline.rs  # Personality-optimized trading
 │   ├── personality_based_bot.rs        # Personality-based live trading
 │   └── enhanced_personality_analysis.rs # Multi-dimensional personality analysis
@@ -674,11 +706,18 @@ DollarBill/
 - Zero-expiry handling
 
 **Heston Stochastic Volatility:**
-- **Gauss-Laguerre quadrature** (primary): Lord-Kahl Formulation 2 CF, 2–128 GL nodes 🆕
+- **Gauss-Laguerre quadrature** (primary): Lord-Kahl Formulation 2 CF, 2–128 GL nodes
 - **Carr-Madan / adaptive Simpson** (legacy): original characteristic function path
 - QuantLib-validated: matches `AnalyticHestonEngine` to 6 significant figures
 - Put-call parity to machine precision
 - Configurable via `IntegrationMethod` enum and JSON config
+
+**SABR Stochastic Volatility:** 🆕
+- Hagan, Kumar, Lesniewski & Woodward (2002) analytic approximation
+- Separate ATM and OTM/ITM formulas to avoid 0/0 singularities
+- β ∈ [0,1]: Normal (β=0), CEV (β=0.5), Log-normal (β=1) backbone
+- Smile generation (`sabr_smile`) and calibration (`calibrate_sabr`)
+- Zero-ν fallback to CEV backbone; degenerate-input guards
 
 ### Optimization
 
@@ -748,6 +787,7 @@ Greeks {
 | Parallelism | Rayon |
 | Complex Math | num-complex |
 | Quadrature | Pure Rust Gauss-Laguerre (2–128 nodes) |
+| Vol Model | SABR (Hagan et al. 2002 analytic approx) |
 | Time/Date | Chrono, Time |
 
 ## � Data Coverage
@@ -786,7 +826,7 @@ Greeks {
 ## 🎯 Use Cases
 
 ### Core Trading Applications (Implemented)
-✅ **Options Pricing** - Black-Scholes and Heston models for fair value calculation
+✅ **Options Pricing** - Black-Scholes, Heston, and SABR models for fair value calculation
 ✅ **Greeks Analysis** - Delta, Gamma, Vega, Theta, Rho risk metrics  
 ✅ **Volatility Analysis** - IV extraction and volatility surface visualization
 ✅ **Strategy Backtesting** - Historical P&L evaluation for long and short options strategies
@@ -809,7 +849,7 @@ Greeks {
 ## 🚦 Current Status
 
 **Working Features:**
-- ✅ Options pricing (Black-Scholes and Heston models)
+- ✅ Options pricing (Black-Scholes, Heston, and SABR models)
 - ✅ Greeks calculation (Delta, Gamma, Vega, Theta, Rho)
 - ✅ Heston parameter calibration
 - ✅ Multi-symbol signal generation 
@@ -824,11 +864,11 @@ Greeks {
 **Build Status:**
 - ✅ Compiles successfully (with warnings)
 - ✅ Optimized `--release` builds available  
-- ✅ **421+ comprehensive tests** (100% passing)
-  - 307 integration tests
-  - 110 library unit tests (incl. 7 ignored network tests)
+- ✅ **487+ comprehensive tests** (100% passing)
+  - 339 integration tests
+  - 142 library unit tests (incl. 7 ignored network tests)
   - 1 standalone CDF verification
-  - 3 doc tests
+  - 5 doc tests (SABR, GL, vol surface, Alpaca)
 - ✅ **QuantLib-validated**: Heston GL prices match QuantLib v1.41 to 6 significant figures
 - ✅ **Mathematical accuracy verified** across all core models
 
@@ -863,7 +903,7 @@ This is a personal/educational project demonstrating:
 - Financial mathematics implementation
 - Real-time data processing
 - Numerical optimization techniques
-- **AI-assisted development** - The power of vibe coding with Claude Sonnet 4.5 and Grok
+- **AI-assisted development** - The power of vibe coding with Claude Sonnet 4.6 and Grok
 
 Feel free to use as reference or learning material.
 
@@ -896,33 +936,39 @@ cargo test --test lib
 
 | Category | Tests | Description |
 |----------|------:|-------------|
-| **Models — Black-Scholes** | 30 | Pricing, Greeks, put-call parity, dividends, pathological edge cases, numerical stability, 8 absolute-value reference tests (Hull textbook) |
-| **Models — Heston MC** | 22 | QE scheme variance non-negativity, put-call parity, mean reversion, SplitMix64 distribution, stress tests (Feller violation, extreme params) |
-| **Models — Heston Analytical** | 9 | Carr-Madan FFT, GL P₁/P₂, put-call parity, unified dispatch, diagnostic cross-checks |
-| **Models — American** | 8 | Binomial tree pricing, convergence, Greeks, early exercise with dividends |
-| **Models — Gauss-Laguerre** | 14 | Node/weight accuracy, convergence, exp-modified weights, edge cases | 🆕
-| **Models — QuantLib Reference** | 10 | Cross-validated vs QuantLib v1.41: ATM, strike sweep, high vol-of-vol, convergence, timing | 🆕
+| **Models — Black-Scholes** | 21 | Pricing, put-call parity, dividends, numerical stability |
+| **Models — Black-Scholes Pathological** | 12 | Edge cases, hull textbook references, 8 absolute-value tests |
+| **Models — Greeks** | 16 | All first-order sensitivities: Δ, Γ, ν, Θ, ρ |
+| **Models — Heston Analytical** | 15 | GL P₁/P₂, Carr-Madan FFT, put-call parity, unified dispatch, diagnostic cross-checks |
+| **Models — Heston Stress & Pathological** | 24 | QE scheme, variance non-negativity, Feller violation, mean reversion, extreme params |
+| **Models — American** | 7 | Binomial tree pricing, convergence, early exercise with dividends |
+| **Models — Gauss-Laguerre** | 14 | Node/weight accuracy, convergence, exp-modified weights, edge cases |
+| **Models — QuantLib Reference** | 10 | Cross-validated vs QuantLib v1.41: ATM, strike sweep, high vol-of-vol, convergence, timing |
 | **Models — Property-Based** | 13 | Proptest-driven: delta bounds, gamma positivity, vega symmetry, monotonicity, parity with dividends |
-| **Models — Vol Surface** | 6 | Arbitrage-free surface: no calendar spread, no butterfly, no put-call IV inversion |
+| **Models — Numerical Stability** | 8 | Convergence, precision, degenerate inputs |
+| **Models — Vol Surface** | 5 | Arbitrage-free surface: no calendar spread, no butterfly, no put-call IV inversion |
 | **Models — Portfolio Risk** | 5 | Delta-neutral portfolios, gamma scalping, vega sensitivity, rho sign correctness |
-| **Backtesting — Engine** | 15 | Config, execution, stop-loss, take-profit, position limits, commissions, trend scenarios |
+| **Models — Edge Cases** | 10 | Pathological inputs, boundary conditions |
+| **Backtesting — Engine** | 17 | Config, execution, stop-loss, take-profit, position limits, commissions, trend scenarios |
 | **Backtesting — Short Options** | 13 | SellCall, SellPut, straddles, IV-based sizing, early exit, mixed long/short |
-| **Backtesting — Trading Costs** | 12 | Round-trip costs, bid-ask spread, commissions, no-free-lunch invariants |
-| **Backtesting — Liquidity** | 18 | Tier-based spread models, impact coefficients, permanent/temporary decomposition |
+| **Backtesting — Trading Costs** | 14 | Round-trip costs, bid-ask spread, commissions, no-free-lunch invariants |
+| **Backtesting — Liquidity** | 20 | Tier-based spread models, impact coefficients, permanent/temporary decomposition |
 | **Backtesting — Slippage** | 13 | Panic widening, partial fills, vol-scaled fill rates, Kelly blowup survival |
-| **Backtesting — Market Impact** | 8 | Full market impact model, crash vs calm, size monotonicity |
-| **Backtesting — Edge Cases** | 6 | COVID vol explosion, regime change, zero trades, naked call risk, iron condor Greeks |
-| **Strategies** | 28 | Strategy factory, signal generation, 6 strategy types, personality classification, vol mean reversion |
-| **Strategies — Property-Based** | 14 | Classifier stability under noise, boundary flip rates, confidence intervals |
-| **Portfolio** | 37 | Position sizing (5 methods), risk analytics, VaR, Greeks aggregation, allocation (4 methods), performance attribution, Sharpe/Sortino |
+| **Backtesting — Market Impact** | 9 | Full market impact model, crash vs calm, size monotonicity |
+| **Backtesting — Edge Cases** | 7 | COVID vol explosion, regime change, zero trades, naked call risk, iron condor Greeks |
+| **Strategies — Core** | 18 | Strategy factory, signal generation, 6 strategy types (momentum, mean reversion, breakout, vol arb, cash-secured puts, short strangle) 🆕 |
+| **Strategies — Stock Classifier** | 5 | Personality classification, confidence scoring 🆕 |
+| **Strategies — Vol Mean Reversion** | 16 | Vol mean reversion strategy, z-score, edge thresholds 🆕 |
+| **Strategies — Personality Props** | 15 | Proptest classifier stability under noise, boundary flip rates, confidence intervals 🆕 |
+| **Portfolio** | 14 | Position sizing, risk analytics, VaR, Greeks aggregation, allocation, performance attribution |
 | **Calibration** | 2 | Nelder-Mead optimizer (Rosenbrock, sphere functions) |
-| **Market Data** | 7 | CSV loader validation, date handling, missing file handling |
+| **Market Data** | 8 | CSV loader validation, date handling, missing file handling |
 | **Concurrency** | 3 | Thread-safe pricing, deadlock prevention, parallel calibration independence |
 | **Integration** | 17 | End-to-end pipeline, multi-model consistency, regime stress (crash, recovery, vol-crush) |
 | **Performance** | 3 | BSM, Heston, Nelder-Mead speed benchmarks |
 | **Other** | 1 | CDF verification |
-| **Doc-tests** | 3 | Alpaca client examples (compile-only, 1 ignored) |
-| | **307 + 110 + 4** | **Total (307 integration + 110 lib unit + 3 doc-tests + 1 CDF; 8 ignored)** |
+| **Doc-tests** | 5 | SABR, GL, vol surface, Alpaca client examples (1 ignored) 🆕 |
+| | **339 + 142 + 6** | **Total (339 integration + 142 lib unit + 5 doc-tests + 1 CDF; 8 ignored)** |
 
 ### Test Architecture
 
@@ -933,20 +979,21 @@ tests/
 │   ├── test_end_to_end.rs         # Full pipeline: data → calibration → pricing
 │   └── test_regime_stress.rs      # Crash/recovery/vol-crush market regimes
 ├── unit/
-│   ├── backtesting/      # Engine, costs, slippage, liquidity, market impact
+│   ├── backtesting/      # Engine, costs, slippage, liquidity, market impact, edge cases
 │   ├── calibration/      # (via src/ inline tests)
 │   ├── concurrency/      # Thread safety & parallel independence
 │   ├── market_data/      # CSV loader, data validation
-│   ├── models/           # BSM, Heston MC, Heston FFT, American, Greeks,
-│   │                     #   property-based, numerical stability, vol surface,
-│   │                     #   gauss-laguerre, quantlib-reference 🆕
+│   ├── models/           # BSM, Heston, American, Greeks, property-based,
+│   │                     #   numerical stability, vol surface, gauss-laguerre,
+│   │                     #   quantlib-reference, heston-stress, edge-cases
 │   ├── performance/      # Benchmark speed tests
-│   └── strategies/       # Personality props, classifier, vol mean reversion
+│   └── strategies/       # Core strategies, stock classifier, vol mean reversion,
+│                         #   personality property-based tests 🆕
 ├── lib.rs                # Test harness root
 └── verify_cdf.rs         # Standalone CDF accuracy verification
 ```
 
-Additionally, each `src/` module contains **110 inline unit tests** (marked `#[cfg(test)]`) covering portfolio management, strategies, matching, model internals, and Gauss-Laguerre quadrature.
+Additionally, each `src/` module contains **142 inline unit tests** (marked `#[cfg(test)]`) covering portfolio management, strategies, SABR model, model internals, and Gauss-Laguerre quadrature.
 
 ### Key Testing Patterns
 
@@ -1010,7 +1057,7 @@ MIT License - see [LICENSE](LICENSE) file for details
 
 Constantinos 'Costas' Papadopoulos - 720° Software
 
-(Built with AI assistance from Claude Sonnet 4.5 and Grok)
+(Built with AI assistance from Claude Sonnet 4.6 and Grok)
 
 ---
 
