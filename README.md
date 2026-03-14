@@ -22,9 +22,11 @@ No traditional programming sessions. Just prompts, iterations, and Rust. 🚀
 - **Greeks Calculation**: Delta, Gamma, Vega, Theta, Rho for risk analysis
 - **Model Calibration**: Heston parameter fitting using custom Nelder-Mead optimizer
 - **Volatility Analysis**: IV extraction, volatility surfaces, and smile analysis
-- **Alpaca Trading Integration**: Paper *and* live trading via Alpaca API (`APCA_LIVE=1`) 🆕
-- **Production-Hardened Trading Bot**: Fully safety-gated personality bot with market-hours enforcement, PDT protection, circuit breakers, fill confirmation, audit logging, and crash recovery 🆕
-- **Backtesting**: Historical strategy evaluation with P&L tracking
+- **Alpaca Trading Integration**: Paper *and* live trading via Alpaca API (`APCA_LIVE=1`)
+- **Production-Hardened Trading Bot**: Fully safety-gated personality bot with market-hours enforcement, PDT protection, circuit breakers, fill confirmation, audit logging, and crash recovery
+- **Live Options Pricer**: `live_pricer` wires Yahoo live feed → TTL-cached Heston calibration → per-option edge signals with Greeks in a configurable polling loop
+- **Backtesting**: Historical strategy evaluation with P&L tracking and annualised Sharpe and Sortino ratios
+- **QuantLib Validator**: `py/validate_pricing.py` cross-validates BSM, Heston GL-64/128, and American binomial pricing against QuantLib v1.41; `--speed` flag benchmarks Rust vs Python timings
 - **Stock Classification**: Basic personality-driven strategy selection (3 types)
 - **Short Options**: SellCall and SellPut support for premium collection strategies
 - **Multi-Leg Strategies**: Iron condors, credit spreads, straddles, strangles with customizable templates
@@ -131,6 +133,15 @@ cargo run --example personality_based_bot -- --continuous
 
 # Live trade — real money (set APCA_LIVE=1 + live Alpaca keys)
 APCA_LIVE=1 ALPACA_API_KEY=<key> ALPACA_API_SECRET=<secret> cargo run --release --example personality_based_bot -- --continuous
+
+# Live options pricer — Yahoo live feed → Heston calibration → edge signals (loop mode)
+cargo run --example live_pricer
+
+# Live options pricer — single pass then exit (useful for testing)
+cargo run --example live_pricer -- --once
+
+# Live options pricer — custom poll interval and edge threshold
+cargo run --example live_pricer -- --interval 30 --min-edge-pct 3.0
 ```
 
 ## 📊 Example Output
@@ -180,9 +191,11 @@ ATM IV: 40.5% | Put Skew: 1.6% premium
 - **Strategy Classification**: 3 basic stock personality types
 - **Signal Generation**: Model vs market price comparison  
 - **Risk Management**: Portfolio Greeks aggregation, daily drawdown circuit breaker, buying-power validation
+- **Backtest Analytics**: Sharpe ratio (excess return / std dev × √252) and Sortino ratio (downside deviation below risk-free rate) in every `BacktestResult`
 - **Alpaca API Integration**: Paper and live trading with HTTP retries, exponential backoff, and fill confirmation
 - **Persistent State**: `bot_state.json` survives crashes — daily trade counter is restored across restarts
 - **Audit Log**: Every trade decision written to `trade_audit.csv` (append-only, atomic header check)
+- **Live Pricer**: `live_pricer` example wires Yahoo options feed → TTL-cached Heston calibration → per-option edge signals in a configurable polling loop
 
 ## �️ Production Safety Features (Trading Bot)
 
@@ -219,6 +232,32 @@ APCA_LIVE=1 \
   cargo run --release --example personality_based_bot -- --continuous
 ```
 
+## 📡 Live Options Pricer
+
+`examples/live_pricer.rs` connects all the pieces for real-time options analysis without placing orders:
+
+| Feature | Detail |
+|---|---|
+| **Live spot price** | Yahoo Finance via `yahoo_finance_api` crate |
+| **Live options chain** | Yahoo `/v7/finance/options/{symbol}` — bid/ask/IV per expiry |
+| **Liquidity filter** | Configurable min volume and max spread % (from `signals_config.json`) |
+| **Heston calibration** | Nelder-Mead fit with configurable TTL cache (default 15 min) — avoids re-fitting every tick |
+| **Model pricing** | Carr-Madan Heston call/put per live option |
+| **Edge signals** | Reports BUY/SELL where `|model − market| > min_edge_pct%` *and* `> min_edge_$` |
+| **Greeks** | BSM Delta and Vega per signal for position sizing |
+| **Poll loop** | Configurable interval with `tokio::select!` Ctrl+C exit |
+
+```bash
+cargo run --example live_pricer                             # 60s loop, 15min recalibrate
+cargo run --example live_pricer -- --once                   # single pass
+cargo run --example live_pricer -- --interval 30            # 30s poll
+cargo run --example live_pricer -- --calibrate-ttl 300      # recalibrate every 5min
+cargo run --example live_pricer -- --min-edge-pct 3.0       # 3% edge threshold
+cargo run --example live_pricer -- --expiry 0               # nearest expiry
+```
+
+Output columns per signal: `TYPE | STRIKE | BID | ASK | MODEL | EDGE$ | EDGE% | DELTA | VEGA | ACTION [ATM]`
+
 ## �📂 Project Structure
 
 ```
@@ -234,12 +273,15 @@ DollarBill/
 │   ├── alpaca/                  # Paper trading
 │   └── utils/                   # Utilities
 ├── examples/
-│   ├── multi_symbol_signals.rs  # Main analysis
+│   ├── multi_symbol_signals.rs  # Parallel Heston calibration + edge signals (from JSON)
+│   ├── live_pricer.rs           # Live Yahoo feed → Heston cache → edge signal loop
 │   ├── enhanced_personality_analysis.rs
 │   ├── backtest_strategy.rs
 │   ├── personality_based_bot.rs # Production-hardened trading bot (paper + live)
 │   └── ...                      # More examples
-├── py/                          # Python data fetchers
+├── py/
+│   ├── validate_pricing.py      # QuantLib v1.41 cross-validation (BSM, Heston, American) + speed bench
+│   └── ...                      # Data fetchers
 ├── scripts/                     # Automation scripts  
 ├── data/                        # Market data storage
 bot_state.json                   # Runtime: daily trade counter (crash recovery)
@@ -252,8 +294,8 @@ trade_audit.csv                  # Runtime: append-only audit log of every decis
 - **Stochastic Calculus**: Heston model implementation
 - **Numerical Methods**: Gauss-Laguerre quadrature, FFT, Newton-Raphson, Nelder-Mead
 - **Financial Mathematics**: Options pricing, Greeks, volatility
-- **Risk Management**: Portfolio analytics and hedging
-- **QuantLib Cross-Validation**: Verified against QuantLib v1.41 analytical engine
+- **Risk Management**: Portfolio analytics, hedging, Sharpe and Sortino ratios
+- **QuantLib Cross-Validation**: Verified against QuantLib v1.41 analytical engine (`py/validate_pricing.py`)
 
 ### Programming Techniques Showcased
 - **Rust Best Practices**: Zero-cost abstractions, ownership
@@ -340,6 +382,7 @@ See [tests/README.md](tests/README.md) for detailed test documentation.
 - [ ] WebSocket real-time data feeds
 - [x] ~~SQLite persistence~~ — lightweight `bot_state.json` crash recovery implemented
 - [x] ~~Graceful shutdown~~ — `Ctrl+C` cancels all open orders and exits cleanly
+- [x] ~~Live options data feed~~ — `live_pricer` polls Yahoo + calibrates Heston + emits edge signals (no orders)
 - [ ] Real options order support via Alpaca (requires options-approved account)
 
 **Ambitious Goals:**
@@ -354,7 +397,8 @@ See [tests/README.md](tests/README.md) for detailed test documentation.
 2. **No Financial Advice**: All analysis is for educational use only — nothing here is investment advice
 3. **Options Risk**: Options trading involves substantial risk of loss
 4. **Live Trading Risk**: The bot can connect to Alpaca live markets via `APCA_LIVE=1`. All production safety guards are implemented, but **use real money at your own risk**. Start with paper trading
-5. **Mathematical Accuracy**: Models are simplified for educational clarity — not validated for production pricing
+5. **Mathematical Accuracy**: Core pricing models are cross-validated against QuantLib v1.41 (see `py/validate_pricing.py`). Backtest metrics (Sharpe, Sortino) use standard annualised formulas with configurable risk-free rate. The live pricer uses Yahoo Finance's unofficial options endpoint — production use requires a reliable data vendor
+6. **Survivorship Bias**: Backtests use historical data from currently-active symbols. Stocks that were delisted or went bankrupt are absent from the dataset, meaning backtest results may overstate real-world performance
 
 ## 🤝 Contributing
 
