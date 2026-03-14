@@ -12,7 +12,38 @@ use std::fs;
 use std::io::Write;
 use tokio::time::{sleep, Duration};
 use tokio::select;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+
+const STATE_FILE: &str = "bot_state.json";
+
+/// Minimal state persisted to disk so a crash/restart doesn't lose the
+/// daily trade counter. Written atomically (temp file + rename).
+#[derive(Debug, Serialize, Deserialize, Default)]
+struct BotState {
+    date: String,
+    daily_trades_taken: usize,
+}
+
+impl BotState {
+    /// Load from `STATE_FILE`, or return a zeroed default on any error.
+    fn load() -> Self {
+        fs::read_to_string(STATE_FILE)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    }
+
+    /// Write to a temp file then rename — prevents a corrupt file if the
+    /// process is killed mid-write.
+    fn save(&self) {
+        let tmp = format!("{}.tmp", STATE_FILE);
+        if let Ok(json) = serde_json::to_string(self) {
+            if fs::write(&tmp, json).is_ok() {
+                let _ = fs::rename(&tmp, STATE_FILE);
+            }
+        }
+    }
+}
 
 /// Append a single trade-decision line to the audit log CSV.
 /// Format: timestamp,symbol,action,shares,price,order_id,fill_status,reason
@@ -131,14 +162,26 @@ impl PersonalityBasedBot {
             None
         };
         
+        // Load persisted state (daily trade counter survives restarts)
+        let saved = BotState::load();
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let (daily_trades_taken, daily_trades_date) = if saved.date == today {
+            println!("📂 Restored state: {}/{} trades used today",
+                saved.daily_trades_taken,
+                config.trading.risk_management.max_daily_trades);
+            (saved.daily_trades_taken, saved.date)
+        } else {
+            (0, today)
+        };
+
         Self {
             client,
             config,
             symbols,
             matcher,
             portfolio_manager,
-            daily_trades_taken: 0,
-            daily_trades_date: String::new(),
+            daily_trades_taken,
+            daily_trades_date,
         }
     }
 
@@ -212,8 +255,9 @@ impl PersonalityBasedBot {
         // ── Daily trade counter: reset on a new calendar day ──
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
         if self.daily_trades_date != today {
-            self.daily_trades_date = today;
+            self.daily_trades_date = today.clone();
             self.daily_trades_taken = 0;
+            BotState { date: today, daily_trades_taken: 0 }.save();
         }
         let max_daily = self.config.trading.risk_management.max_daily_trades;
         if self.daily_trades_taken >= max_daily {
@@ -574,6 +618,10 @@ impl PersonalityBasedBot {
                                             audit_log(symbol, "BUY", position_size as f64,
                                                 current_price, &filled.id, &filled.status, &signal.strategy_name);
                                             self.daily_trades_taken += 1;
+                                            BotState {
+                                                date: self.daily_trades_date.clone(),
+                                                daily_trades_taken: self.daily_trades_taken,
+                                            }.save();
                                         }
                                         Err(e) => println!(" ⚠️  Fill poll error: {}", e),
                                     }
@@ -658,6 +706,10 @@ impl PersonalityBasedBot {
                                                     current_price, &filled.id, &filled.status,
                                                     &signal.strategy_name);
                                             self.daily_trades_taken += 1;
+                                            BotState {
+                                                date: self.daily_trades_date.clone(),
+                                                daily_trades_taken: self.daily_trades_taken,
+                                            }.save();
                                             }
                                             Err(e) => println!(" ⚠️  Fill poll error: {}", e),
                                         }
