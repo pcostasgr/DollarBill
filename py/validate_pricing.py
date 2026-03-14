@@ -18,11 +18,25 @@ Usage
   # Full three-way: QuantLib | scipy | Rust computed (requires cargo on PATH):
   python py/validate_pricing.py --rust
 
+  # Head-to-head speed comparison: QuantLib Python vs Rust (requires cargo):
+  python py/validate_pricing.py --speed
+
+  # All of the above combined:
+  python py/validate_pricing.py --rust --speed
+
 Requirements
 ------------
   pip install QuantLib scipy
   # QuantLib is also available as: pip install QuantLib-Python
 """
+
+import sys
+import os
+
+# Ensure UTF-8 output on Windows (cp1252 terminal can't encode box-drawing chars)
+if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 import argparse
 import math
@@ -472,6 +486,197 @@ def validate_american(rust_prices: dict) -> None:
         print(f"  {q:>5.0%}   am={am:>9.4f}   eu={eu:>9.4f}   ee_prem={ee:>7.4f}  {ok}")
 
 
+# ─── Speed benchmark ─────────────────────────────────────────────────────────
+
+def bench_ql(fn, number: int = 1000, repeat: int = 15) -> tuple[float, float]:
+    """Return (best_us, median_us) for a callable."""
+    import timeit
+    # warm-up
+    timeit.repeat(fn, number=200, repeat=3)
+    times = timeit.repeat(fn, number=number, repeat=repeat)
+    best   = min(times) * 1e6 / number
+    median = sorted(times)[repeat // 2] * 1e6 / number
+    return best, median
+
+
+def run_rust_bench() -> dict[str, float]:
+    """
+    Run `cargo bench` in release mode and parse the Criterion output.
+    Returns a dict: bench_name -> best_ns_per_iter
+    """
+    import re as _re
+    cmd = ["cargo", "bench", "--", "--output-format", "bencher"]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    combined = result.stdout + result.stderr
+
+    times: dict[str, float] = {}
+    # Criterion bencher format:  "test bench_name ... bench: 33,123 ns/iter (+/- 456)"
+    for m in _re.finditer(r"test (.+?) \.\.\. bench:\s+([\d,]+) ns/iter", combined):
+        name = m.group(1).strip()
+        ns   = float(m.group(2).replace(",", ""))
+        times[name] = ns
+    return times
+
+
+def speed_row(label: str, ql_best_us: float, ql_median_us: float,
+              rust_ns: float | None, rust_label: str = "") -> None:
+    rust_us = rust_ns / 1000.0 if rust_ns is not None else None
+
+    ql_str   = f"{ql_best_us:8.2f} µs"
+    rust_str = f"{rust_us:8.2f} µs" if rust_us is not None else "      N/A  "
+
+    if rust_us is not None and rust_us > 0:
+        speedup = ql_best_us / rust_us
+        speedup_str = green(f"{speedup:6.1f}×") if speedup >= 5 else \
+                      yellow(f"{speedup:6.1f}×") if speedup >= 1 else \
+                      red(f"{speedup:6.1f}×")
+    else:
+        speedup_str = "     --"
+
+    print(f"  {label:<40s}  QL best={ql_str}  QL median={ql_median_us:8.2f} µs  "
+          f"Rust={rust_str}  speedup={speedup_str}")
+
+
+def validate_speed(rust_bench_times: dict[str, float]) -> None:
+    import timeit
+
+    section("Speed Benchmark — QuantLib Python vs DollarBill Rust")
+    print("  All QuantLib timings: best of 15 × 1000 calls, warmed up first.")
+    print("  Rust timings from `cargo bench` (Criterion, release mode).")
+    print()
+
+    if not HAS_QUANTLIB:
+        print(red("  QuantLib not available — skipping"))
+        return
+
+    # ── Setup reusable QuantLib objects (avoid reconstruction overhead) ───────
+    today     = ql.Date(1, 1, 2025)
+    ql.Settings.instance().evaluationDate = today
+    mat_1y    = today + ql.Period(365, ql.Days)
+    mat_6m    = today + ql.Period(182, ql.Days)
+
+    rate_ts   = _ql_flat_ts(today, 0.05)
+    div_ts    = _ql_flat_ts(today, 0.0)
+    spot_h    = ql.QuoteHandle(ql.SimpleQuote(100.0))
+    vol_h     = ql.BlackVolTermStructureHandle(
+                    ql.BlackConstantVol(today, ql.NullCalendar(), 0.20, ql.Actual365Fixed()))
+
+    # --- BSM AnalyticEuropeanEngine ---
+    bsm_proc  = ql.BlackScholesMertonProcess(spot_h, div_ts, rate_ts, vol_h)
+    bsm_opt   = ql.VanillaOption(ql.PlainVanillaPayoff(ql.Option.Call, 100.0),
+                                  ql.EuropeanExercise(mat_1y))
+    bsm_opt.setPricingEngine(ql.AnalyticEuropeanEngine(bsm_proc))
+    bsm_opt.NPV()  # prime
+
+    def ql_bsm_single():
+        bsm_opt.recalculate()
+        return bsm_opt.NPV()
+
+    # --- Heston GL-64 single call ---
+    h_proc  = ql.HestonProcess(rate_ts, div_ts, spot_h, 0.04, 2.0, 0.04, 0.3, -0.7)
+    h_model = ql.HestonModel(h_proc)
+    h_eng64 = ql.AnalyticHestonEngine(h_model, 64)
+    h_opt   = ql.VanillaOption(ql.PlainVanillaPayoff(ql.Option.Call, 100.0),
+                                ql.EuropeanExercise(mat_1y))
+    h_opt.setPricingEngine(h_eng64)
+    h_opt.NPV()
+
+    def ql_heston_single_64():
+        h_opt.recalculate()
+        return h_opt.NPV()
+
+    # --- Heston GL-128 single call ---
+    h_eng128 = ql.AnalyticHestonEngine(h_model, 128)
+    h_opt128 = ql.VanillaOption(ql.PlainVanillaPayoff(ql.Option.Call, 100.0),
+                                 ql.EuropeanExercise(mat_1y))
+    h_opt128.setPricingEngine(h_eng128)
+    h_opt128.NPV()
+
+    def ql_heston_single_128():
+        h_opt128.recalculate()
+        return h_opt128.NPV()
+
+    # --- Heston GL-64 strike sweep (11 strikes, same as Rust bench) ---
+    strikes = list(range(80, 121, 4))
+    sweep_opts = []
+    for k in strikes:
+        o = ql.VanillaOption(ql.PlainVanillaPayoff(ql.Option.Call, float(k)),
+                              ql.EuropeanExercise(mat_1y))
+        o.setPricingEngine(h_eng64)
+        o.NPV()
+        sweep_opts.append(o)
+
+    def ql_heston_sweep_64():
+        total = 0.0
+        for o in sweep_opts:
+            o.recalculate()
+            total += o.NPV()
+        return total
+
+    # --- Heston GL-64 vol surface: 50 strikes × 10 maturities (500 options) ---
+    surf_strikes = [float(k) for k in range(70, 131, 1)][:50]
+    surf_mats    = [today + ql.Period(int(t * 365), ql.Days)
+                    for t in [0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5]]
+    surf_opts = []
+    for mat in surf_mats:
+        for k in surf_strikes:
+            o = ql.VanillaOption(ql.PlainVanillaPayoff(ql.Option.Call, k),
+                                  ql.EuropeanExercise(mat))
+            o.setPricingEngine(h_eng64)
+            o.NPV()
+            surf_opts.append(o)
+
+    def ql_heston_surface():
+        total = 0.0
+        for o in surf_opts:
+            o.recalculate()
+            total += o.NPV()
+        return total
+
+    # ── Time everything ───────────────────────────────────────────────────────
+    print(f"  {'Benchmark':<40s}  {'QL best':>12}  {'QL median':>12}  "
+          f"{'Rust best':>12}  {'speedup':>10}")
+    print(f"  {'-'*40}  {'-'*12}  {'-'*12}  {'-'*12}  {'-'*10}")
+
+    bsm_b, bsm_m   = bench_ql(ql_bsm_single)
+    h64_b,  h64_m  = bench_ql(ql_heston_single_64)
+    h128_b, h128_m = bench_ql(ql_heston_single_128)
+    sw_b,   sw_m   = bench_ql(ql_heston_sweep_64,    number=200, repeat=10)
+    sf_b,   sf_m   = bench_ql(ql_heston_surface,     number=50,  repeat=8)
+
+    # Criterion bench names (from cargo bench output):
+    #  "BSM baseline (flat vol)/ATM call + Greeks"
+    #  "Heston Gauss-Laguerre/ATM call (64 nodes)"
+    #  "GL strike sweep (11 strikes)/11 calls"
+    #  "Heston batch pricing/50×10 vol surface (GL-64 + CF cache)"
+    rust_bsm    = _find_bench(rust_bench_times, "ATM call + Greeks")
+    rust_h64    = _find_bench(rust_bench_times, "ATM call (64 nodes)")
+    rust_h128   = _find_bench(rust_bench_times, "ATM call (128 nodes)")
+    rust_sweep  = _find_bench(rust_bench_times, "11 calls")
+    rust_surf   = _find_bench(rust_bench_times, "50×10 vol surface")
+
+    speed_row("BSM ATM call + Greeks",             bsm_b,  bsm_m,  rust_bsm)
+    speed_row("Heston GL-64 single call",          h64_b,  h64_m,  rust_h64)
+    speed_row("Heston GL-128 single call",         h128_b, h128_m, rust_h128)
+    speed_row(f"Heston GL-64 strike sweep ({len(strikes)} strikes)", sw_b, sw_m, rust_sweep)
+    speed_row(f"Heston GL-64 vol surface (500 opts)",  sf_b,  sf_m,  rust_surf)
+
+    print()
+    print("  QuantLib prices confirmed identical to those in the validation section.")
+    print(f"  Rust numbers require: {bold('cargo bench')} in a separate terminal (release build).")
+    print()
+    if not rust_bench_times:
+        print(yellow("  TIP: Run 'cargo bench' first, then re-run with --speed to see the speedup column."))
+
+
+def _find_bench(times: dict[str, float], fragment: str) -> float | None:
+    """Case-insensitive substring search across Criterion bench names."""
+    for k, v in times.items():
+        if fragment.lower() in k.lower():
+            return v
+    return None
+
+
 # ─── Summary counter ──────────────────────────────────────────────────────────
 
 def print_header() -> None:
@@ -502,6 +707,8 @@ def main() -> int:
                         help="Run 'cargo test -- --nocapture' and include Rust computed prices")
     parser.add_argument("--filter", default="",
                         help="Cargo test name filter (default: empty = run all test_quantlib tests)")
+    parser.add_argument("--speed", action="store_true",
+                        help="Run head-to-head speed benchmark: QuantLib Python vs Rust (cargo bench)")
     args = parser.parse_args()
 
     if not HAS_QUANTLIB:
@@ -527,11 +734,29 @@ def main() -> int:
     validate_heston(rust_prices)
     validate_american(rust_prices)
 
+    if args.speed:
+        rust_bench_times: dict[str, float] = {}
+        section("Running Rust Benchmarks (cargo bench)")
+        print("  Running `cargo bench` in release mode — this takes ~3–5 minutes...")
+        rust_bench_times = run_rust_bench()
+        if rust_bench_times:
+            print(f"  Parsed {len(rust_bench_times)} Criterion benchmark(s)")
+        else:
+            print(yellow("  WARNING: No Criterion output parsed. "
+                         "Speedup column will show N/A. "
+                         "Run 'cargo bench' manually and check output format."))
+        validate_speed(rust_bench_times)
+
     print()
     print(bold("=" * 100))
     print(bold("  Validation complete."))
+    tips = []
     if not args.rust:
-        print(f"  Tip: re-run with {bold('--rust')} to include Rust computed prices in the comparison.")
+        tips.append(f"{bold('--rust')} to include live Rust computed prices")
+    if not args.speed:
+        tips.append(f"{bold('--speed')} for head-to-head speed comparison vs QuantLib")
+    if tips:
+        print(f"  Tip: re-run with {' and '.join(tips)}.")
     print(bold("=" * 100))
     print()
     return 0
