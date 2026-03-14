@@ -11,6 +11,7 @@ use std::error::Error;
 use std::fs;
 use std::io::Write;
 use tokio::time::{sleep, Duration};
+use tokio::select;
 use serde::Deserialize;
 
 /// Append a single trade-decision line to the audit log CSV.
@@ -86,7 +87,11 @@ struct PersonalityBasedBot {
     config: PersonalityBotConfig,
     symbols: Vec<String>,
     matcher: StrategyMatcher,
-    portfolio_manager: Option<PortfolioManager>,  // Optional portfolio management
+    portfolio_manager: Option<PortfolioManager>,
+    /// Trades submitted this calendar day (reset at the top of each new day).
+    daily_trades_taken: usize,
+    /// The calendar date when `daily_trades_taken` was last reset (YYYY-MM-DD).
+    daily_trades_date: String,
 }
 
 impl PersonalityBasedBot {
@@ -132,6 +137,8 @@ impl PersonalityBasedBot {
             symbols,
             matcher,
             portfolio_manager,
+            daily_trades_taken: 0,
+            daily_trades_date: String::new(),
         }
     }
 
@@ -200,6 +207,19 @@ impl PersonalityBasedBot {
         // ── Sync portfolio manager with live account ──
         if let Some(ref mut manager) = self.portfolio_manager {
             manager.sync_from_account(equity, buying_power);
+        }
+
+        // ── Daily trade counter: reset on a new calendar day ──
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        if self.daily_trades_date != today {
+            self.daily_trades_date = today;
+            self.daily_trades_taken = 0;
+        }
+        let max_daily = self.config.trading.risk_management.max_daily_trades;
+        if self.daily_trades_taken >= max_daily {
+            println!("🛑 DAILY TRADE LIMIT: {}/{} trades used today — skipping new entries",
+                self.daily_trades_taken, max_daily);
+            // Still run the SL/TP checks below — just no new entries
         }
 
         // Get current positions
@@ -314,6 +334,11 @@ impl PersonalityBasedBot {
         for symbol in &self.symbols {
             // Skip if we already have max positions and don't own this one
             if positions.len() >= self.config.trading.max_positions && !position_map.contains_key(symbol) {
+                continue;
+            }
+
+            // Skip new entries if daily trade limit is reached
+            if self.daily_trades_taken >= max_daily && !position_map.contains_key(symbol) {
                 continue;
             }
 
@@ -548,6 +573,7 @@ impl PersonalityBasedBot {
                                                 filled.status, fill_px, filled.filled_qty);
                                             audit_log(symbol, "BUY", position_size as f64,
                                                 current_price, &filled.id, &filled.status, &signal.strategy_name);
+                                            self.daily_trades_taken += 1;
                                         }
                                         Err(e) => println!(" ⚠️  Fill poll error: {}", e),
                                     }
@@ -587,11 +613,19 @@ impl PersonalityBasedBot {
                         }
                         ("BUY", true) => {
                             // Add to existing position if signal is strong enough (>20% confidence)
-                            if signal.confidence > 0.20 {
-                                print!("🟢 ADD TO POSITION → +{} shares...", self.config.trading.position_size_shares);
+                            if signal.confidence > 0.20 && self.daily_trades_taken < max_daily {
+                                // Use portfolio manager sizing for adds too; fall back to config value
+                                let add_size = if let Some(ref manager) = self.portfolio_manager {
+                                    let s = manager.calculate_position_size(current_price, hist_vol, None, None, None);
+                                    if s > 0 { s } else { self.config.trading.position_size_shares }
+                                } else {
+                                    self.config.trading.position_size_shares
+                                };
+
+                                print!("🟢 ADD TO POSITION → +{} shares...", add_size);
 
                                 // Buying power guard
-                                let order_cost = self.config.trading.position_size_shares as f64 * current_price;
+                                let order_cost = add_size as f64 * current_price;
                                 if order_cost > buying_power {
                                     println!(" ❌ Insufficient buying power: need ${:.2}, have ${:.2}",
                                         order_cost, buying_power);
@@ -600,7 +634,7 @@ impl PersonalityBasedBot {
 
                                 let order = OrderRequest {
                                     symbol: symbol.clone(),
-                                    qty: self.config.trading.position_size_shares as f64,
+                                    qty: add_size as f64,
                                     side: OrderSide::Buy,
                                     r#type: OrderType::Market,
                                     time_in_force: TimeInForce::Day,
@@ -620,9 +654,10 @@ impl PersonalityBasedBot {
                                                 println!(" {} @ ${} ({} shares filled)",
                                                     filled.status, fill_px, filled.filled_qty);
                                                 audit_log(symbol, "ADD",
-                                                    self.config.trading.position_size_shares as f64,
+                                                    add_size as f64,
                                                     current_price, &filled.id, &filled.status,
                                                     &signal.strategy_name);
+                                            self.daily_trades_taken += 1;
                                             }
                                             Err(e) => println!(" ⚠️  Fill poll error: {}", e),
                                         }
@@ -656,7 +691,11 @@ impl PersonalityBasedBot {
         println!("   Max Positions: {}", self.config.trading.max_positions);
         println!("   Min Confidence: {:.1}%", self.config.trading.min_confidence * 100.0);
         println!("   Check Interval: {} minutes", interval_minutes);
-        println!("\n   Press Ctrl+C to stop\n");
+        println!("   Max Daily Trades: {}", self.config.trading.risk_management.max_daily_trades);
+        println!("\n   Press Ctrl+C to stop gracefully\n");
+
+        let shutdown = tokio::signal::ctrl_c();
+        tokio::pin!(shutdown);
 
         loop {
             if let Err(e) = self.run_iteration().await {
@@ -664,7 +703,19 @@ impl PersonalityBasedBot {
             }
 
             println!("\n💤 Sleeping for {} minutes...", interval_minutes);
-            sleep(Duration::from_secs(interval_minutes * 60)).await;
+            select! {
+                _ = sleep(Duration::from_secs(interval_minutes * 60)) => {}
+                _ = &mut shutdown => {
+                    println!("\n🛑 Shutdown signal received — closing all open orders and exiting cleanly.");
+                    if let Some(ref client) = self.client {
+                        match client.cancel_all_orders().await {
+                            Ok(cancelled) => println!("   Cancelled {} open orders.", cancelled.len()),
+                            Err(e) => eprintln!("   ⚠️  Cancel-all failed: {}", e),
+                        }
+                    }
+                    return Ok(());
+                }
+            }
         }
     }
 
@@ -752,10 +803,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut bot = PersonalityBasedBot::new(client, config, symbols, matcher);
 
     if args.len() > 1 && args[1] == "--continuous" {
+        // Prefer interval from CLI arg; fall back to config value
         let interval = if args.len() > 2 {
-            args[2].parse().unwrap_or(5)
+            args[2].parse().unwrap_or(bot.config.execution.continuous_mode_interval_minutes)
         } else {
-            5 // Default: 5 minutes
+            bot.config.execution.continuous_mode_interval_minutes
         };
         bot.run_continuous(interval).await?;
     } else if args.len() > 1 && args[1] == "--dry-run" {
