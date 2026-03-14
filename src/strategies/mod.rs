@@ -74,35 +74,35 @@ pub enum SignalAction {
 }
 
 impl SignalAction {
-    /// Get sell put strike for iron condor
-    pub fn iron_condor_sell_put_strike(&self) -> f64 {
+    /// Returns the sell-put strike if this is an `IronCondor` signal; otherwise `None`.
+    pub fn iron_condor_sell_put_strike(&self) -> Option<f64> {
         match self {
-            SignalAction::IronCondor { sell_put_strike, .. } => *sell_put_strike,
-            _ => 0.0,
+            SignalAction::IronCondor { sell_put_strike, .. } => Some(*sell_put_strike),
+            _ => None,
         }
     }
 
-    /// Get sell call strike for iron condor
-    pub fn iron_condor_sell_call_strike(&self) -> f64 {
+    /// Returns the sell-call strike if this is an `IronCondor` signal; otherwise `None`.
+    pub fn iron_condor_sell_call_strike(&self) -> Option<f64> {
         match self {
-            SignalAction::IronCondor { sell_call_strike, .. } => *sell_call_strike,
-            _ => 0.0,
+            SignalAction::IronCondor { sell_call_strike, .. } => Some(*sell_call_strike),
+            _ => None,
         }
     }
 
-    /// Get sell strike for credit call spread
-    pub fn credit_call_spread_sell_strike(&self) -> f64 {
+    /// Returns the sell strike if this is a `CreditCallSpread` signal; otherwise `None`.
+    pub fn credit_call_spread_sell_strike(&self) -> Option<f64> {
         match self {
-            SignalAction::CreditCallSpread { sell_strike, .. } => *sell_strike,
-            _ => 0.0,
+            SignalAction::CreditCallSpread { sell_strike, .. } => Some(*sell_strike),
+            _ => None,
         }
     }
 
-    /// Get buy strike for credit call spread
-    pub fn credit_call_spread_buy_strike(&self) -> f64 {
+    /// Returns the buy strike if this is a `CreditCallSpread` signal; otherwise `None`.
+    pub fn credit_call_spread_buy_strike(&self) -> Option<f64> {
         match self {
-            SignalAction::CreditCallSpread { buy_strike, .. } => *buy_strike,
-            _ => 0.0,
+            SignalAction::CreditCallSpread { buy_strike, .. } => Some(*buy_strike),
+            _ => None,
         }
     }
 }

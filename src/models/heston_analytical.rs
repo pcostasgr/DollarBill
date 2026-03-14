@@ -1137,7 +1137,7 @@ mod tests {
         println!("{sep}");
 
         // Gatheral and P₁/P₂ should agree if both use the same CF correctly
-        let diff = (gatheral_price - p1p2_price).abs();
+        let _diff = (gatheral_price - p1p2_price).abs();
         // They may not agree perfectly if P₁ is missing the φ(−i) factor
         // For now, just report the results
         assert!(

@@ -36,8 +36,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     for (i, condor) in condors.iter().take(3).enumerate() {
                         println!("   {}. ${:.0}P/${:.0}C wings: ${:.2} premium, Max Loss: ${:.0}, Win Prob: {:.1}%",
                             i + 1,
-                            condor.signal.iron_condor_sell_put_strike(),
-                            condor.signal.iron_condor_sell_call_strike(),
+                            condor.signal.iron_condor_sell_put_strike().unwrap_or(0.0),
+                            condor.signal.iron_condor_sell_call_strike().unwrap_or(0.0),
                             condor.net_premium,
                             condor.max_loss,
                             condor.win_probability * 100.0
@@ -60,8 +60,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     for (i, spread) in spreads.iter().take(3).enumerate() {
                         println!("   {}. Sell ${:.0}C/Buy ${:.0}C: ${:.2} premium, Max Loss: ${:.0}, Win Prob: {:.1}%",
                             i + 1,
-                            spread.signal.credit_call_spread_sell_strike(),
-                            spread.signal.credit_call_spread_buy_strike(),
+                            spread.signal.credit_call_spread_sell_strike().unwrap_or(0.0),
+                            spread.signal.credit_call_spread_buy_strike().unwrap_or(0.0),
                             spread.net_premium,
                             spread.max_loss,
                             spread.win_probability * 100.0

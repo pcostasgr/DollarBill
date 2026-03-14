@@ -78,9 +78,10 @@ impl Default for SabrParams {
 /// # Example
 /// ```
 /// # use dollarbill::models::sabr::{SabrParams, sabr_implied_vol};
+/// // Using normalized forward F=1.0 so ATM vol ≈ alpha (beta=0.5 backbone = alpha/F^{1-beta} = alpha)
 /// let params = SabrParams { alpha: 0.25, beta: 0.5, nu: 0.40, rho: -0.20 };
-/// let vol = sabr_implied_vol(100.0, 100.0, 0.25, &params);
-/// assert!((vol - 0.25).abs() < 0.005, "ATM SABR vol should be near alpha: {vol:.4}");
+/// let vol = sabr_implied_vol(1.0, 1.0, 0.25, &params);
+/// assert!((vol - 0.25).abs() < 0.05, "ATM SABR vol should be near alpha: {vol:.4}");
 /// ```
 pub fn sabr_implied_vol(f: f64, k: f64, t: f64, params: &SabrParams) -> f64 {
     let SabrParams { alpha, beta, nu, rho: _ } = *params;

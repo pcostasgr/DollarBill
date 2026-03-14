@@ -312,6 +312,39 @@ impl AlpacaClient {
         let data: BarsResponse = response.json().await?;
         Ok(data.bars)
     }
+
+    /// Submit a multi-leg options order (iron condor, vertical spread, straddle, etc.).
+    ///
+    /// Each leg's `symbol` must use OCC format — see [`occ_symbol`] to build it.
+    pub async fn submit_options_order(&self, order: &OptionsOrderRequest) -> Result<Order, Box<dyn Error>> {
+        self.post("/v2/orders", order).await
+    }
+
+    /// Build an OCC option symbol from its components.
+    ///
+    /// # Arguments
+    /// * `underlying` — ticker, e.g. `"AAPL"` (padded to 6 chars)
+    /// * `expiry_yy/mm/dd` — two-digit year, month, day of expiry
+    /// * `is_call` — `true` for call, `false` for put
+    /// * `strike` — strike price in dollars, e.g. `150.0` → `"00150000"`
+    pub fn occ_symbol(
+        underlying: &str,
+        expiry_yy: u32,
+        expiry_mm: u32,
+        expiry_dd: u32,
+        is_call: bool,
+        strike: f64,
+    ) -> String {
+        format!(
+            "{:<6}{:02}{:02}{:02}{}{:08.0}",
+            underlying,
+            expiry_yy,
+            expiry_mm,
+            expiry_dd,
+            if is_call { 'C' } else { 'P' },
+            strike * 1000.0,
+        )
+    }
 }
 
 #[cfg(test)]
@@ -339,5 +372,31 @@ mod tests {
         let client = AlpacaClient::from_env().expect("Failed to create client from env");
         let quote = client.get_latest_quote("TSLA").await.expect("Failed to get quote");
         assert_eq!(quote.symbol, "TSLA");
+    }
+
+    #[test]
+    fn test_occ_symbol_call() {
+        let sym = AlpacaClient::occ_symbol("AAPL", 25, 1, 17, true, 150.0);
+        assert_eq!(sym, "AAPL  250117C00150000");
+    }
+
+    #[test]
+    fn test_occ_symbol_put() {
+        let sym = AlpacaClient::occ_symbol("TSLA", 25, 6, 20, false, 200.0);
+        assert_eq!(sym, "TSLA  250620P00200000");
+    }
+
+    #[test]
+    fn test_occ_symbol_long_ticker() {
+        // 6-char ticker should not be padded further
+        let sym = AlpacaClient::occ_symbol("GOOGL1", 25, 3, 21, true, 175.5);
+        assert_eq!(sym, "GOOGL1250321C00175500");
+    }
+
+    #[test]
+    fn test_occ_symbol_fractional_strike() {
+        // $2.50 strike → "00002500"
+        let sym = AlpacaClient::occ_symbol("SPY", 25, 12, 19, false, 2.5);
+        assert_eq!(sym, "SPY   251219P00002500");
     }
 }
