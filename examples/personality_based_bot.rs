@@ -157,6 +157,14 @@ impl PersonalityBasedBot {
         println!("💰 Account: ${:.2} cash | ${:.2} equity | ${:.2} buying power",
             account.cash, equity, buying_power);
 
+        // Sanity-check: if equity is exactly 0.0 something went wrong with the API
+        // response (NaN, empty field, etc.) — halt to avoid trading on garbage data.
+        if equity == 0.0 {
+            eprintln!("🛑 SAFETY HALT: account equity parsed to $0.00 — possible API data error. Aborting iteration.");
+            audit_log("SYSTEM", "SAFETY_HALT", 0.0, 0.0, "", "halted", "equity=0 parse anomaly");
+            return Ok(());
+        }
+
         // ── Market-hours check ──
         let clock = client.get_clock().await?;
         if !clock.is_open {
@@ -222,7 +230,17 @@ impl PersonalityBasedBot {
         for pos in &positions {
             let symbol = &pos.symbol;
             let entry_price: f64 = pos.avg_entry_price.parse().unwrap_or(0.0);
-            let current_price: f64 = pos.current_price.parse().unwrap_or(entry_price);
+
+            // Use current_price from position data; if missing or zero, skip this
+            // position's SL/TP check rather than silently using a stale price.
+            let current_price: f64 = match pos.current_price.parse::<f64>() {
+                Ok(p) if p > 0.0 => p,
+                _ => {
+                    println!("   ⚠️  {} | Skipping SL/TP — current price unavailable or zero", symbol);
+                    continue;
+                }
+            };
+
             let _unrealized_pl: f64 = pos.unrealized_pl.parse().unwrap_or(0.0);
             let pl_pct = if entry_price > 0.0 { 
                 (current_price - entry_price) / entry_price 
@@ -237,20 +255,38 @@ impl PersonalityBasedBot {
                 // STOP LOSS TRIGGERED
                 print!("   🛑 STOP LOSS: {} | Entry: ${:.2} → Current: ${:.2} | Loss: {:.1}% | ",
                     symbol, entry_price, current_price, pl_pct * 100.0);
-                
-                match client.close_position(symbol).await {
-                    Ok(_) => println!("✅ Position closed"),
-                    Err(e) => println!("❌ Failed to close: {}", e),
+
+                // Retry the close once — a single transient failure must not leave
+                // a losing position open.
+                let close_result = match client.close_position(symbol).await {
+                    Ok(ord) => Ok(ord),
+                    Err(_) => client.close_position(symbol).await,
+                };
+                match close_result {
+                    Ok(ord) => {
+                        println!("✅ Position closed ({})", ord.id);
+                        audit_log(symbol, "STOP_LOSS", 0.0, current_price, &ord.id, &ord.status, "stop-loss triggered");
+                    }
+                    Err(e) => {
+                        eprintln!("🚨 CRITICAL: Failed to close stop-loss position {}: {}", symbol, e);
+                        audit_log(symbol, "STOP_LOSS_FAILED", 0.0, current_price, "", "error", &e.to_string());
+                    }
                 }
                 continue; // Skip further analysis for this symbol
             } else if pl_pct >= take_profit_threshold {
                 // TAKE PROFIT TRIGGERED
                 print!("   💰 TAKE PROFIT: {} | Entry: ${:.2} → Current: ${:.2} | Gain: {:.1}% | ",
                     symbol, entry_price, current_price, pl_pct * 100.0);
-                
+
                 match client.close_position(symbol).await {
-                    Ok(_) => println!("✅ Position closed"),
-                    Err(e) => println!("❌ Failed to close: {}", e),
+                    Ok(ord) => {
+                        println!("✅ Position closed ({})", ord.id);
+                        audit_log(symbol, "TAKE_PROFIT", 0.0, current_price, &ord.id, &ord.status, "take-profit triggered");
+                    }
+                    Err(e) => {
+                        eprintln!("⚠️  Failed to close take-profit position {}: {}", symbol, e);
+                        audit_log(symbol, "TAKE_PROFIT_FAILED", 0.0, current_price, "", "error", &e.to_string());
+                    }
                 }
                 continue; // Skip further analysis for this symbol
             } else {
@@ -390,8 +426,12 @@ impl PersonalityBasedBot {
                 hist_vol,
             );
 
-            // Process signals - convert options signals to stock actions
+            // Process signals - convert options signals to stock actions.
+            // `acted` ensures at most one order is submitted per symbol per iteration,
+            // preventing double-buys when multiple signals fire simultaneously.
+            let mut acted = false;
             for signal in signals {
+                if acted { break; }
                 println!("   {} | 🔍 SIGNAL: {} - Confidence: {:.1}% (min: {:.1}%)", 
                     symbol, signal.strategy_name, signal.confidence * 100.0, self.config.trading.min_confidence * 100.0);
                 
@@ -426,6 +466,7 @@ impl PersonalityBasedBot {
 
                 if let Some(action) = stock_action {
                     let has_position = position_map.contains_key(symbol);
+                    acted = true;
 
                     print!("   {} ${:.2} | Strategy: {} | Conf: {:.1}% | ",
                         symbol, current_price, signal.strategy_name, signal.confidence * 100.0);
@@ -465,6 +506,15 @@ impl PersonalityBasedBot {
                                 self.config.trading.position_size_shares
                             };
                             
+                            // Zero/negative size guard: portfolio sizer can return 0
+                            // on small accounts or when limits are too tight.
+                            if position_size <= 0 {
+                                println!("⏭️  SKIP — position sizer returned {} shares (too small)", position_size);
+                                audit_log(symbol, "BUY_SKIP", 0.0, current_price, "", "skipped", "position_size <= 0");
+                                acted = false; // don't block later signals
+                                continue;
+                            }
+
                             print!("🟢 BUY → {} shares...", position_size);
 
                             // Buying power guard
