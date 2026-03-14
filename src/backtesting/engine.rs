@@ -1437,6 +1437,7 @@ impl BacktestEngine {
             &self.trades,
             self.config.initial_capital,
             &self.equity_curve,
+            self.config.risk_free_rate,
         );
         
         BacktestResult {

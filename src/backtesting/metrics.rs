@@ -52,6 +52,7 @@ pub struct PerformanceMetrics {
     pub profit_factor: f64,
     
     pub sharpe_ratio: f64,
+    pub sortino_ratio: f64,
     pub max_drawdown: f64,
     pub max_drawdown_pct: f64,
     
@@ -66,6 +67,7 @@ impl PerformanceMetrics {
         trades: &[Trade],
         initial_capital: f64,
         equity_curve: &EquityCurve,
+        risk_free_rate: f64,
     ) -> Self {
         let closed_positions: Vec<_> = positions.iter()
             .filter(|p| matches!(p.status, crate::backtesting::position::PositionStatus::Closed | crate::backtesting::position::PositionStatus::Expired))
@@ -122,8 +124,10 @@ impl PerformanceMetrics {
             0.0
         };
         
-        // Sharpe ratio (simplified - assumes daily returns)
-        let sharpe_ratio = Self::calculate_sharpe_ratio(&equity_curve.equity, initial_capital);
+        // Sharpe and Sortino ratios
+        let daily_rf = risk_free_rate / 252.0;
+        let sharpe_ratio = Self::calculate_sharpe_ratio(&equity_curve.equity, daily_rf);
+        let sortino_ratio = Self::calculate_sortino_ratio(&equity_curve.equity, daily_rf);
         
         // Max drawdown
         let (max_drawdown, max_drawdown_pct) = Self::calculate_max_drawdown(&equity_curve.equity);
@@ -152,6 +156,7 @@ impl PerformanceMetrics {
             largest_loss,
             profit_factor,
             sharpe_ratio,
+            sortino_ratio,
             max_drawdown,
             max_drawdown_pct,
             avg_days_held,
@@ -160,31 +165,52 @@ impl PerformanceMetrics {
         }
     }
     
-    fn calculate_sharpe_ratio(equity_curve: &[f64], _initial_capital: f64) -> f64 {
+    /// Annualised Sharpe ratio: (mean_daily_excess_return / daily_std_dev) × √252.
+    fn calculate_sharpe_ratio(equity_curve: &[f64], daily_rf: f64) -> f64 {
         if equity_curve.len() < 2 {
             return 0.0;
         }
-        
-        // Calculate daily returns
-        let mut returns = Vec::new();
-        for i in 1..equity_curve.len() {
-            let ret = (equity_curve[i] - equity_curve[i-1]) / equity_curve[i-1];
-            returns.push(ret);
+
+        let returns: Vec<f64> = equity_curve.windows(2)
+            .map(|w| (w[1] - w[0]) / w[0])
+            .collect();
+
+        let n = returns.len() as f64;
+        let mean_excess = returns.iter().map(|r| r - daily_rf).sum::<f64>() / n;
+        let variance = returns.iter()
+            .map(|r| (r - (mean_excess + daily_rf)).powi(2))
+            .sum::<f64>() / n;
+        let std_dev = variance.sqrt();
+
+        if std_dev > 0.0 {
+            mean_excess / std_dev * (252.0_f64).sqrt()
+        } else {
+            0.0
         }
-        
-        if returns.is_empty() {
+    }
+
+    /// Annualised Sortino ratio: (mean_daily_excess_return / daily_downside_dev) × √252.
+    /// Downside deviation uses only returns that fall below the daily risk-free rate.
+    fn calculate_sortino_ratio(equity_curve: &[f64], daily_rf: f64) -> f64 {
+        if equity_curve.len() < 2 {
             return 0.0;
         }
-        
-        let mean_return = returns.iter().sum::<f64>() / returns.len() as f64;
-        let variance = returns.iter()
-            .map(|r| (r - mean_return).powi(2))
-            .sum::<f64>() / returns.len() as f64;
-        let std_dev = variance.sqrt();
-        
-        if std_dev > 0.0 {
-            // Annualize assuming 252 trading days
-            mean_return / std_dev * (252.0_f64).sqrt()
+
+        let returns: Vec<f64> = equity_curve.windows(2)
+            .map(|w| (w[1] - w[0]) / w[0])
+            .collect();
+
+        let n = returns.len() as f64;
+        let mean_excess = returns.iter().map(|r| r - daily_rf).sum::<f64>() / n;
+
+        // Sum of squared shortfalls below the daily target (MAR = daily_rf)
+        let downside_variance = returns.iter()
+            .map(|r| { let shortfall = r - daily_rf; if shortfall < 0.0 { shortfall.powi(2) } else { 0.0 } })
+            .sum::<f64>() / n;
+        let downside_dev = downside_variance.sqrt();
+
+        if downside_dev > 0.0 {
+            mean_excess / downside_dev * (252.0_f64).sqrt()
         } else {
             0.0
         }
@@ -246,10 +272,11 @@ impl BacktestResult {
         
         println!("📊 PERFORMANCE METRICS");
         println!("{}", "-".repeat(80));
-        println!("Total P&L:        ${:>12.2}  ({:>6.2}%)", 
+        println!("Total P&L:        ${:>12.2}  ({:>6.2}%)",
                  self.metrics.total_pnl, self.metrics.total_return_pct);
         println!("Sharpe Ratio:     {:>12.2}", self.metrics.sharpe_ratio);
-        println!("Max Drawdown:     ${:>12.2}  ({:>6.2}%)", 
+        println!("Sortino Ratio:    {:>12.2}", self.metrics.sortino_ratio);
+        println!("Max Drawdown:     ${:>12.2}  ({:>6.2}%)",
                  self.metrics.max_drawdown, self.metrics.max_drawdown_pct);
         println!();
         
