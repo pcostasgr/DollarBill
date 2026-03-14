@@ -1,12 +1,27 @@
 // Alpaca API client for paper trading and market data
 
 use std::error::Error;
-use reqwest::{Client, header};
+use std::time::Duration;
+use reqwest::{Client, header, StatusCode};
 use serde::{Deserialize, de::DeserializeOwned};
 use super::types::*;
 
 const PAPER_TRADING_URL: &str = "https://paper-api.alpaca.markets";
 const MARKET_DATA_URL: &str = "https://data.alpaca.markets";
+
+/// Maximum number of retry attempts for transient HTTP errors.
+const MAX_RETRIES: u32 = 3;
+
+/// Returns true for HTTP status codes that are safe to retry.
+fn is_transient(status: StatusCode) -> bool {
+    matches!(
+        status,
+        StatusCode::TOO_MANY_REQUESTS
+            | StatusCode::BAD_GATEWAY
+            | StatusCode::SERVICE_UNAVAILABLE
+            | StatusCode::GATEWAY_TIMEOUT
+    )
+}
 
 pub struct AlpacaClient {
     client: Client,
@@ -32,7 +47,10 @@ impl AlpacaClient {
     /// # let _ = client; // silence unused warning in doctest
     /// ```
     pub fn new(api_key: String, api_secret: String) -> Self {
-        let client = Client::new();
+        let client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .expect("Failed to build HTTP client");
         Self {
             client,
             api_key,
@@ -61,57 +79,75 @@ impl AlpacaClient {
 
     async fn get<T: DeserializeOwned>(&self, endpoint: &str) -> Result<T, Box<dyn Error>> {
         let url = format!("{}{}", self.base_url, endpoint);
-        let response = self.client
-            .get(&url)
-            .headers(self.build_headers())
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response.text().await?;
-            return Err(format!("API error {}: {}", status, error_text).into());
-        }
-
-        let data = response.json().await?;
-        Ok(data)
+        self.request_with_retry(|| {
+            self.client.get(&url).headers(self.build_headers())
+        }).await
     }
 
     async fn post<T: DeserializeOwned>(&self, endpoint: &str, body: &impl serde::Serialize) -> Result<T, Box<dyn Error>> {
         let url = format!("{}{}", self.base_url, endpoint);
-        let response = self.client
-            .post(&url)
-            .headers(self.build_headers())
-            .json(body)
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response.text().await?;
-            return Err(format!("API error {}: {}", status, error_text).into());
-        }
-
-        let data = response.json().await?;
-        Ok(data)
+        // Serialize body once so we can reuse it across retries
+        let json_body = serde_json::to_value(body)?;
+        self.request_with_retry(|| {
+            self.client.post(&url).headers(self.build_headers()).json(&json_body)
+        }).await
     }
 
     async fn delete<T: DeserializeOwned>(&self, endpoint: &str) -> Result<T, Box<dyn Error>> {
         let url = format!("{}{}", self.base_url, endpoint);
-        let response = self.client
-            .delete(&url)
-            .headers(self.build_headers())
-            .send()
-            .await?;
+        self.request_with_retry(|| {
+            self.client.delete(&url).headers(self.build_headers())
+        }).await
+    }
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response.text().await?;
-            return Err(format!("API error {}: {}", status, error_text).into());
+    /// Execute an HTTP request with exponential-backoff retry for transient errors.
+    ///
+    /// Retries on 429, 502, 503, 504, and network timeouts up to `MAX_RETRIES` times.
+    async fn request_with_retry<T, F>(&self, build: F) -> Result<T, Box<dyn Error>>
+    where
+        T: DeserializeOwned,
+        F: Fn() -> reqwest::RequestBuilder,
+    {
+        let mut last_err: Option<Box<dyn Error>> = None;
+
+        for attempt in 0..=MAX_RETRIES {
+            let result = build().send().await;
+
+            match result {
+                Ok(response) => {
+                    let status = response.status();
+                    if status.is_success() {
+                        let data = response.json().await?;
+                        return Ok(data);
+                    }
+                    if is_transient(status) && attempt < MAX_RETRIES {
+                        let error_text = response.text().await.unwrap_or_default();
+                        eprintln!("⚠️  Transient API error {} (attempt {}/{}): {}",
+                            status, attempt + 1, MAX_RETRIES, error_text);
+                        let delay_ms = 500 * 2u64.pow(attempt);
+                        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                        last_err = Some(format!("API error {}: {}", status, error_text).into());
+                        continue;
+                    }
+                    let error_text = response.text().await?;
+                    return Err(format!("API error {}: {}", status, error_text).into());
+                }
+                Err(e) => {
+                    let is_timeout = e.is_timeout() || e.is_connect();
+                    if is_timeout && attempt < MAX_RETRIES {
+                        eprintln!("⚠️  Network error (attempt {}/{}): {}",
+                            attempt + 1, MAX_RETRIES, e);
+                        let delay_ms = 500 * 2u64.pow(attempt);
+                        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                        last_err = Some(e.into());
+                        continue;
+                    }
+                    return Err(e.into());
+                }
+            }
         }
 
-        let data = response.json().await?;
-        Ok(data)
+        Err(last_err.unwrap_or_else(|| "Request failed after retries".into()))
     }
 
     // ============ Account Methods ============
@@ -204,71 +240,44 @@ impl AlpacaClient {
 
     // ============ Market Data Methods ============
 
+    /// Execute a GET request against the market data URL with retry support.
+    async fn data_get<T: DeserializeOwned>(&self, url: &str) -> Result<T, Box<dyn Error>> {
+        let url = url.to_string();
+        self.request_with_retry(|| {
+            self.client.get(&url).headers(self.build_headers())
+        }).await
+    }
+
     /// Get latest quote for a symbol
     pub async fn get_latest_quote(&self, symbol: &str) -> Result<Quote, Box<dyn Error>> {
         let url = format!("{}/v2/stocks/{}/quotes/latest", self.data_url, symbol);
-        let response = self.client
-            .get(&url)
-            .headers(self.build_headers())
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response.text().await?;
-            return Err(format!("API error {}: {}", status, error_text).into());
-        }
 
         #[derive(Deserialize)]
         struct QuoteResponse {
             quote: Quote,
         }
 
-        let data: QuoteResponse = response.json().await?;
+        let data: QuoteResponse = self.data_get(&url).await?;
         Ok(data.quote)
     }
 
     /// Get latest trade for a symbol
     pub async fn get_latest_trade(&self, symbol: &str) -> Result<Trade, Box<dyn Error>> {
         let url = format!("{}/v2/stocks/{}/trades/latest", self.data_url, symbol);
-        let response = self.client
-            .get(&url)
-            .headers(self.build_headers())
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response.text().await?;
-            return Err(format!("API error {}: {}", status, error_text).into());
-        }
 
         #[derive(Deserialize)]
         struct TradeResponse {
             trade: Trade,
         }
 
-        let data: TradeResponse = response.json().await?;
+        let data: TradeResponse = self.data_get(&url).await?;
         Ok(data.trade)
     }
 
     /// Get market snapshot for a symbol (combines latest quote, trade, and bars)
     pub async fn get_snapshot(&self, symbol: &str) -> Result<Snapshot, Box<dyn Error>> {
         let url = format!("{}/v2/stocks/{}/snapshot", self.data_url, symbol);
-        let response = self.client
-            .get(&url)
-            .headers(self.build_headers())
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response.text().await?;
-            return Err(format!("API error {}: {}", status, error_text).into());
-        }
-
-        let data: Snapshot = response.json().await?;
-        Ok(data)
+        self.data_get(&url).await
     }
 
     /// Get historical bars (OHLCV data)
@@ -292,24 +301,12 @@ impl AlpacaClient {
             url.push_str(&format!("&limit={}", limit));
         }
 
-        let response = self.client
-            .get(&url)
-            .headers(self.build_headers())
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response.text().await?;
-            return Err(format!("API error {}: {}", status, error_text).into());
-        }
-
         #[derive(Deserialize)]
         struct BarsResponse {
             bars: Vec<Bar>,
         }
 
-        let data: BarsResponse = response.json().await?;
+        let data: BarsResponse = self.data_get(&url).await?;
         Ok(data.bars)
     }
 

@@ -43,6 +43,12 @@ struct RiskManagementConfig {
     stop_loss_pct: f64,
     take_profit_pct: f64,
     max_daily_trades: usize,
+    #[serde(default = "default_max_daily_drawdown_pct")]
+    max_daily_drawdown_pct: f64,
+}
+
+fn default_max_daily_drawdown_pct() -> f64 {
+    0.05 // 5% default
 }
 
 #[derive(Debug, Deserialize)]
@@ -122,8 +128,29 @@ impl PersonalityBasedBot {
 
         // Get account status
         let account = client.get_account().await?;
-        println!("💰 Account: ${:.2} cash | ${:.2} portfolio value",
-            account.cash, account.portfolio_value);
+        let equity: f64 = account.equity.parse().unwrap_or(0.0);
+        let last_equity: f64 = account.last_equity.parse().unwrap_or(equity);
+        let buying_power: f64 = account.buying_power.parse().unwrap_or(0.0);
+        println!("💰 Account: ${:.2} cash | ${:.2} equity | ${:.2} buying power",
+            account.cash, equity, buying_power);
+
+        // ── Circuit Breaker: daily drawdown kill switch ──
+        let daily_drawdown = if last_equity > 0.0 {
+            (last_equity - equity) / last_equity
+        } else {
+            0.0
+        };
+        let max_dd = self.config.trading.risk_management.max_daily_drawdown_pct;
+        if daily_drawdown >= max_dd {
+            println!("🛑 CIRCUIT BREAKER: Daily drawdown {:.2}% exceeds limit {:.2}% — halting trades",
+                daily_drawdown * 100.0, max_dd * 100.0);
+            return Ok(());
+        }
+
+        // ── Sync portfolio manager with live account ──
+        if let Some(ref mut manager) = self.portfolio_manager {
+            manager.sync_from_account(equity, buying_power);
+        }
 
         // Get current positions
         let positions = client.get_positions().await?;
@@ -195,10 +222,26 @@ impl PersonalityBasedBot {
 
         println!("\n🧠 Analyzing with Personality-Driven Strategies...\n");
 
+        // Fetch open orders to avoid duplicate submissions
+        let open_orders = client.get_orders(Some("open")).await.unwrap_or_default();
+        let open_order_symbols: std::collections::HashSet<String> = open_orders.iter()
+            .map(|o| o.symbol.clone())
+            .collect();
+        if !open_orders.is_empty() {
+            println!("📋 Open orders ({}): {:?}", open_orders.len(),
+                open_order_symbols.iter().collect::<Vec<_>>());
+        }
+
         // Analyze each symbol using personality-matched strategies
         for symbol in &self.symbols {
             // Skip if we already have max positions and don't own this one
             if positions.len() >= self.config.trading.max_positions && !position_map.contains_key(symbol) {
+                continue;
+            }
+
+            // Skip symbols that already have an open (pending) order
+            if open_order_symbols.contains(symbol) {
+                println!("   {} | ⏭️  Skipping — already has an open order", symbol);
                 continue;
             }
 
@@ -381,6 +424,15 @@ impl PersonalityBasedBot {
                             };
                             
                             print!("🟢 BUY → {} shares...", position_size);
+
+                            // Buying power guard
+                            let order_cost = position_size as f64 * current_price;
+                            if order_cost > buying_power {
+                                println!("❌ Insufficient buying power: need ${:.2}, have ${:.2}",
+                                    order_cost, buying_power);
+                                continue;
+                            }
+
                             let order = OrderRequest {
                                 symbol: symbol.clone(),
                                 qty: position_size as f64,
@@ -413,6 +465,14 @@ impl PersonalityBasedBot {
                                 let shares_equiv = (cash_required / current_price).floor() as i32;
                                 
                                 if shares_equiv > 0 {
+                                    // Buying power guard
+                                    let order_cost = shares_equiv as f64 * current_price;
+                                    if order_cost > buying_power {
+                                        println!(" ❌ Insufficient buying power: need ${:.2}, have ${:.2}",
+                                            order_cost, buying_power);
+                                        continue;
+                                    }
+
                                     let order = OrderRequest {
                                         symbol: symbol.clone(),
                                         qty: shares_equiv as f64,
@@ -453,6 +513,15 @@ impl PersonalityBasedBot {
                             // Add to existing position if signal is strong enough (>20% confidence)
                             if signal.confidence > 0.20 {
                                 print!("🟢 ADD TO POSITION → +{} shares...", self.config.trading.position_size_shares);
+
+                                // Buying power guard
+                                let order_cost = self.config.trading.position_size_shares as f64 * current_price;
+                                if order_cost > buying_power {
+                                    println!(" ❌ Insufficient buying power: need ${:.2}, have ${:.2}",
+                                        order_cost, buying_power);
+                                    continue;
+                                }
+
                                 let order = OrderRequest {
                                     symbol: symbol.clone(),
                                     qty: self.config.trading.position_size_shares as f64,

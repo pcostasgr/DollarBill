@@ -50,6 +50,7 @@ pub struct PortfolioManager {
     performance: PerformanceAttribution,
     current_positions: Vec<Position>,
     current_capital: f64,
+    buying_power: f64,
 }
 
 impl PortfolioManager {
@@ -89,6 +90,7 @@ impl PortfolioManager {
             performance,
             current_positions: Vec::new(),
             current_capital: initial_capital,
+            buying_power: initial_capital,
         }
     }
 
@@ -104,6 +106,19 @@ impl PortfolioManager {
         self.multi_leg_sizer.update_account(capital);
         self.risk_analyzer.update_portfolio_value(capital);
         self.allocator.update_capital(capital);
+    }
+
+    /// Sync portfolio state from live account data.
+    /// Call this at the start of each iteration to keep the manager in sync
+    /// with the real account equity and buying power.
+    pub fn sync_from_account(&mut self, equity: f64, buying_power: f64) {
+        self.update_capital(equity);
+        self.buying_power = buying_power;
+    }
+
+    /// Returns the current buying power (set via `sync_from_account`).
+    pub fn buying_power(&self) -> f64 {
+        self.buying_power
     }
 
     /// Check if we can take a new position
