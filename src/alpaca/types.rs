@@ -113,6 +113,15 @@ pub enum TimeInForce {
     Fok,  // Fill or kill
 }
 
+/// Alpaca market clock — is the market currently open?
+#[derive(Debug, Clone, Deserialize)]
+pub struct Clock {
+    pub timestamp: String,
+    pub is_open: bool,
+    pub next_open: String,
+    pub next_close: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Bar {
     pub t: String,  // Timestamp

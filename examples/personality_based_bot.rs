@@ -9,8 +9,31 @@ use dollarbill::portfolio::{PortfolioManager, PortfolioConfig, SizingMethod, All
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
+use std::io::Write;
 use tokio::time::{sleep, Duration};
 use serde::Deserialize;
+
+/// Append a single trade-decision line to the audit log CSV.
+/// Format: timestamp,symbol,action,shares,price,order_id,fill_status,reason
+fn audit_log(
+    symbol: &str,
+    action: &str,
+    shares: f64,
+    price: f64,
+    order_id: &str,
+    fill_status: &str,
+    reason: &str,
+) {
+    let path = "trade_audit.csv";
+    let needs_header = !std::path::Path::new(path).exists();
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        if needs_header {
+            let _ = writeln!(f, "timestamp,symbol,action,shares,price,order_id,fill_status,reason");
+        }
+        let ts = chrono::Utc::now().to_rfc3339();
+        let _ = writeln!(f, "{ts},{symbol},{action},{shares:.4},{price:.4},{order_id},{fill_status},{reason}");
+    }
+}
 
 #[derive(Debug, Deserialize)]
 struct PersonalityBotConfig {
@@ -133,6 +156,25 @@ impl PersonalityBasedBot {
         let buying_power: f64 = account.buying_power.parse().unwrap_or(0.0);
         println!("💰 Account: ${:.2} cash | ${:.2} equity | ${:.2} buying power",
             account.cash, equity, buying_power);
+
+        // ── Market-hours check ──
+        let clock = client.get_clock().await?;
+        if !clock.is_open {
+            println!("🕐 Market is closed. Next open: {}  Skipping iteration.", clock.next_open);
+            return Ok(());
+        }
+
+        // ── PDT protection ──
+        let account_pdt = account.pattern_day_trader;
+        let daytrade_count = account.daytrade_count;
+        if account_pdt {
+            println!("⚠️  Account is flagged as Pattern Day Trader (PDT). Day-trade count: {}", daytrade_count);
+        }
+        // Block all trading if PDT-flagged AND equity < $25,000
+        if account_pdt && equity < 25_000.0 {
+            println!("🛑 PDT BLOCK: PDT account with equity ${:.2} < $25,000 — halting trades to avoid lockout", equity);
+            return Ok(());
+        }
 
         // ── Circuit Breaker: daily drawdown kill switch ──
         let daily_drawdown = if last_equity > 0.0 {
@@ -446,64 +488,48 @@ impl PersonalityBasedBot {
                             };
 
                             match client.submit_order(&order).await {
-                                Ok(_) => println!(" ✅"),
-                                Err(e) => println!(" ❌ {}", e),
+                                Ok(submitted) => {
+                                    println!(" ✅ submitted ({})", submitted.id);
+                                    print!("   ⏳ Waiting for fill...");
+                                    match client.await_order_fill(&submitted.id).await {
+                                        Ok(filled) => {
+                                            let fill_px = filled.filled_avg_price.as_deref().unwrap_or("?");
+                                            println!(" {} @ ${} ({} shares filled)",
+                                                filled.status, fill_px, filled.filled_qty);
+                                            audit_log(symbol, "BUY", position_size as f64,
+                                                current_price, &filled.id, &filled.status, &signal.strategy_name);
+                                        }
+                                        Err(e) => println!(" ⚠️  Fill poll error: {}", e),
+                                    }
+                                }
+                                Err(e) => {
+                                    println!(" ❌ {}", e);
+                                    audit_log(symbol, "BUY_FAILED", position_size as f64,
+                                        current_price, "", "error", &e.to_string());
+                                }
                             }
                         }
                         ("CASH_PUT", false) => {
-                            // Execute cash-secured put strategy
-                            if let SignalAction::CashSecuredPut { strike_pct } = &signal.action {
-                                let strike_price = current_price * (1.0 - strike_pct);
-                                let estimated_premium = current_price * 0.02; // Estimate 2% premium
-                                print!("🔥 CASH-SECURED PUT → Strike: ${:.2} ({:.1}% OTM), Est. Premium: ${:.2}...", 
-                                    strike_price, strike_pct * 100.0, estimated_premium);
-                                
-                                // For cash-secured puts, we sell a put option and reserve cash
-                                // Since Alpaca may not support options directly in paper trading,
-                                // we'll simulate by buying the underlying stock as equivalent exposure
-                                let cash_required = strike_price * 100.0; // 100 shares per contract
-                                let shares_equiv = (cash_required / current_price).floor() as i32;
-                                
-                                if shares_equiv > 0 {
-                                    // Buying power guard
-                                    let order_cost = shares_equiv as f64 * current_price;
-                                    if order_cost > buying_power {
-                                        println!(" ❌ Insufficient buying power: need ${:.2}, have ${:.2}",
-                                            order_cost, buying_power);
-                                        continue;
-                                    }
-
-                                    let order = OrderRequest {
-                                        symbol: symbol.clone(),
-                                        qty: shares_equiv as f64,
-                                        side: OrderSide::Buy,
-                                        r#type: OrderType::Market,
-                                        time_in_force: TimeInForce::Day,
-                                        limit_price: None,
-                                        stop_price: None,
-                                        extended_hours: None,
-                                        client_order_id: Some(format!("CSP_{}_{}", symbol, chrono::Utc::now().timestamp())),
-                                    };
-
-                                    match client.submit_order(&order).await {
-                                        Ok(order_result) => {
-                                            println!(" ✅ Order ID: {} | {} shares @ ${:.2}", 
-                                                order_result.id, shares_equiv, current_price);
-                                            println!("   📊 Simulating Cash-Secured Put: ${:.2} est. premium ({:.1}% return)", 
-                                                estimated_premium, (estimated_premium / strike_price) * 100.0);
-                                        },
-                                        Err(e) => println!(" ❌ {}", e),
-                                    }
-                                } else {
-                                    println!(" ❌ Insufficient capital for trade");
-                                }
-                            }
+                            // Real cash-secured puts require Alpaca's options API and a
+                            // separate options-trading approval. Skipping until options
+                            // support is implemented.
+                            println!("⏭️  CASH-SECURED PUT signal skipped — options API not yet implemented");
+                            audit_log(symbol, "CSP_SKIPPED", 0.0, current_price,
+                                "", "skipped", "options API not implemented");
                         }
                         ("SELL", true) => {
                             print!("🔴 SELL → Closing position...");
                             match client.close_position(symbol).await {
-                                Ok(_) => println!(" ✅"),
-                                Err(e) => println!(" ❌ {}", e),
+                                Ok(closed) => {
+                                    println!(" ✅ ({})", closed.id);
+                                    audit_log(symbol, "SELL", 0.0, current_price,
+                                        &closed.id, &closed.status, &signal.strategy_name);
+                                }
+                                Err(e) => {
+                                    println!(" ❌ {}", e);
+                                    audit_log(symbol, "SELL_FAILED", 0.0, current_price,
+                                        "", "error", &e.to_string());
+                                }
                             }
                         }
                         ("SELL", false) => {
@@ -535,8 +561,28 @@ impl PersonalityBasedBot {
                                 };
 
                                 match client.submit_order(&order).await {
-                                    Ok(_) => println!(" ✅"),
-                                    Err(e) => println!(" ❌ {}", e),
+                                    Ok(submitted) => {
+                                        println!(" ✅ submitted ({})", submitted.id);
+                                        print!("   ⏳ Waiting for fill...");
+                                        match client.await_order_fill(&submitted.id).await {
+                                            Ok(filled) => {
+                                                let fill_px = filled.filled_avg_price.as_deref().unwrap_or("?");
+                                                println!(" {} @ ${} ({} shares filled)",
+                                                    filled.status, fill_px, filled.filled_qty);
+                                                audit_log(symbol, "ADD",
+                                                    self.config.trading.position_size_shares as f64,
+                                                    current_price, &filled.id, &filled.status,
+                                                    &signal.strategy_name);
+                                            }
+                                            Err(e) => println!(" ⚠️  Fill poll error: {}", e),
+                                        }
+                                    }
+                                    Err(e) => {
+                                        println!(" ❌ {}", e);
+                                        audit_log(symbol, "ADD_FAILED",
+                                            self.config.trading.position_size_shares as f64,
+                                            current_price, "", "error", &e.to_string());
+                                    }
                                 }
                             } else {
                                 println!("⏭️  SKIP (have position) - Buy signal not strong enough ({:.1}% < 20%)", signal.confidence * 100.0);

@@ -7,7 +7,13 @@ use serde::{Deserialize, de::DeserializeOwned};
 use super::types::*;
 
 const PAPER_TRADING_URL: &str = "https://paper-api.alpaca.markets";
+const LIVE_TRADING_URL: &str = "https://api.alpaca.markets";
 const MARKET_DATA_URL: &str = "https://data.alpaca.markets";
+
+/// Seconds to wait between order-status polls when confirming a fill.
+const FILL_POLL_INTERVAL_SECS: u64 = 2;
+/// Maximum number of polls before we give up waiting for a fill.
+const FILL_POLL_MAX_ATTEMPTS: u32 = 15;
 
 /// Maximum number of retry attempts for transient HTTP errors.
 const MAX_RETRIES: u32 = 3;
@@ -60,14 +66,40 @@ impl AlpacaClient {
         }
     }
 
-    /// Create client from environment variables
-    /// Looks for ALPACA_API_KEY and ALPACA_API_SECRET
+    /// Create client from environment variables.
+    ///
+    /// Reads `ALPACA_API_KEY` and `ALPACA_API_SECRET`.
+    /// Set `APCA_LIVE=1` to connect to the **live** brokerage endpoint
+    /// (`https://api.alpaca.markets`) instead of paper trading.
+    ///
+    /// # Safety
+    /// When `APCA_LIVE=1` orders affect **real money**. Triple-check your
+    /// keys belong to a live account before setting this variable.
     pub fn from_env() -> Result<Self, Box<dyn Error>> {
         let api_key = std::env::var("ALPACA_API_KEY")
             .map_err(|_| "ALPACA_API_KEY environment variable not set")?;
         let api_secret = std::env::var("ALPACA_API_SECRET")
             .map_err(|_| "ALPACA_API_SECRET environment variable not set")?;
-        Ok(Self::new(api_key, api_secret))
+
+        let live = std::env::var("APCA_LIVE").unwrap_or_default() == "1";
+        let base_url = if live {
+            eprintln!("⚠️  LIVE TRADING MODE — orders affect real money");
+            LIVE_TRADING_URL
+        } else {
+            PAPER_TRADING_URL
+        };
+
+        let client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .expect("Failed to build HTTP client");
+        Ok(Self {
+            client,
+            api_key,
+            api_secret,
+            base_url: base_url.to_string(),
+            data_url: MARKET_DATA_URL.to_string(),
+        })
     }
 
     fn build_headers(&self) -> header::HeaderMap {
@@ -150,11 +182,37 @@ impl AlpacaClient {
         Err(last_err.unwrap_or_else(|| "Request failed after retries".into()))
     }
 
-    // ============ Account Methods ============
+    // ============ Account / Clock Methods ============
 
     /// Get account information
     pub async fn get_account(&self) -> Result<Account, Box<dyn Error>> {
         self.get("/v2/account").await
+    }
+
+    /// Get the current market clock (is_open, next_open, next_close).
+    pub async fn get_clock(&self) -> Result<Clock, Box<dyn Error>> {
+        self.get("/v2/clock").await
+    }
+
+    /// Poll an order until it is filled, failed, or canceled, then return it.
+    ///
+    /// Polls every `FILL_POLL_INTERVAL_SECS` seconds up to `FILL_POLL_MAX_ATTEMPTS`
+    /// times. Returns the final order regardless of terminal status so the caller
+    /// can decide how to handle partial fills or rejections.
+    pub async fn await_order_fill(&self, order_id: &str) -> Result<Order, Box<dyn Error>> {
+        for _ in 0..FILL_POLL_MAX_ATTEMPTS {
+            let order = self.get_order(order_id).await?;
+            match order.status.as_str() {
+                "filled" | "canceled" | "expired" | "rejected" | "done_for_day" => {
+                    return Ok(order);
+                }
+                _ => {
+                    tokio::time::sleep(Duration::from_secs(FILL_POLL_INTERVAL_SECS)).await;
+                }
+            }
+        }
+        // Return last known state even if still pending
+        self.get_order(order_id).await
     }
 
     // ============ Position Methods ============
