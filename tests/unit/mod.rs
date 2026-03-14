@@ -13,6 +13,7 @@ mod strategies {
     mod test_vol_mean_reversion;
     mod test_stock_classifier;
     mod test_personality_props;
+    mod test_core_strategies;
 }
 
 mod backtesting {

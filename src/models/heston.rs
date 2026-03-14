@@ -451,105 +451,66 @@ impl HestonMonteCarlo {
     /// Uses antithetic variates if configured
     pub fn price_european_call(&self, strike: f64) -> f64 {
         if self.config.use_antithetic {
-            self.price_european_call_antithetic(strike)
+            self.price_european_antithetic(strike, true)
         } else {
-            self.price_european_call_regular(strike)
+            self.price_european_regular(strike, true)
         }
     }
 
-    /// Price European call - regular Monte Carlo
-    fn price_european_call_regular(&self, strike: f64) -> f64 {
+    /// Price a European option — regular Monte Carlo (no variance reduction).
+    ///
+    /// `is_call = true`  → payoff = max(S_T − K, 0)
+    /// `is_call = false` → payoff = max(K − S_T, 0)
+    fn price_european_regular(&self, strike: f64, is_call: bool) -> f64 {
         let payoff_sum: f64 = (0..self.config.n_paths)
             .into_par_iter()
             .map(|i| {
                 let mut rng = SplitMix64::new(self.config.seed + i as u64);
                 let path = self.simulate_path(&mut rng);
-                let final_price = *path.stock_prices.last().unwrap();
-                (final_price - strike).max(0.0)
+                let s_t = *path.stock_prices.last().unwrap();
+                if is_call { (s_t - strike).max(0.0) } else { (strike - s_t).max(0.0) }
             })
             .sum();
-        
-        let discount_factor = (-self.params.r * self.params.t).exp();
-        discount_factor * payoff_sum / self.config.n_paths as f64
+
+        let discount = (-self.params.r * self.params.t).exp();
+        discount * payoff_sum / self.config.n_paths as f64
     }
 
-    /// Price European call - antithetic variates
-    fn price_european_call_antithetic(&self, strike: f64) -> f64 {
+    /// Price a European option — antithetic variates variance reduction.
+    ///
+    /// Pairs each path with its antithetic mirror and averages the payoffs,
+    /// halving the variance for smooth payoff functions.
+    fn price_european_antithetic(&self, strike: f64, is_call: bool) -> f64 {
         let n_pairs = self.config.n_paths / 2;
-        
+
         let payoff_sum: f64 = (0..n_pairs)
             .into_par_iter()
             .map(|i| {
                 let mut rng = SplitMix64::new(self.config.seed + i as u64);
-                
-                // Simulate pair
                 let (path1, randoms) = self.simulate_path_with_randoms(&mut rng);
                 let path2 = self.simulate_path_antithetic(&randoms);
-                
-                // Calculate payoffs
-                let final_price1 = *path1.stock_prices.last().unwrap();
-                let final_price2 = *path2.stock_prices.last().unwrap();
-                let payoff1 = (final_price1 - strike).max(0.0);
-                let payoff2 = (final_price2 - strike).max(0.0);
-                
-                // Average the pair
-                (payoff1 + payoff2) / 2.0
+
+                let s1 = *path1.stock_prices.last().unwrap();
+                let s2 = *path2.stock_prices.last().unwrap();
+                let payoff = |s: f64| {
+                    if is_call { (s - strike).max(0.0) } else { (strike - s).max(0.0) }
+                };
+                (payoff(s1) + payoff(s2)) / 2.0
             })
             .sum();
-        
-        let discount_factor = (-self.params.r * self.params.t).exp();
-        discount_factor * payoff_sum / n_pairs as f64
+
+        let discount = (-self.params.r * self.params.t).exp();
+        discount * payoff_sum / n_pairs as f64
     }
 
     /// Price a European put option (parallelized)
     /// Uses antithetic variates if configured
     pub fn price_european_put(&self, strike: f64) -> f64 {
         if self.config.use_antithetic {
-            self.price_european_put_antithetic(strike)
+            self.price_european_antithetic(strike, false)
         } else {
-            self.price_european_put_regular(strike)
+            self.price_european_regular(strike, false)
         }
-    }
-
-    /// Price European put - regular Monte Carlo
-    fn price_european_put_regular(&self, strike: f64) -> f64 {
-        let payoff_sum: f64 = (0..self.config.n_paths)
-            .into_par_iter()
-            .map(|i| {
-                let mut rng = SplitMix64::new(self.config.seed + i as u64);
-                let path = self.simulate_path(&mut rng);
-                let final_price = *path.stock_prices.last().unwrap();
-                (strike - final_price).max(0.0)
-            })
-            .sum();
-        
-        let discount_factor = (-self.params.r * self.params.t).exp();
-        discount_factor * payoff_sum / self.config.n_paths as f64
-    }
-
-    /// Price European put - antithetic variates
-    fn price_european_put_antithetic(&self, strike: f64) -> f64 {
-        let n_pairs = self.config.n_paths / 2;
-        
-        let payoff_sum: f64 = (0..n_pairs)
-            .into_par_iter()
-            .map(|i| {
-                let mut rng = SplitMix64::new(self.config.seed + i as u64);
-                
-                let (path1, randoms) = self.simulate_path_with_randoms(&mut rng);
-                let path2 = self.simulate_path_antithetic(&randoms);
-                
-                let final_price1 = *path1.stock_prices.last().unwrap();
-                let final_price2 = *path2.stock_prices.last().unwrap();
-                let payoff1 = (strike - final_price1).max(0.0);
-                let payoff2 = (strike - final_price2).max(0.0);
-                
-                (payoff1 + payoff2) / 2.0
-            })
-            .sum();
-        
-        let discount_factor = (-self.params.r * self.params.t).exp();
-        discount_factor * payoff_sum / n_pairs as f64
     }
 
     /// Calculate the average final stock price across all paths (parallelized)
