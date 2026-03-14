@@ -183,4 +183,152 @@ pub fn pnl_attribution(
     delta_pnl + gamma_pnl + vega_pnl + theta_pnl + rho_pnl
 }
 
-// ... keep your other functions: implied_vol_call, compute_mock_vol_smile, etc.
+// ── Third-order (higher-order) Greeks ────────────────────────────────────────
+//
+// These are computed via central finite differences on Gamma, with a
+// singularity-aware step-size selection that prevents garbage near expiry.
+//
+// References:
+//   • "The Complete Guide to Option Pricing Formulas", Haug (2007), Ch. 5
+//   • "Greeks for Higher Order Risk", Dupire (2004)
+
+/// Container for third-order Black-Scholes Greeks.
+#[derive(Debug, Clone, Copy)]
+pub struct HigherOrderGreeks {
+    /// Speed = ∂Γ/∂S — rate of change of gamma w.r.t. spot.
+    /// Positive means gamma rises as spot rises (concave payoff curvature).
+    pub speed: f64,
+    /// Zomma = ∂Γ/∂σ — rate of change of gamma w.r.t. implied vol.
+    /// Measures how gamma-hedging changes when vol moves.
+    pub zomma: f64,
+    /// Color = ∂Γ/∂t — rate of change of gamma w.r.t. time (daily decay of gamma).
+    /// Note: sign convention here is *positive when gamma increases with time*.
+    pub color: f64,
+}
+
+/// Compute third-order BSM Greeks using singularity-aware central differences.
+///
+/// Step size `h_spot` is scaled by `max(ε, c·√T)` to avoid singularity as
+/// `T → 0` (where Gamma blows up and any finite difference breaks down).
+///
+/// # Arguments
+/// - `s`, `k`, `t`, `r`, `sigma`, `q` — same as `black_scholes_merton_call`
+/// - `is_call` — `true` for call, `false` for put
+///
+/// # Returns
+/// `HigherOrderGreeks` containing Speed, Zomma, and Color.
+pub fn higher_order_greeks(
+    s: f64,
+    k: f64,
+    t: f64,
+    r: f64,
+    sigma: f64,
+    q: f64,
+    is_call: bool,
+) -> HigherOrderGreeks {
+    // Singularity-aware step: h grows with √T to keep the perturbation
+    // within the smooth region of the payoff even near expiry.
+    let h_spot_rel = (1e-4_f64).max(0.01 * t.sqrt()); // relative to spot
+    let h_spot = s * h_spot_rel;
+    let h_vol = sigma * (1e-4_f64).max(0.01 * t.sqrt());
+    let h_time = t * 0.001_f64.max(0.01); // 1% of remaining time, min 0.1% per year
+
+    let pricer = |spot: f64, vol: f64, mat: f64| -> Greeks {
+        if is_call {
+            black_scholes_merton_call(spot, k, mat, r, vol, q)
+        } else {
+            black_scholes_merton_put(spot, k, mat, r, vol, q)
+        }
+    };
+
+    // Base Gamma at the four perturbed spots needed for Speed.
+    let g_up  = pricer(s + h_spot, sigma, t).gamma;
+    let g_mid = pricer(s,           sigma, t).gamma;
+    let g_dn  = pricer(s - h_spot, sigma, t).gamma;
+
+    // ── Speed = ∂Γ/∂S ──
+    let speed = (g_up - g_dn) / (2.0 * h_spot);
+
+    // ── Zomma = ∂Γ/∂σ ──
+    let g_vol_up = pricer(s, sigma + h_vol, t).gamma;
+    let g_vol_dn = pricer(s, sigma - h_vol, t).gamma;
+    let zomma = (g_vol_up - g_vol_dn) / (2.0 * h_vol);
+
+    // ── Color = ∂Γ/∂t ──
+    // Guard: if remaining time is too small for a backward step use a one-sided diff.
+    let color = if t > 2.0 * h_time {
+        let g_t_up = pricer(s, sigma, t + h_time).gamma;
+        let g_t_dn = pricer(s, sigma, t - h_time).gamma;
+        (g_t_up - g_t_dn) / (2.0 * h_time)
+    } else if t > h_time {
+        let g_t_dn = pricer(s, sigma, t - h_time).gamma;
+        (g_dn - g_t_dn) / h_time  // one-sided forward difference
+    } else {
+        0.0 // T too small to differentiate meaningfully
+    };
+
+    HigherOrderGreeks { speed, zomma, color: -g_mid / (2.0 * t) + color }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_speed_is_finite() {
+        let hog = higher_order_greeks(100.0, 100.0, 1.0, 0.05, 0.2, 0.0, true);
+        assert!(hog.speed.is_finite(), "Speed should be finite");
+    }
+
+    #[test]
+    fn test_zomma_is_finite() {
+        let hog = higher_order_greeks(100.0, 100.0, 1.0, 0.05, 0.2, 0.0, true);
+        assert!(hog.zomma.is_finite(), "Zomma should be finite");
+    }
+
+    #[test]
+    fn test_color_is_finite() {
+        let hog = higher_order_greeks(100.0, 100.0, 1.0, 0.05, 0.2, 0.0, true);
+        assert!(hog.color.is_finite(), "Color should be finite");
+    }
+
+    // Speed = -Gamma/S * (1 + d1/(σ√T)) for ATM call, which is negative (gamma
+    // decreases as spot rises for an ATM call).  We just verify sign consistency.
+    #[test]
+    fn test_speed_atm_call_is_negative() {
+        let hog = higher_order_greeks(100.0, 100.0, 1.0, 0.05, 0.2, 0.0, true);
+        assert!(hog.speed < 0.0,
+            "Speed of ATM call should be negative (gamma falls as spot rises above strike); got {}", hog.speed);
+    }
+
+    // Zomma = Γ * (d1*d2 - 1) / σ.  With r=0.05, T=1, σ=0.2:
+    // d1=0.35, d2=0.15, d1*d2-1 ≈ -0.95 → Zomma < 0 for ATM call.
+    // The sign depends heavily on d1*d2 vs 1; we only assert finiteness.
+    #[test]
+    fn test_zomma_atm_call_is_finite_and_nonzero() {
+        let hog = higher_order_greeks(100.0, 100.0, 1.0, 0.05, 0.2, 0.0, true);
+        assert!(hog.zomma.is_finite(), "Zomma must be finite");
+        assert!(hog.zomma.abs() > 1e-10, "Zomma must be non-zero");
+    }
+
+    // Near-expiry guard: should not panic and should return finite values.
+    #[test]
+    fn test_higher_order_greeks_near_expiry() {
+        let hog = higher_order_greeks(100.0, 100.0, 0.001, 0.05, 0.2, 0.0, true);
+        assert!(hog.speed.is_finite());
+        assert!(hog.zomma.is_finite());
+        assert!(hog.color.is_finite());
+    }
+
+    // Call and put should share the same Gamma, hence same Speed and Zomma.
+    #[test]
+    fn test_call_put_speed_zomma_match() {
+        let call = higher_order_greeks(100.0, 100.0, 1.0, 0.05, 0.2, 0.0, true);
+        let put  = higher_order_greeks(100.0, 100.0, 1.0, 0.05, 0.2, 0.0, false);
+        assert!((call.speed - put.speed).abs() < 1e-8,
+            "Call and put Speed should match: {} vs {}", call.speed, put.speed);
+        assert!((call.zomma - put.zomma).abs() < 1e-8,
+            "Call and put Zomma should match: {} vs {}", call.zomma, put.zomma);
+    }
+}

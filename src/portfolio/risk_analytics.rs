@@ -16,6 +16,8 @@ pub struct PortfolioRisk {
     pub beta_weighted_delta: f64,
     pub var_95: f64,            // 95% Value at Risk
     pub var_99: f64,            // 99% Value at Risk
+    pub cvar_95: f64,           // 95% Conditional VaR (Expected Shortfall)
+    pub cvar_99: f64,           // 99% Conditional VaR (Expected Shortfall)
     pub concentration_risk: f64, // Maximum single position as % of portfolio
 }
 
@@ -31,6 +33,8 @@ impl Default for PortfolioRisk {
             beta_weighted_delta: 0.0,
             var_95: 0.0,
             var_99: 0.0,
+            cvar_95: 0.0,
+            cvar_99: 0.0,
             concentration_risk: 0.0,
         }
     }
@@ -110,8 +114,36 @@ impl RiskAnalyzer {
         // VaR calculation (simplified parametric VaR)
         risk.var_95 = self.calculate_var(positions, 1.645); // 95% confidence
         risk.var_99 = self.calculate_var(positions, 2.326); // 99% confidence
+
+        // Conditional VaR (Expected Shortfall)
+        // For normal distribution: CVaR_α = σ · φ(z_α) / (1 − α)
+        // where φ is the standard normal PDF at quantile z_α.
+        // This is always ≥ VaR_α, consistent with coherent risk measures.
+        risk.cvar_95 = self.calculate_parametric_cvar(positions, 1.645, 0.05);
+        risk.cvar_99 = self.calculate_parametric_cvar(positions, 2.326, 0.01);
         
         risk
+    }
+
+    /// Calculate Conditional Value at Risk (Expected Shortfall) using the parametric method.
+    ///
+    /// Under a normal distribution assumption, CVaR at confidence level `(1 - tail_prob)` is:
+    ///
+    ///   CVaR_α = σ · φ(z_α) / tail_prob
+    ///
+    /// where:
+    ///   - σ is the portfolio volatility (same as used in VaR)
+    ///   - z_α is the standard normal quantile corresponding to confidence level α
+    ///   - φ(z_α) is the standard normal PDF evaluated at z_α
+    ///   - tail_prob = 1 − α (e.g., 0.05 for 95% CVaR)
+    ///
+    /// CVaR is always ≥ VaR for the same confidence level and satisfies
+    /// the coherent risk measure axioms (unlike VaR, which is not sub-additive).
+    fn calculate_parametric_cvar(&self, positions: &[Position], z_score: f64, tail_prob: f64) -> f64 {
+        let portfolio_vol = self.portfolio_vol_from_positions(positions);
+        let frac_1_sqrt_2pi: f64 = 0.39894228040143267793994605993439;
+        let pdf_at_z = frac_1_sqrt_2pi * (-0.5 * z_score * z_score).exp();
+        portfolio_vol * pdf_at_z / tail_prob
     }
 
     /// Calculate Value at Risk (parametric method)
@@ -119,19 +151,21 @@ impl RiskAnalyzer {
         // Simplified VaR: assumes normal distribution
         // VaR = Portfolio Value * Volatility * Z-score
         
+        let portfolio_vol = self.portfolio_vol_from_positions(positions);
+        portfolio_vol * z_score
+    }
+
+    /// Compute portfolio volatility proxy (shared between VaR and CVaR).
+    fn portfolio_vol_from_positions(&self, positions: &[Position]) -> f64 {
         let mut total_variance = 0.0;
-        
         for pos in positions.iter().filter(|p| matches!(p.status, PositionStatus::Open)) {
             if let Some(greeks) = &pos.entry_greeks {
-                // Use vega as proxy for volatility sensitivity
                 let position_value = greeks.price * (pos.quantity as f64).abs() * 100.0;
-                let vol_contribution = greeks.vega * position_value / 100.0; // Normalize
+                let vol_contribution = greeks.vega * position_value / 100.0;
                 total_variance += vol_contribution.powi(2);
             }
         }
-        
-        let portfolio_vol = total_variance.sqrt();
-        portfolio_vol * z_score
+        total_variance.sqrt()
     }
 
     /// Check if portfolio violates risk limits

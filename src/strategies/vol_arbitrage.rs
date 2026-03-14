@@ -28,20 +28,25 @@ impl VolatilityArbitrageStrategy {
         }
     }
 
-    /// Calculate volatility risk premium
-    fn calculate_vol_risk_premium(&self, symbol: &str, market_iv: f64, historical_vol: f64) -> f64 {
-        // Risk premium is typically market IV - realized vol
+    /// Calculate volatility risk premium.
+    ///
+    /// The risk premium is `market_iv − historical_vol`, scaled by a
+    /// regime multiplier derived from the *level* of realized volatility.
+    /// High-vol regimes tend to produce larger absolute risk premiums;
+    /// low-vol regimes see premium compression.
+    fn calculate_vol_risk_premium(&self, _symbol: &str, market_iv: f64, historical_vol: f64) -> f64 {
         let base_premium = market_iv - historical_vol;
-        
-        // Add symbol-specific volatility regime detection
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-        let symbol_hash = symbol.chars().map(|c| c as u32).sum::<u32>() as f64;
-        
-        // Simulate regime changes
-        let regime_factor = ((now as f64 * 0.001 + symbol_hash * 0.01).sin() + 1.0) * 0.5;
-        let vol_regime = if regime_factor > 0.7 { 1.3 } else if regime_factor < 0.3 { 0.7 } else { 1.0 };
-        
+
+        // Regime classification from realized-vol level (annualized).
+        // Thresholds approximate VIX regimes: low (<20%), normal (20–40%), high (>40%).
+        let vol_regime = if historical_vol > 0.40 {
+            1.20 // High-vol regime: risk premium tends to be elevated
+        } else if historical_vol >= 0.20 {
+            1.00 // Normal regime: no adjustment
+        } else {
+            0.80 // Low-vol regime: risk premium is compressed
+        };
+
         base_premium * vol_regime
     }
 

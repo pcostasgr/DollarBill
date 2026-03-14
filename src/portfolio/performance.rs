@@ -19,6 +19,7 @@ pub struct StrategyPerformance {
     pub profit_factor: f64,
     pub sharpe_ratio: f64,
     pub sortino_ratio: f64,
+    pub omega_ratio: f64,
     pub max_drawdown: f64,
     pub max_drawdown_pct: f64,
     pub avg_return_pct: f64,
@@ -41,6 +42,7 @@ impl Default for StrategyPerformance {
             profit_factor: 0.0,
             sharpe_ratio: 0.0,
             sortino_ratio: 0.0,
+            omega_ratio: 0.0,
             max_drawdown: 0.0,
             max_drawdown_pct: 0.0,
             avg_return_pct: 0.0,
@@ -125,6 +127,7 @@ impl PerformanceAttribution {
             perf.avg_return_pct = returns.iter().sum::<f64>() / returns.len() as f64;
             perf.sharpe_ratio = self.calculate_sharpe_ratio(&returns);
             perf.sortino_ratio = self.calculate_sortino_ratio(&returns);
+            perf.omega_ratio = self.calculate_omega_ratio(&returns, 0.0);
         }
 
         // Calculate drawdown
@@ -188,7 +191,7 @@ impl PerformanceAttribution {
 
         let downside_variance: f64 = downside_returns.iter()
             .map(|r| r.powi(2))
-            .sum::<f64>() / downside_returns.len() as f64;
+            .sum::<f64>() / returns.len() as f64; // divide by TOTAL count (not just negative)
         let downside_dev = downside_variance.sqrt();
 
         if downside_dev > 0.0 {
@@ -196,6 +199,34 @@ impl PerformanceAttribution {
             (mean_return - risk_free_rate) / downside_dev
         } else {
             0.0
+        }
+    }
+
+    /// Calculate the Omega Ratio at a given return threshold `threshold_r`.
+    ///
+    /// The Omega ratio is a performance measure that captures all moments of
+    /// the return distribution (not just mean and variance):
+    ///
+    ///   Ω(L) = Σ max(rᵢ − L, 0) / Σ max(L − rᵢ, 0)
+    ///
+    /// An Ω > 1 means the probability-weighted gains above `threshold_r`
+    /// exceed the probability-weighted losses below it.
+    ///
+    /// Typical usage: `threshold_r = 0.0` (any absolute gain is counted).
+    fn calculate_omega_ratio(&self, returns: &[f64], threshold_r: f64) -> f64 {
+        if returns.is_empty() {
+            return 0.0;
+        }
+
+        let gains: f64 = returns.iter().map(|&r| (r - threshold_r).max(0.0)).sum();
+        let losses: f64 = returns.iter().map(|&r| (threshold_r - r).max(0.0)).sum();
+
+        if losses > 0.0 {
+            gains / losses
+        } else if gains > 0.0 {
+            f64::INFINITY
+        } else {
+            1.0 // all returns exactly at threshold
         }
     }
 
@@ -244,8 +275,12 @@ impl PerformanceAttribution {
             }
         }
 
-        // Sort by Sharpe ratio (best first)
-        comparisons.sort_by(|a, b| b.sharpe_ratio.partial_cmp(&a.sharpe_ratio).unwrap());
+        // Sort by Sharpe ratio (best first); treat NaN as −∞ so it sinks to the bottom.
+        comparisons.sort_by(|a, b| {
+            b.sharpe_ratio
+                .partial_cmp(&a.sharpe_ratio)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         comparisons
     }
@@ -278,25 +313,26 @@ impl PerformanceAttribution {
     /// Print performance summary
     pub fn print_summary(&self, strategy: &str) {
         if let Some(perf) = self.strategy_performance.get(strategy) {
-            println!("\n{} Performance Summary", strategy);
-            println!("═══════════════════════════════════════════");
-            println!("Total Trades:      {}", perf.total_trades);
-            println!("Winning Trades:    {} ({:.1}%)", perf.winning_trades, perf.win_rate);
-            println!("Losing Trades:     {}", perf.losing_trades);
-            println!();
-            println!("Gross Profit:      ${:.2}", perf.gross_profit);
-            println!("Gross Loss:        ${:.2}", perf.gross_loss);
-            println!("Net Profit:        ${:.2}", perf.net_profit);
-            println!();
-            println!("Avg Win:           ${:.2}", perf.avg_win);
-            println!("Avg Loss:          ${:.2}", perf.avg_loss);
-            println!("Profit Factor:     {:.2}", perf.profit_factor);
-            println!();
-            println!("Sharpe Ratio:      {:.2}", perf.sharpe_ratio);
-            println!("Sortino Ratio:     {:.2}", perf.sortino_ratio);
-            println!("Max Drawdown:      ${:.2} ({:.1}%)", perf.max_drawdown, perf.max_drawdown_pct);
-            println!("ROI:               {:.2}%", perf.roi);
-            println!("═══════════════════════════════════════════\n");
+            log::info!("{} Performance Summary", strategy);
+            log::info!("═══════════════════════════════════════════");
+            log::info!("Total Trades:      {}", perf.total_trades);
+            log::info!("Winning Trades:    {} ({:.1}%)", perf.winning_trades, perf.win_rate);
+            log::info!("Losing Trades:     {}", perf.losing_trades);
+            log::info!("");
+            log::info!("Gross Profit:      ${:.2}", perf.gross_profit);
+            log::info!("Gross Loss:        ${:.2}", perf.gross_loss);
+            log::info!("Net Profit:        ${:.2}", perf.net_profit);
+            log::info!("");
+            log::info!("Avg Win:           ${:.2}", perf.avg_win);
+            log::info!("Avg Loss:          ${:.2}", perf.avg_loss);
+            log::info!("Profit Factor:     {:.2}", perf.profit_factor);
+            log::info!("");
+            log::info!("Sharpe Ratio:      {:.2}", perf.sharpe_ratio);
+            log::info!("Sortino Ratio:     {:.2}", perf.sortino_ratio);
+            log::info!("Omega Ratio:       {:.2}", perf.omega_ratio);
+            log::info!("Max Drawdown:      ${:.2} ({:.1}%)", perf.max_drawdown, perf.max_drawdown_pct);
+            log::info!("ROI:               {:.2}%", perf.roi);
+            log::info!("═══════════════════════════════════════════");
         }
     }
 }

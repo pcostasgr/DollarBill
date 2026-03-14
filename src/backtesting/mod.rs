@@ -7,6 +7,7 @@ pub mod trade;
 pub mod engine;
 pub mod metrics;
 pub mod liquidity;
+pub mod ledger;
 
 pub use position::{Position, PositionStatus};
 pub use trade::{Trade, TradeType};
@@ -14,3 +15,4 @@ pub use engine::{BacktestEngine, BacktestConfig, TradingCosts, SlippageModel, Pa
 pub use crate::strategies::SignalAction;
 pub use metrics::{BacktestResult, PerformanceMetrics, EquityCurve};
 pub use liquidity::{LiquidityTier, MidPriceImpact};
+pub use ledger::Ledger;

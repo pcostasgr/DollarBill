@@ -37,36 +37,84 @@ impl TradingStrategy for ShortStrangleStrategy {
         symbol: &str,
         spot: f64,
         market_iv: f64,
-        _model_iv: f64,
-        _historical_vol: f64,
+        model_iv: f64,
+        historical_vol: f64,
     ) -> Vec<TradeSignal> {
-        let mut signals = Vec::new();
-
-        // Check IV rank filter
+        // `min_iv_rank` is compared against absolute annualized IV (0–1 scale).
+        // Typical ATM IV of 0.25 = 25% annualized volatility.
         if market_iv < self.min_iv_rank {
-            return signals; // IV too low, don't enter
+            return Vec::new();
         }
 
-        // Simple short strangle: sell OTM call and put
-        // For now, just return a single call signal to test the framework
-        let call_strike = spot * 1.05; // 5% OTM call
-        let days_to_expiry = 30;
+        // Require IV is elevated relative to realized vol (positive risk premium)
+        let iv_premium = market_iv - historical_vol;
+        if iv_premium <= 0.0 {
+            return Vec::new();
+        }
 
-        signals.push(TradeSignal {
-            symbol: symbol.to_string(),
-            action: SignalAction::SellCall {
+        let days_to_expiry = self.min_days_to_expiry.max(
+            self.max_days_to_expiry.min(30)
+        );
+
+        // Choose OTM strikes via the delta-targeting helper
+        let time_to_expiry = days_to_expiry as f64 / 365.0;
+        let risk_free_rate = 0.045;
+
+        let (call_strike, put_strike) = self.select_otm_strikes(
+            spot, market_iv, time_to_expiry, risk_free_rate,
+        );
+
+        // Edge: credit received relative to max theoretical loss
+        let call_price = black_scholes_merton_call(
+            spot, call_strike, time_to_expiry, risk_free_rate, market_iv, 0.0,
+        ).price;
+        let put_price = black_scholes_merton_put(
+            spot, put_strike, time_to_expiry, risk_free_rate, market_iv, 0.0,
+        ).price;
+        let total_credit = call_price + put_price;
+
+        // Confidence scales with the IV risk premium and credit collected
+        let confidence = ((iv_premium / market_iv) * 0.5
+            + (total_credit / spot).min(0.1) * 5.0)
+            .min(0.90)
+            .max(0.10);
+
+        // Model-price alignment boosts confidence (both models agree IV is rich)
+        let model_edge = market_iv - model_iv;
+        let final_confidence = if model_edge > 0.01 {
+            (confidence * 1.1).min(0.90)
+        } else {
+            confidence
+        };
+
+        vec![
+            TradeSignal {
+                symbol: symbol.to_string(),
+                action: SignalAction::SellCall {
+                    strike: call_strike,
+                    days_to_expiry,
+                    volatility: market_iv,
+                },
                 strike: call_strike,
-                days_to_expiry,
-                volatility: market_iv,
+                expiry_days: days_to_expiry,
+                confidence: final_confidence,
+                edge: total_credit * 0.5, // Attribute half the credit to each leg
+                strategy_name: self.name().to_string(),
             },
-            strike: call_strike,
-            expiry_days: days_to_expiry,
-            confidence: 0.6,
-            edge: 0.5, // Simplified edge
-            strategy_name: "Short Strangle (Simplified)".to_string(),
-        });
-
-        signals
+            TradeSignal {
+                symbol: symbol.to_string(),
+                action: SignalAction::SellPut {
+                    strike: put_strike,
+                    days_to_expiry,
+                    volatility: market_iv,
+                },
+                strike: put_strike,
+                expiry_days: days_to_expiry,
+                confidence: final_confidence,
+                edge: total_credit * 0.5,
+                strategy_name: self.name().to_string(),
+            },
+        ]
     }
 
     fn risk_params(&self) -> RiskParams {
@@ -80,6 +128,52 @@ impl TradingStrategy for ShortStrangleStrategy {
 }
 
 impl ShortStrangleStrategy {
+    /// Select OTM call and put strikes whose |delta| is closest to `max_delta`.
+    ///
+    /// Iterates a grid of strikes from ATM outward and returns the first pair
+    /// whose absolute delta falls at or below the configured `max_delta` threshold.
+    fn select_otm_strikes(
+        &self,
+        spot: f64,
+        volatility: f64,
+        time_to_expiry: f64,
+        risk_free_rate: f64,
+    ) -> (f64, f64) {
+        let step = spot * 0.01; // 1% of spot per step
+        let max_steps = 30;
+
+        let mut call_strike = spot * 1.05; // start 5% OTM
+        let mut put_strike = spot * 0.95;
+
+        for i in 0..max_steps {
+            let cs = spot * (1.0 + 0.05 + 0.01 * i as f64);
+            let cd = black_scholes_merton_call(
+                spot, cs, time_to_expiry, risk_free_rate, volatility, 0.0,
+            ).delta;
+            if cd.abs() <= self.max_delta {
+                call_strike = cs;
+                break;
+            }
+            let _ = step; // suppress unused warning
+        }
+
+        for i in 0..max_steps {
+            let ps = spot * (0.95 - 0.01 * i as f64);
+            if ps <= 0.0 {
+                break;
+            }
+            let pd = black_scholes_merton_put(
+                spot, ps, time_to_expiry, risk_free_rate, volatility, 0.0,
+            ).delta;
+            if pd.abs() <= self.max_delta {
+                put_strike = ps;
+                break;
+            }
+        }
+
+        (call_strike, put_strike)
+    }
+
     /// Find the optimal short strangle for given parameters
     #[allow(dead_code)] // not yet wired into signal dispatch
     fn find_optimal_strangle(

@@ -1,5 +1,6 @@
 // Library exports for dollarbill
 
+pub mod error;
 pub mod models;
 pub mod market_data;
 pub mod strategies;

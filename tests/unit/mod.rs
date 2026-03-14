@@ -3,6 +3,7 @@
 pub mod models;
 pub mod performance;
 pub mod concurrency;
+pub mod portfolio;
 
 mod market_data {
     mod test_csv_loader;

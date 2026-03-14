@@ -16,6 +16,8 @@ chrono = "0.4"                                      # Date/time handling
 time = "0.3"                                        # Time library for Yahoo Finance API
 rayon = "1.8"                                       # Data parallelism for Heston Monte Carlo
 num-complex = "0.4"                                 # Complex numbers for Carr-Madan formula
+rust_decimal = { version = "1.36", features = ["serde"] }  # Exact decimal arithmetic for accounting ledger
+log = "0.4"                                                 # Structured logging facade for library code
 
 [dev-dependencies]
 proptest = "1"   # Property-based testing: 1000-case fuzzing for numerical stability

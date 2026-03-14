@@ -3,6 +3,7 @@
 use crate::backtesting::position::{Position, PositionStatus, OptionType};
 use crate::backtesting::trade::{Trade, TradeType};
 use crate::backtesting::metrics::{BacktestResult, PerformanceMetrics, EquityCurve};
+use crate::backtesting::ledger::Ledger;
 use crate::models::american::{american_call_binomial, american_put_binomial, BinomialConfig, ExerciseStyle};
 use crate::models::bs_mod::{black_scholes_merton_call, black_scholes_merton_put};
 use crate::market_data::csv_loader::HistoricalDay;
@@ -251,6 +252,8 @@ pub struct BacktestEngine {
     trades: Vec<Trade>,
     equity_curve: EquityCurve,
     current_capital: f64,
+    /// Exact-precision accounting ledger (parallel to `current_capital`).
+    pub ledger: Ledger,
     position_counter: usize,
 }
 
@@ -280,6 +283,7 @@ impl BacktestEngine {
         
         Self {
             current_capital: config.initial_capital,
+            ledger: Ledger::new(config.initial_capital),
             config,
             portfolio_manager,
             positions: Vec::new(),
@@ -293,6 +297,7 @@ impl BacktestEngine {
     pub fn new_with_portfolio(config: BacktestConfig, portfolio_config: PortfolioConfig) -> Self {
         Self {
             current_capital: config.initial_capital,
+            ledger: Ledger::new(config.initial_capital),
             config,
             portfolio_manager: Some(PortfolioManager::new(portfolio_config)),
             positions: Vec::new(),
@@ -314,8 +319,11 @@ impl BacktestEngine {
             return self.generate_result(symbol, "N/A".to_string(), "N/A".to_string());
         }
         
-        let start_date = historical_data.last().unwrap().date.clone();
-        let end_date = historical_data.first().unwrap().date.clone();
+        // Safety: the empty-data guard above guarantees at least one element.
+        let start_date = historical_data.last()
+            .expect("non-empty after guard").date.clone();
+        let end_date = historical_data.first()
+            .expect("non-empty after guard").date.clone();
         
         // Calculate historical volatility for each day
         let hist_vols = self.calculate_rolling_volatility(&historical_data, 20);
@@ -354,7 +362,8 @@ impl BacktestEngine {
         }
         
         // Close all remaining positions at end
-        let final_day = historical_data.first().unwrap();
+        let final_day = historical_data.first()
+            .expect("non-empty after guard");
         self.close_all_positions(&final_day.date, final_day.close);
         
         self.generate_result(symbol, start_date, end_date)
@@ -374,8 +383,11 @@ impl BacktestEngine {
             return self.generate_result(symbol, "N/A".to_string(), "N/A".to_string());
         }
         
-        let start_date = historical_data.last().unwrap().date.clone();
-        let end_date = historical_data.first().unwrap().date.clone();
+        // Safety: the empty-data guard above guarantees at least one element.
+        let start_date = historical_data.last()
+            .expect("non-empty after guard").date.clone();
+        let end_date = historical_data.first()
+            .expect("non-empty after guard").date.clone();
         
         let hist_vols = self.calculate_rolling_volatility(&historical_data, 20);
         
@@ -471,7 +483,8 @@ impl BacktestEngine {
         }
         
         // Close all remaining positions
-        let final_day = historical_data.first().unwrap();
+        let final_day = historical_data.first()
+            .expect("non-empty after guard");
         self.close_all_positions(&final_day.date, final_day.close);
         
         self.generate_result(symbol, start_date, end_date)
@@ -562,7 +575,9 @@ impl BacktestEngine {
         trade.mid_price = price;
         trade.slippage = slippage;
         
-        self.current_capital -= trade.total_cost();
+        let cost = trade.total_cost();
+        self.current_capital -= cost;
+        self.ledger.debit(cost, trade.commission);
         self.positions.push(position);
         self.trades.push(trade);
         self.position_counter += 1;
@@ -653,7 +668,9 @@ impl BacktestEngine {
         trade.mid_price = price;
         trade.slippage = slippage;
         
-        self.current_capital -= trade.total_cost();
+        let cost = trade.total_cost();
+        self.current_capital -= cost;
+        self.ledger.debit(cost, trade.commission);
         self.positions.push(position);
         self.trades.push(trade);
         self.position_counter += 1;
@@ -728,7 +745,9 @@ impl BacktestEngine {
         trade.slippage = slippage;
         
         // For short options: credit received = effective_price × qty × 100 − commission
-        self.current_capital += trade.proceeds();
+        let proceeds = trade.proceeds();
+        self.current_capital += proceeds;
+        self.ledger.credit(proceeds, trade.commission, 0.0);
         self.positions.push(position);
         self.trades.push(trade);
         self.position_counter += 1;
@@ -804,7 +823,9 @@ impl BacktestEngine {
         trade.slippage = slippage;
         
         // For short puts: credit received = effective_price × qty × 100 − commission
-        self.current_capital += trade.proceeds();
+        let proceeds = trade.proceeds();
+        self.current_capital += proceeds;
+        self.ledger.credit(proceeds, trade.commission, 0.0);
         self.positions.push(position);
         self.trades.push(trade);
         self.position_counter += 1;
@@ -1000,9 +1021,13 @@ impl BacktestEngine {
         
         // Long legs are debits (we pay), short legs are credits (we receive)
         if quantity > 0 {
-            self.current_capital -= trade.total_cost();
+            let cost = trade.total_cost();
+            self.current_capital -= cost;
+            self.ledger.debit(cost, trade.commission);
         } else {
-            self.current_capital += trade.proceeds();
+            let proceeds = trade.proceeds();
+            self.current_capital += proceeds;
+            self.ledger.credit(proceeds, trade.commission, 0.0);
         }
         self.positions.push(position);
         self.trades.push(trade);
@@ -1039,7 +1064,9 @@ impl BacktestEngine {
             commission,
         );
         
-        self.current_capital -= trade.total_cost();
+        let cost = trade.total_cost();
+        self.current_capital -= cost;
+        self.ledger.debit(cost, trade.commission);
         self.positions.push(position);
         self.trades.push(trade);
         self.position_counter += 1;
@@ -1149,97 +1176,104 @@ impl BacktestEngine {
     }
     
     fn close_position_by_id(&mut self, position_id: usize, date: &str, spot: f64, volatility: f64, days_held: usize) {
-        if let Some(position) = self.positions.iter_mut().find(|p| p.id == position_id) {
-            if !matches!(position.status, PositionStatus::Open) {
-                return;
-            }
-            
-            let days_to_expiry = self.config.days_to_expiry.saturating_sub(days_held).max(1);
-            let time_to_expiry = days_to_expiry as f64 / 365.0;
-            
-            let exit_price = match (&position.option_type, &position.exercise_style) {
-                (OptionType::Call, ExerciseStyle::European) => {
-                    black_scholes_merton_call(
-                        spot,
-                        position.strike,
-                        time_to_expiry,
-                        self.config.risk_free_rate,
-                        volatility,
-                        0.0,
-                    ).price
-                },
-                (OptionType::Call, ExerciseStyle::American) => {
-                    let config = BinomialConfig::default();
-                    american_call_binomial(
-                        spot,
-                        position.strike,
-                        time_to_expiry,
-                        self.config.risk_free_rate,
-                        volatility,
-                        &config,
-                    )
-                },
-                (OptionType::Put, ExerciseStyle::European) => {
-                    black_scholes_merton_put(
-                        spot,
-                        position.strike,
-                        time_to_expiry,
-                        self.config.risk_free_rate,
-                        volatility,
-                        0.0,
-                    ).price
-                },
-                (OptionType::Put, ExerciseStyle::American) => {
-                    let config = BinomialConfig::default();
-                    american_put_binomial(
-                        spot,
-                        position.strike,
-                        time_to_expiry,
-                        self.config.risk_free_rate,
-                        volatility,
-                        &config,
-                    )
-                },
-            };
-            
-            position.close(exit_price, date.to_string(), spot, days_held);
-            
-            // Extract data before calling methods to avoid borrowing issues
-            let quantity = position.quantity;
-            let symbol = position.symbol.clone();
-            let is_selling = quantity > 0;
-            let abs_qty = quantity.unsigned_abs() as i32;
-            
-            // Now call methods (no mutable borrow conflict)
-            // is_selling=true (long exit → selling) means !is_selling=false=not buying
-            let effective_exit_price = self.effective_price_ctx(exit_price, !is_selling, volatility, abs_qty);
-            let commission = self.calculate_commission(quantity);
-            let slippage = (effective_exit_price - exit_price).abs();
-            
-            let mut trade = Trade::new(
-                position_id,
-                TradeType::Exit,
-                date.to_string(),
-                symbol,
-                effective_exit_price,
-                quantity,
-                spot,
-                None,
-                commission,
-            );
-            trade.mid_price = exit_price;
-            trade.slippage = slippage;
-            
-            // Calculate P&L:
-            // Long exit  (selling to close): receive proceeds − commission
-            // Short exit (buying to cover):  pay fill price + commission
-            if quantity > 0 {
-                self.current_capital += trade.proceeds();
-            } else {
-                self.current_capital -= trade.total_cost();
-            }
-            self.trades.push(trade);
+        // ── Phase 1: mutate the position and extract what we need ────────────────
+        // The mutable borrow of `self.positions` (via iter_mut) must end before
+        // we can call `self.effective_price_ctx` / `self.calculate_commission`,
+        // which borrow all of `self`.  Rust's field-projection rules allow
+        // reading `self.config.*` alongside a mutable borrow of `self.positions`,
+        // but NOT a full `&self` method call at the same time.
+        struct CloseInfo {
+            exit_price:  f64,
+            entry_price: f64,
+            quantity:    i32,
+            entry_qty:   u32,
+            symbol:      String,
         }
+
+        let info: Option<CloseInfo> = {
+            let pos = self.positions.iter_mut().find(|p| p.id == position_id);
+            if let Some(position) = pos {
+                if !matches!(position.status, PositionStatus::Open) {
+                    None
+                } else {
+                    let days_to_expiry = self.config.days_to_expiry.saturating_sub(days_held).max(1);
+                    let time_to_expiry = days_to_expiry as f64 / 365.0;
+                    let risk_free_rate = self.config.risk_free_rate;
+
+                    let exit_price = match (&position.option_type, &position.exercise_style) {
+                        (OptionType::Call, ExerciseStyle::European) => {
+                            black_scholes_merton_call(spot, position.strike, time_to_expiry, risk_free_rate, volatility, 0.0).price
+                        },
+                        (OptionType::Call, ExerciseStyle::American) => {
+                            let config = BinomialConfig::default();
+                            american_call_binomial(spot, position.strike, time_to_expiry, risk_free_rate, volatility, &config)
+                        },
+                        (OptionType::Put, ExerciseStyle::European) => {
+                            black_scholes_merton_put(spot, position.strike, time_to_expiry, risk_free_rate, volatility, 0.0).price
+                        },
+                        (OptionType::Put, ExerciseStyle::American) => {
+                            let config = BinomialConfig::default();
+                            american_put_binomial(spot, position.strike, time_to_expiry, risk_free_rate, volatility, &config)
+                        },
+                    };
+
+                    let entry_price = position.entry_price;
+                    let quantity    = position.quantity;
+                    let entry_qty   = quantity.unsigned_abs();
+                    let symbol      = position.symbol.clone();
+
+                    position.close(exit_price, date.to_string(), spot, days_held);
+
+                    Some(CloseInfo { exit_price, entry_price, quantity, entry_qty, symbol })
+                }
+            } else {
+                None
+            }
+        }; // ← mutable borrow of self.positions dropped here
+
+        let info = match info { Some(i) => i, None => return };
+        let CloseInfo { exit_price, entry_price, quantity, entry_qty, symbol } = info;
+
+        // ── Phase 2: post-close accounting (no mutable borrow conflict) ──────────
+        let is_selling = quantity > 0;
+        let abs_qty    = quantity.unsigned_abs() as i32;
+
+        let effective_exit_price = self.effective_price_ctx(exit_price, !is_selling, volatility, abs_qty);
+        let commission           = self.calculate_commission(quantity);
+        let slippage             = (effective_exit_price - exit_price).abs();
+
+        let mut trade = Trade::new(
+            position_id,
+            TradeType::Exit,
+            date.to_string(),
+            symbol,
+            effective_exit_price,
+            quantity,
+            spot,
+            None,
+            commission,
+        );
+        trade.mid_price = exit_price;
+        trade.slippage  = slippage;
+
+        // Calculate P&L:
+        // Long exit  (selling to close): receive proceeds − commission
+        // Short exit (buying to cover):  pay fill price + commission
+        if quantity > 0 {
+            let proceeds = trade.proceeds();
+            let realized = proceeds as f64 - entry_price * entry_qty as f64 * 100.0;
+            self.current_capital += proceeds;
+            self.ledger.credit(proceeds, trade.commission, realized);
+        } else {
+            let cost     = trade.total_cost();
+            let realized = entry_price * entry_qty as f64 * 100.0 - cost;
+            self.current_capital -= cost;
+            self.ledger.debit(cost, trade.commission);
+            if realized != 0.0 {
+                self.ledger.credit(0.0, 0.0, realized);
+            }
+        }
+        self.trades.push(trade);
     }
     
     fn close_all_positions(&mut self, date: &str, spot: f64) {
@@ -1266,7 +1300,13 @@ impl BacktestEngine {
                 // ITM: close at intrinsic value and settle capital
                 self.positions[idx].close(intrinsic, date.to_string(), spot, days_held);
                 // Long (qty > 0) receives intrinsic; short (qty < 0) pays intrinsic
-                self.current_capital += intrinsic * quantity as f64 * 100.0;
+                let settlement = intrinsic * quantity as f64 * 100.0;
+                self.current_capital += settlement;
+                if settlement >= 0.0 {
+                    self.ledger.credit(settlement, 0.0, settlement);
+                } else {
+                    self.ledger.debit(settlement.abs(), 0.0);
+                }
             } else {
                 // OTM: expires worthless
                 self.positions[idx].expire(date.to_string(), spot, days_held);

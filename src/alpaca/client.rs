@@ -323,7 +323,6 @@ mod tests {
     async fn test_get_account() {
         let client = AlpacaClient::from_env().expect("Failed to create client from env");
         let account = client.get_account().await.expect("Failed to get account");
-        println!("Account: {:#?}", account);
         assert!(!account.id.is_empty());
     }
 
@@ -331,8 +330,7 @@ mod tests {
     #[ignore]
     async fn test_get_positions() {
         let client = AlpacaClient::from_env().expect("Failed to create client from env");
-        let positions = client.get_positions().await.expect("Failed to get positions");
-        println!("Positions: {:#?}", positions);
+        let _positions = client.get_positions().await.expect("Failed to get positions");
     }
 
     #[tokio::test]
@@ -340,7 +338,6 @@ mod tests {
     async fn test_get_latest_quote() {
         let client = AlpacaClient::from_env().expect("Failed to create client from env");
         let quote = client.get_latest_quote("TSLA").await.expect("Failed to get quote");
-        println!("Latest TSLA quote: {:#?}", quote);
         assert_eq!(quote.symbol, "TSLA");
     }
 }
