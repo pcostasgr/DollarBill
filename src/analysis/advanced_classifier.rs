@@ -68,23 +68,9 @@ pub struct RegimePerformance {
     pub trade_count: usize,
 }
 
-/// Sector-based normalization parameters
-#[derive(Debug, Clone)]
-pub struct SectorStats {
-    pub avg_volatility: f64,
-    pub avg_beta: f64,
-    pub avg_momentum: f64,
-    pub volatility_range: (f64, f64),      // (min, max)
-    pub beta_range: (f64, f64),
-    pub momentum_range: (f64, f64),
-}
-
 /// Advanced stock classifier with multi-dimensional analysis
-#[allow(dead_code)]
 pub struct AdvancedStockClassifier {
     features_cache: HashMap<String, AdvancedStockFeatures>,
-    sector_stats: HashMap<String, SectorStats>,
-    market_regime_history: Vec<(String, MarketRegime)>, // (date, regime)
     volatility_percentiles: HashMap<String, Vec<f64>>,  // Rolling percentiles
     // Performance optimization caches
     returns_cache: HashMap<String, Vec<f64>>,          // Cached return calculations
@@ -97,8 +83,6 @@ impl AdvancedStockClassifier {
     pub fn new() -> Self {
         Self {
             features_cache: HashMap::new(),
-            sector_stats: HashMap::new(),
-            market_regime_history: Vec::new(),
             volatility_percentiles: HashMap::new(),
             returns_cache: HashMap::new(),
             volatility_cache: HashMap::new(),

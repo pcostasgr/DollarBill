@@ -200,12 +200,6 @@ pub fn print_vol_smile(points: &[VolSurfacePoint], symbol: &str) {
     }
 }
 
-/// Display helper for vol smile — retained under the old name for backward compatibility.
-#[allow(dead_code)]
-pub fn display_vol_smile(points: &[VolSurfacePoint], symbol: &str) {
-    print_vol_smile(points, symbol);
-}
-
 // ── Cubic Spline Smile Interpolation ─────────────────────────────────────────
 
 /// Natural cubic-spline interpolator for the volatility smile.

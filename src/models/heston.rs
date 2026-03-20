@@ -65,14 +65,12 @@ impl HestonParams {
     /// Feller ratio 2κθ/σ².  Values > 1 satisfy the Feller condition.
     /// Calibrated parameters often return values between 0.3–0.9, which is why
     /// `new_unchecked` exists — hard rejection is impractical for real workflows.
-    #[allow(dead_code)]
     pub fn feller_ratio(&self) -> f64 {
         2.0 * self.kappa * self.theta / (self.sigma * self.sigma)
     }
 
     /// Validate only hard parameter bounds; does NOT check the Feller condition.
     /// Used by `HestonMonteCarlo::new_unchecked` and the Carr-Madan pricer.
-    #[allow(dead_code)]
     pub fn validate_bounds_only(&self) -> Result<(), String> {
         if self.s0 <= 0.0 {
             return Err("Initial stock price must be positive".to_string());
@@ -161,24 +159,11 @@ impl SplitMix64 {
         
         (-2.0 * u1.ln()).sqrt() * (2.0 * PI * u2).cos()
     }
-
-    // Generate correlated normal random variables
-    #[allow(dead_code)] // kept as utility; QE scheme uses independent normals
-    fn next_correlated_normals(&mut self, rho: f64) -> (f64, f64) {
-        let z1 = self.next_normal();
-        let z2 = self.next_normal();
-        
-        let w1 = z1;
-        let w2 = rho * z1 + (1.0 - rho * rho).sqrt() * z2;
-        
-        (w1, w2)
-    }
 }
 
 /// A single simulated path
 pub struct HestonPath {
     pub stock_prices: Vec<f64>,
-    #[allow(dead_code)]
     pub variances: Vec<f64>,
 }
 

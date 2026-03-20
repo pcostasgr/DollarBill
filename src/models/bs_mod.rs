@@ -90,7 +90,6 @@ pub fn black_scholes_merton_call(
 }
 
 /// Black-Scholes-Merton European put pricer + full Greeks
-#[allow(dead_code)]
 pub fn black_scholes_merton_put(
     s: f64,
     k: f64,
@@ -134,12 +133,10 @@ pub fn black_scholes_merton_put(
 }
 
 // Wrapper for backward compatibility
-#[allow(dead_code)]
 pub fn black_scholes_call(s: f64, k: f64, t: f64, r: f64, sigma: f64) -> Greeks {
     black_scholes_merton_call(s, k, t, r, sigma, 0.0)
 }
 
-#[allow(dead_code)]
 pub fn black_scholes_put(s: f64, k: f64, t: f64, r: f64, sigma: f64) -> Greeks {
     black_scholes_merton_put(s, k, t, r, sigma, 0.0)
 }

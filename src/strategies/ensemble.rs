@@ -11,7 +11,6 @@ use std::collections::HashMap;
 /// by its regime-specific factor from `RegimeDetector::weight_for`.
 /// Strategies that perform poorly in the current regime are down-weighted;
 /// those well-suited to the regime are up-weighted.
-#[allow(dead_code)] // Part of strategy API, may be used by external code
 pub struct EnsembleStrategy {
     strategies: Vec<Box<dyn TradingStrategy>>,
     /// Base weights assigned at `add_strategy` time (by the caller).
