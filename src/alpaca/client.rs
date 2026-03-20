@@ -400,6 +400,27 @@ impl AlpacaClient {
             strike * 1000.0,
         )
     }
+
+    /// Calculate the OCC expiry-date components `(two-digit year, month, day)` from a
+    /// days-to-expiry count, rounded forward to the nearest Friday (standard equity
+    /// options expiry day).
+    ///
+    /// # Example
+    /// ```
+    /// use dollarbill::alpaca::AlpacaClient;
+    /// let (yy, mm, dd) = AlpacaClient::expiry_from_dte(30);
+    /// // yy, mm, dd are a valid Friday ≥ 30 calendar days from today
+    /// # let _ = (yy, mm, dd);
+    /// ```
+    pub fn expiry_from_dte(dte: usize) -> (u32, u32, u32) {
+        use chrono::{Duration, Local, Datelike};
+        let target = Local::now().date_naive() + Duration::days(dte as i64);
+        // num_days_from_monday: Mon=0, Tue=1, …, Fri=4, Sat=5, Sun=6
+        let dow = target.weekday().num_days_from_monday();
+        let days_ahead = if dow <= 4 { 4 - dow } else { 11 - dow };
+        let expiry = target + Duration::days(days_ahead as i64);
+        ((expiry.year() % 100) as u32, expiry.month(), expiry.day())
+    }
 }
 
 #[cfg(test)]
@@ -453,5 +474,32 @@ mod tests {
         // $2.50 strike → "00002500"
         let sym = AlpacaClient::occ_symbol("SPY", 25, 12, 19, false, 2.5);
         assert_eq!(sym, "SPY   251219P00002500");
+    }
+
+    #[test]
+    fn test_expiry_from_dte_range() {
+        // Result must be a valid calendar date (month 1–12, day 1–31, year 0–99).
+        let (yy, mm, dd) = AlpacaClient::expiry_from_dte(30);
+        assert!(yy <= 99, "two-digit year out of range: {}", yy);
+        assert!((1..=12).contains(&mm), "month out of range: {}", mm);
+        assert!((1..=31).contains(&dd), "day out of range: {}", dd);
+    }
+
+    #[test]
+    fn test_expiry_from_dte_is_friday() {
+        use chrono::{Datelike, NaiveDate};
+        // The returned date must always fall on a Friday.
+        for dte in [0usize, 1, 7, 14, 30, 45, 60] {
+            let (yy, mm, dd) = AlpacaClient::expiry_from_dte(dte);
+            let full_year = 2000 + yy as i32;
+            let date = NaiveDate::from_ymd_opt(full_year, mm, dd)
+                .expect("invalid date returned by expiry_from_dte");
+            assert_eq!(
+                date.weekday(),
+                chrono::Weekday::Fri,
+                "dte={} → {}/{}/{} is not a Friday",
+                dte, yy, mm, dd
+            );
+        }
     }
 }

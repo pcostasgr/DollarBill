@@ -1,7 +1,8 @@
 // Personality-Based Trading Bot
 // Uses trained personality models to select optimal strategies for each stock
 
-use dollarbill::alpaca::{AlpacaClient, OrderRequest, OrderSide, OrderType, TimeInForce};
+use dollarbill::alpaca::{AlpacaClient, OrderRequest, OrderSide, OrderType, TimeInForce,
+                          OptionsOrderRequest, OptionsLeg};
 use dollarbill::market_data::symbols::load_enabled_stocks;
 use dollarbill::strategies::matching::StrategyMatcher;
 use dollarbill::strategies::SignalAction;
@@ -495,42 +496,43 @@ impl PersonalityBasedBot {
                 hist_vol,
             );
 
-            // Process signals - convert options signals to stock actions.
-            // `acted` ensures at most one order is submitted per symbol per iteration,
-            // preventing double-buys when multiple signals fire simultaneously.
+            // Process signals. At most one order is submitted per symbol per iteration
+            // (`acted` guard). Options signals are routed to the Alpaca options API
+            // first; equity buy/sell handling follows for any remaining signal types.
             let mut acted = false;
             for signal in signals {
                 if acted { break; }
                 println!("   {} | 🔍 SIGNAL: {} - Confidence: {:.1}% (min: {:.1}%)", 
                     symbol, signal.strategy_name, signal.confidence * 100.0, self.config.trading.min_confidence * 100.0);
-                
-                // Convert options signals to stock buy/sell actions
+
+                // ── Options signals ────────────────────────────────────────────
+                if signal.confidence >= self.config.trading.min_confidence {
+                    match try_submit_options(client, symbol, current_price, &signal.action, signal.confidence).await {
+                        Ok(true) => {
+                            // Options order submitted — count toward daily limit and move on.
+                            acted = true;
+                            self.daily_trades_taken += 1;
+                            BotState {
+                                date: self.daily_trades_date.clone(),
+                                daily_trades_taken: self.daily_trades_taken,
+                            }.save();
+                            continue;
+                        }
+                        Ok(false) => {} // Not an options signal; fall through to equity handling.
+                        Err(e) => {
+                            eprintln!("   {} | ❌ Options order failed: {}", symbol, e);
+                            audit_log(symbol, "OPTIONS_FAILED", 0.0, current_price,
+                                "", "error", &e.to_string());
+                            acted = true; // Don't retry the same symbol this iteration.
+                            continue;
+                        }
+                    }
+                }
+
+                // ── Equity signals (fallback for non-options actions) ──────────
                 let stock_action = match signal.action {
-                    SignalAction::BuyStraddle | SignalAction::IronButterfly { .. } => {
-                        if signal.confidence >= self.config.trading.min_confidence {
-                            Some("BUY")
-                        } else {
-                            None
-                        }
-                    }
-                    SignalAction::SellStraddle => {
-                        if signal.confidence >= self.config.trading.min_confidence {
-                            Some("SELL")
-                        } else {
-                            None
-                        }
-                    }
-                    SignalAction::CashSecuredPut { .. } => {
-                        if signal.confidence >= self.config.trading.min_confidence {
-                            println!("💰 EXECUTING CASH-SECURED PUT: {} - Strike: {:.1}% OTM",
-                                symbol, 5.0);
-                            Some("CASH_PUT")
-                        } else {
-                            None
-                        }
-                    }
                     SignalAction::NoAction => None,
-                    _ => None, // Other signals not handled by this bot
+                    _ => None,
                 };
 
                 if let Some(action) = stock_action {
@@ -632,14 +634,6 @@ impl PersonalityBasedBot {
                                         current_price, "", "error", &e.to_string());
                                 }
                             }
-                        }
-                        ("CASH_PUT", false) => {
-                            // Real cash-secured puts require Alpaca's options API and a
-                            // separate options-trading approval. Skipping until options
-                            // support is implemented.
-                            println!("⏭️  CASH-SECURED PUT signal skipped — options API not yet implemented");
-                            audit_log(symbol, "CSP_SKIPPED", 0.0, current_price,
-                                "", "skipped", "options API not implemented");
                         }
                         ("SELL", true) => {
                             print!("🔴 SELL → Closing position...");
@@ -790,6 +784,261 @@ impl PersonalityBasedBot {
         println!("   All symbols have been matched with personality-optimized strategies");
 
         Ok(())
+    }
+}
+
+/// Attempt to submit an Alpaca options order for the given `SignalAction`.
+///
+/// Returns `Ok(true)` when an options order was submitted, `Ok(false)` when the action
+/// is not an options signal (caller should fall through to equity handling), and `Err(_)`
+/// when the order construction or API call fails.
+async fn try_submit_options(
+    client: &AlpacaClient,
+    symbol: &str,
+    current_price: f64,
+    action: &SignalAction,
+    confidence: f64,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    /// Default DTE for signals that do not carry expiry info.
+    const DEFAULT_DTE: usize = 30;
+
+    /// Build a single-leg market order using the given OCC symbol.
+    fn single_leg(occ: String, side: OrderSide) -> OrderRequest {
+        OrderRequest {
+            symbol: occ,
+            qty: 1.0,
+            side,
+            r#type: OrderType::Market,
+            time_in_force: TimeInForce::Day,
+            limit_price: None,
+            stop_price: None,
+            extended_hours: None,
+            client_order_id: None,
+        }
+    }
+
+    match action {
+        // ── Single-leg directional options ────────────────────────────────────
+        SignalAction::BuyCall { strike, days_to_expiry, .. } => {
+            let (yy, mm, dd) = AlpacaClient::expiry_from_dte(*days_to_expiry);
+            let occ = AlpacaClient::occ_symbol(symbol, yy, mm, dd, true, *strike);
+            println!("   {} | 🎯 BUY CALL  → {} (conf {:.1}%)", symbol, occ, confidence * 100.0);
+            let submitted = client.submit_order(&single_leg(occ, OrderSide::Buy)).await?;
+            println!("   {} | ✅ order {} ({})", symbol, submitted.id, submitted.status);
+            audit_log(symbol, "BUY_CALL", 1.0, *strike, &submitted.id, &submitted.status, "options signal");
+            Ok(true)
+        }
+        SignalAction::BuyPut { strike, days_to_expiry, .. } => {
+            let (yy, mm, dd) = AlpacaClient::expiry_from_dte(*days_to_expiry);
+            let occ = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, *strike);
+            println!("   {} | 🎯 BUY PUT   → {} (conf {:.1}%)", symbol, occ, confidence * 100.0);
+            let submitted = client.submit_order(&single_leg(occ, OrderSide::Buy)).await?;
+            println!("   {} | ✅ order {} ({})", symbol, submitted.id, submitted.status);
+            audit_log(symbol, "BUY_PUT", 1.0, *strike, &submitted.id, &submitted.status, "options signal");
+            Ok(true)
+        }
+        SignalAction::SellCall { strike, days_to_expiry, .. } => {
+            let (yy, mm, dd) = AlpacaClient::expiry_from_dte(*days_to_expiry);
+            let occ = AlpacaClient::occ_symbol(symbol, yy, mm, dd, true, *strike);
+            println!("   {} | 🎯 SELL CALL → {} (conf {:.1}%)", symbol, occ, confidence * 100.0);
+            let submitted = client.submit_order(&single_leg(occ, OrderSide::Sell)).await?;
+            println!("   {} | ✅ order {} ({})", symbol, submitted.id, submitted.status);
+            audit_log(symbol, "SELL_CALL", 1.0, *strike, &submitted.id, &submitted.status, "options signal");
+            Ok(true)
+        }
+        SignalAction::SellPut { strike, days_to_expiry, .. } => {
+            let (yy, mm, dd) = AlpacaClient::expiry_from_dte(*days_to_expiry);
+            let occ = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, *strike);
+            println!("   {} | 🎯 SELL PUT  → {} (conf {:.1}%)", symbol, occ, confidence * 100.0);
+            let submitted = client.submit_order(&single_leg(occ, OrderSide::Sell)).await?;
+            println!("   {} | ✅ order {} ({})", symbol, submitted.id, submitted.status);
+            audit_log(symbol, "SELL_PUT", 1.0, *strike, &submitted.id, &submitted.status, "options signal");
+            Ok(true)
+        }
+
+        // ── Cash-secured put (single-leg, OTM put) ────────────────────────────
+        SignalAction::CashSecuredPut { strike_pct } => {
+            let strike = current_price * (1.0 - strike_pct);
+            let (yy, mm, dd) = AlpacaClient::expiry_from_dte(DEFAULT_DTE);
+            let occ = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, strike);
+            println!("   {} | 🎯 CASH-SECURED PUT → {} ({:.1}% OTM, conf {:.1}%)",
+                symbol, occ, strike_pct * 100.0, confidence * 100.0);
+            let submitted = client.submit_order(&single_leg(occ, OrderSide::Sell)).await?;
+            println!("   {} | ✅ order {} ({})", symbol, submitted.id, submitted.status);
+            audit_log(symbol, "CASH_PUT", 1.0, strike, &submitted.id, &submitted.status, "options signal");
+            Ok(true)
+        }
+
+        // ── Covered call (single-leg) ──────────────────────────────────────────
+        SignalAction::CoveredCall { sell_strike, days_to_expiry } => {
+            let (yy, mm, dd) = AlpacaClient::expiry_from_dte(*days_to_expiry);
+            let occ = AlpacaClient::occ_symbol(symbol, yy, mm, dd, true, *sell_strike);
+            println!("   {} | 🎯 COVERED CALL → {} (conf {:.1}%)", symbol, occ, confidence * 100.0);
+            let submitted = client.submit_order(&single_leg(occ, OrderSide::Sell)).await?;
+            println!("   {} | ✅ order {} ({})", symbol, submitted.id, submitted.status);
+            audit_log(symbol, "COVERED_CALL", 1.0, *sell_strike, &submitted.id, &submitted.status, "options signal");
+            Ok(true)
+        }
+
+        // ── Two-leg: sell straddle ─────────────────────────────────────────────
+        SignalAction::SellStraddle => {
+            let (yy, mm, dd) = AlpacaClient::expiry_from_dte(DEFAULT_DTE);
+            let call_occ = AlpacaClient::occ_symbol(symbol, yy, mm, dd, true,  current_price);
+            let put_occ  = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, current_price);
+            println!("   {} | 🎯 SELL STRADDLE → C:{} P:{} (conf {:.1}%)",
+                symbol, call_occ, put_occ, confidence * 100.0);
+            let mleg = OptionsOrderRequest {
+                r#type: OrderType::Market,
+                time_in_force: TimeInForce::Day,
+                order_class: "mleg".to_string(),
+                legs: vec![
+                    OptionsLeg { symbol: call_occ, ratio_qty: 1, side: OrderSide::Sell,
+                                 position_intent: "sell_to_open".to_string() },
+                    OptionsLeg { symbol: put_occ,  ratio_qty: 1, side: OrderSide::Sell,
+                                 position_intent: "sell_to_open".to_string() },
+                ],
+                limit_price: None,
+                client_order_id: None,
+            };
+            let submitted = client.submit_options_order(&mleg).await?;
+            println!("   {} | ✅ straddle {} ({})", symbol, submitted.id, submitted.status);
+            audit_log(symbol, "SELL_STRADDLE", 2.0, current_price, &submitted.id, &submitted.status, "options signal");
+            Ok(true)
+        }
+
+        // ── Two-leg: buy straddle ──────────────────────────────────────────────
+        SignalAction::BuyStraddle => {
+            let (yy, mm, dd) = AlpacaClient::expiry_from_dte(DEFAULT_DTE);
+            let call_occ = AlpacaClient::occ_symbol(symbol, yy, mm, dd, true,  current_price);
+            let put_occ  = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, current_price);
+            println!("   {} | 🎯 BUY STRADDLE → C:{} P:{} (conf {:.1}%)",
+                symbol, call_occ, put_occ, confidence * 100.0);
+            let mleg = OptionsOrderRequest {
+                r#type: OrderType::Market,
+                time_in_force: TimeInForce::Day,
+                order_class: "mleg".to_string(),
+                legs: vec![
+                    OptionsLeg { symbol: call_occ, ratio_qty: 1, side: OrderSide::Buy,
+                                 position_intent: "buy_to_open".to_string() },
+                    OptionsLeg { symbol: put_occ,  ratio_qty: 1, side: OrderSide::Buy,
+                                 position_intent: "buy_to_open".to_string() },
+                ],
+                limit_price: None,
+                client_order_id: None,
+            };
+            let submitted = client.submit_options_order(&mleg).await?;
+            println!("   {} | ✅ straddle {} ({})", symbol, submitted.id, submitted.status);
+            audit_log(symbol, "BUY_STRADDLE", 2.0, current_price, &submitted.id, &submitted.status, "options signal");
+            Ok(true)
+        }
+
+        // ── Four-leg: iron butterfly (body sell straddle + wing buys) ──────────
+        SignalAction::IronButterfly { wing_width } => {
+            let (yy, mm, dd) = AlpacaClient::expiry_from_dte(DEFAULT_DTE);
+            let sc = AlpacaClient::occ_symbol(symbol, yy, mm, dd, true,  current_price);
+            let sp = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, current_price);
+            let bc = AlpacaClient::occ_symbol(symbol, yy, mm, dd, true,  current_price + wing_width);
+            let bp = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, current_price - wing_width);
+            println!("   {} | 🎯 IRON BUTTERFLY → wings ±{:.2} (conf {:.1}%)",
+                symbol, wing_width, confidence * 100.0);
+            let mleg = OptionsOrderRequest {
+                r#type: OrderType::Market,
+                time_in_force: TimeInForce::Day,
+                order_class: "mleg".to_string(),
+                legs: vec![
+                    OptionsLeg { symbol: sc, ratio_qty: 1, side: OrderSide::Sell, position_intent: "sell_to_open".to_string() },
+                    OptionsLeg { symbol: sp, ratio_qty: 1, side: OrderSide::Sell, position_intent: "sell_to_open".to_string() },
+                    OptionsLeg { symbol: bc, ratio_qty: 1, side: OrderSide::Buy,  position_intent: "buy_to_open".to_string() },
+                    OptionsLeg { symbol: bp, ratio_qty: 1, side: OrderSide::Buy,  position_intent: "buy_to_open".to_string() },
+                ],
+                limit_price: None,
+                client_order_id: None,
+            };
+            let submitted = client.submit_options_order(&mleg).await?;
+            println!("   {} | ✅ iron butterfly {} ({})", symbol, submitted.id, submitted.status);
+            audit_log(symbol, "IRON_BUTTERFLY", 4.0, current_price, &submitted.id, &submitted.status, "options signal");
+            Ok(true)
+        }
+
+        // ── Four-leg: iron condor ──────────────────────────────────────────────
+        SignalAction::IronCondor { sell_call_strike, buy_call_strike,
+                                   sell_put_strike, buy_put_strike, days_to_expiry } => {
+            let (yy, mm, dd) = AlpacaClient::expiry_from_dte(*days_to_expiry);
+            let sc = AlpacaClient::occ_symbol(symbol, yy, mm, dd, true,  *sell_call_strike);
+            let bc = AlpacaClient::occ_symbol(symbol, yy, mm, dd, true,  *buy_call_strike);
+            let sp = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, *sell_put_strike);
+            let bp = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, *buy_put_strike);
+            println!("   {} | 🎯 IRON CONDOR → SC:{} BC:{} SP:{} BP:{} (conf {:.1}%)",
+                symbol, sc, bc, sp, bp, confidence * 100.0);
+            let mleg = OptionsOrderRequest {
+                r#type: OrderType::Market,
+                time_in_force: TimeInForce::Day,
+                order_class: "mleg".to_string(),
+                legs: vec![
+                    OptionsLeg { symbol: sc, ratio_qty: 1, side: OrderSide::Sell, position_intent: "sell_to_open".to_string() },
+                    OptionsLeg { symbol: bc, ratio_qty: 1, side: OrderSide::Buy,  position_intent: "buy_to_open".to_string() },
+                    OptionsLeg { symbol: sp, ratio_qty: 1, side: OrderSide::Sell, position_intent: "sell_to_open".to_string() },
+                    OptionsLeg { symbol: bp, ratio_qty: 1, side: OrderSide::Buy,  position_intent: "buy_to_open".to_string() },
+                ],
+                limit_price: None,
+                client_order_id: None,
+            };
+            let submitted = client.submit_options_order(&mleg).await?;
+            println!("   {} | ✅ iron condor {} ({})", symbol, submitted.id, submitted.status);
+            audit_log(symbol, "IRON_CONDOR", 4.0, current_price, &submitted.id, &submitted.status, "options signal");
+            Ok(true)
+        }
+
+        // ── Two-leg: credit call spread ────────────────────────────────────────
+        SignalAction::CreditCallSpread { sell_strike, buy_strike, days_to_expiry } => {
+            let (yy, mm, dd) = AlpacaClient::expiry_from_dte(*days_to_expiry);
+            let sc = AlpacaClient::occ_symbol(symbol, yy, mm, dd, true, *sell_strike);
+            let bc = AlpacaClient::occ_symbol(symbol, yy, mm, dd, true, *buy_strike);
+            println!("   {} | 🎯 CREDIT CALL SPREAD → sell {} / buy {} (conf {:.1}%)",
+                symbol, sc, bc, confidence * 100.0);
+            let mleg = OptionsOrderRequest {
+                r#type: OrderType::Market,
+                time_in_force: TimeInForce::Day,
+                order_class: "mleg".to_string(),
+                legs: vec![
+                    OptionsLeg { symbol: sc, ratio_qty: 1, side: OrderSide::Sell, position_intent: "sell_to_open".to_string() },
+                    OptionsLeg { symbol: bc, ratio_qty: 1, side: OrderSide::Buy,  position_intent: "buy_to_open".to_string() },
+                ],
+                limit_price: None,
+                client_order_id: None,
+            };
+            let submitted = client.submit_options_order(&mleg).await?;
+            println!("   {} | ✅ spread {} ({})", symbol, submitted.id, submitted.status);
+            audit_log(symbol, "CREDIT_CALL_SPREAD", 2.0, *sell_strike, &submitted.id, &submitted.status, "options signal");
+            Ok(true)
+        }
+
+        // ── Two-leg: credit put spread ─────────────────────────────────────────
+        SignalAction::CreditPutSpread { sell_strike, buy_strike, days_to_expiry } => {
+            let (yy, mm, dd) = AlpacaClient::expiry_from_dte(*days_to_expiry);
+            let sp = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, *sell_strike);
+            let bp = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, *buy_strike);
+            println!("   {} | 🎯 CREDIT PUT SPREAD → sell {} / buy {} (conf {:.1}%)",
+                symbol, sp, bp, confidence * 100.0);
+            let mleg = OptionsOrderRequest {
+                r#type: OrderType::Market,
+                time_in_force: TimeInForce::Day,
+                order_class: "mleg".to_string(),
+                legs: vec![
+                    OptionsLeg { symbol: sp, ratio_qty: 1, side: OrderSide::Sell, position_intent: "sell_to_open".to_string() },
+                    OptionsLeg { symbol: bp, ratio_qty: 1, side: OrderSide::Buy,  position_intent: "buy_to_open".to_string() },
+                ],
+                limit_price: None,
+                client_order_id: None,
+            };
+            let submitted = client.submit_options_order(&mleg).await?;
+            println!("   {} | ✅ spread {} ({})", symbol, submitted.id, submitted.status);
+            audit_log(symbol, "CREDIT_PUT_SPREAD", 2.0, *sell_strike, &submitted.id, &submitted.status, "options signal");
+            Ok(true)
+        }
+
+        // Not an options signal — caller should handle via equity path.
+        _ => Ok(false),
     }
 }
 
