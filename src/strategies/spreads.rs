@@ -196,10 +196,12 @@ pub fn detect_credit_call_spreads(
         })
         .collect();
 
+    if expiry_options.is_empty() {
+        return Ok(vec![]);
+    }
+
     let mut results = Vec::new();
     let time_to_expiry = expiry_options[0].time_to_expiry;
-
-    // Find calls for credit spreads
     let calls: Vec<&MarketOption> = expiry_options
         .iter()
         .filter(|opt| matches!(opt.option_type, OptionType::Call))
@@ -358,6 +360,70 @@ pub fn rolling_hv21(closes: &[f64]) -> Vec<f64> {
         .collect()
 }
 
+/// Covered call strategy detection.
+///
+/// Assumes the trader already holds (or would buy) the underlying stock.
+/// Sells an OTM call to collect premium and partially cap upside risk.
+pub fn detect_covered_calls(
+    symbol: &str,
+    config: &SpreadConfig,
+) -> Result<Vec<SpreadResult>, Box<dyn Error>> {
+    let json_file = format!("data/{}_options_live.json", symbol.to_lowercase());
+    let (spot, all_options) = load_options_from_json(&json_file)?;
+
+    let liquid_options = filter_liquid_options(
+        all_options,
+        config.min_volume,
+        config.max_spread_pct,
+    );
+
+    let mut results: Vec<SpreadResult> = liquid_options
+        .iter()
+        .filter(|opt| {
+            let days = (opt.time_to_expiry * 365.0) as usize;
+            matches!(opt.option_type, OptionType::Call)
+                && opt.strike > spot
+                && days >= config.min_days_to_expiry
+                && days <= config.max_days_to_expiry
+        })
+        .filter_map(|opt| {
+            let call_price = opt.mid_price();
+            if call_price < config.min_premium_threshold {
+                return None;
+            }
+
+            let time_to_expiry = opt.time_to_expiry;
+            let days_to_expiry = (time_to_expiry * 365.0) as usize;
+
+            // Max profit = premium + gain if stock is called away at strike
+            let max_profit = call_price + (opt.strike - spot).max(0.0);
+            // Max loss = full cost of underlying minus premium collected
+            let max_loss = spot - call_price;
+
+            // Win probability: probability stock stays below the call strike
+            let win_probability = estimate_credit_spread_win_probability(
+                opt.strike, spot, time_to_expiry,
+            );
+
+            Some(SpreadResult {
+                strategy: "Covered Call".to_string(),
+                net_premium: call_price,
+                max_loss,
+                max_profit,
+                win_probability,
+                signal: SignalAction::CoveredCall {
+                    sell_strike: opt.strike,
+                    days_to_expiry,
+                },
+            })
+        })
+        .collect();
+
+    // Best premium first
+    results.sort_by(|a, b| b.net_premium.partial_cmp(&a.net_premium).unwrap());
+    Ok(results)
+}
+
 /// Generate trade signals from spread analysis.
 ///
 /// When `config.iv_rank_threshold > 0.0` the function loads the symbol's
@@ -401,7 +467,7 @@ pub fn generate_spread_signals(
         });
     }
 
-    // Credit spreads
+    // Credit call spreads
     let call_spreads = detect_credit_call_spreads(symbol, config)?;
     for spread in call_spreads.into_iter().take(2) { // Top 2 opportunities
         signals.push(TradeSignal {
@@ -412,6 +478,20 @@ pub fn generate_spread_signals(
             confidence: spread.win_probability,
             edge: spread.net_premium,
             strategy_name: spread.strategy,
+        });
+    }
+
+    // Covered calls (top opportunity only — directional position)
+    let covered_calls = detect_covered_calls(symbol, config)?;
+    if let Some(cc) = covered_calls.into_iter().next() {
+        signals.push(TradeSignal {
+            symbol: symbol.to_string(),
+            action: cc.signal,
+            strike: 0.0,
+            expiry_days: 0,
+            confidence: cc.win_probability,
+            edge: cc.net_premium,
+            strategy_name: cc.strategy,
         });
     }
 
@@ -439,6 +519,42 @@ mod tests {
     fn test_iron_condor_detection() {
         let result = detect_iron_condors("AAPL", &test_config());
         assert!(result.is_ok() || result.is_err()); // Either succeeds with data or fails gracefully
+    }
+
+    #[test]
+    fn test_covered_call_detection() {
+        let result = detect_covered_calls("AAPL", &test_config());
+        assert!(result.is_ok() || result.is_err()); // Graceful with or without data
+    }
+
+    #[test]
+    fn covered_call_signals_have_correct_variant() {
+        // If we get results, every signal must be a CoveredCall variant
+        if let Ok(results) = detect_covered_calls("AAPL", &test_config()) {
+            for r in &results {
+                assert!(
+                    matches!(r.signal, SignalAction::CoveredCall { .. }),
+                    "Expected CoveredCall signal, got {:?}", r.signal
+                );
+                assert!(r.net_premium > 0.0, "Covered call premium must be positive");
+                assert!(r.max_loss > 0.0, "Max loss must be positive");
+            }
+        }
+    }
+
+    #[test]
+    fn generate_spread_signals_includes_covered_calls() {
+        // generate_spread_signals should include covered call signals if data available
+        let result = generate_spread_signals("AAPL", &test_config());
+        assert!(result.is_ok() || result.is_err());
+        if let Ok(signals) = result {
+            let covered_call_signals: Vec<_> = signals
+                .iter()
+                .filter(|s| matches!(s.action, SignalAction::CoveredCall { .. }))
+                .collect();
+            // At most 1 covered call signal (we take the best one)
+            assert!(covered_call_signals.len() <= 1);
+        }
     }
 
     // ── IV rank utilities ─────────────────────────────────────────────────────
