@@ -329,22 +329,20 @@ impl HestonMonteCarlo {
     /// eliminating negative variance without ad-hoc reflection / truncation.
     /// The stock price uses a log-scheme whose drift coefficients absorb the
     /// ρ-correlation, so the two driving normals are independent.
-    fn simulate_path(&self, rng: &mut SplitMix64) -> HestonPath {
+    /// Core path simulation driven by pre-generated (z_v, z_s) normal pairs.
+    /// All three public variants delegate here to eliminate duplication.
+    fn simulate_path_from_normals(&self, normals: &[(f64, f64)]) -> HestonPath {
         let dt = self.params.t / self.config.n_steps as f64;
 
-        let mut stock_prices = Vec::with_capacity(self.config.n_steps + 1);
-        let mut variances = Vec::with_capacity(self.config.n_steps + 1);
+        let mut stock_prices = Vec::with_capacity(normals.len() + 1);
+        let mut variances = Vec::with_capacity(normals.len() + 1);
 
         stock_prices.push(self.params.s0);
         variances.push(self.params.v0);
 
-        for _ in 0..self.config.n_steps {
+        for &(z_v, z_s) in normals {
             let s = *stock_prices.last().unwrap();
             let v = *variances.last().unwrap();
-
-            // Two independent standard normals per step
-            let z_v = rng.next_normal();
-            let z_s = rng.next_normal();
 
             let v_new = self.qe_variance_step(v, z_v, dt);
             let s_new = self.qe_stock_step(s, v, v_new, z_s, dt);
@@ -353,10 +351,14 @@ impl HestonMonteCarlo {
             variances.push(v_new);
         }
 
-        HestonPath {
-            stock_prices,
-            variances,
-        }
+        HestonPath { stock_prices, variances }
+    }
+
+    fn simulate_path(&self, rng: &mut SplitMix64) -> HestonPath {
+        let normals: Vec<(f64, f64)> = (0..self.config.n_steps)
+            .map(|_| (rng.next_normal(), rng.next_normal()))
+            .collect();
+        self.simulate_path_from_normals(&normals)
     }
 
     /// Simulate path using antithetic variates (negated random numbers).
@@ -364,60 +366,21 @@ impl HestonMonteCarlo {
     /// (for the quadratic branch −Z flips around b; for the exponential
     /// branch Φ(−Z) = 1 − Φ(Z), which correctly flips the uniform).
     fn simulate_path_antithetic(&self, original_randoms: &[(f64, f64)]) -> HestonPath {
-        let dt = self.params.t / self.config.n_steps as f64;
-
-        let mut stock_prices = Vec::with_capacity(self.config.n_steps + 1);
-        let mut variances = Vec::with_capacity(self.config.n_steps + 1);
-
-        stock_prices.push(self.params.s0);
-        variances.push(self.params.v0);
-
-        for &(z_v, z_s) in original_randoms {
-            let s = *stock_prices.last().unwrap();
-            let v = *variances.last().unwrap();
-
-            // Negate both independent normals for antithetic pair
-            let v_new = self.qe_variance_step(v, -z_v, dt);
-            let s_new = self.qe_stock_step(s, v, v_new, -z_s, dt);
-
-            stock_prices.push(s_new);
-            variances.push(v_new);
-        }
-
-        HestonPath {
-            stock_prices,
-            variances,
-        }
+        let negated: Vec<(f64, f64)> = original_randoms
+            .iter()
+            .map(|&(z_v, z_s)| (-z_v, -z_s))
+            .collect();
+        self.simulate_path_from_normals(&negated)
     }
 
     /// Simulate path and capture random numbers for antithetic pair.
     /// Records (z_v, z_s) independent normal pairs per step.
     fn simulate_path_with_randoms(&self, rng: &mut SplitMix64) -> (HestonPath, Vec<(f64, f64)>) {
-        let dt = self.params.t / self.config.n_steps as f64;
-
-        let mut stock_prices = Vec::with_capacity(self.config.n_steps + 1);
-        let mut variances = Vec::with_capacity(self.config.n_steps + 1);
-        let mut randoms = Vec::with_capacity(self.config.n_steps);
-
-        stock_prices.push(self.params.s0);
-        variances.push(self.params.v0);
-
-        for _ in 0..self.config.n_steps {
-            let s = *stock_prices.last().unwrap();
-            let v = *variances.last().unwrap();
-
-            let z_v = rng.next_normal();
-            let z_s = rng.next_normal();
-            randoms.push((z_v, z_s));
-
-            let v_new = self.qe_variance_step(v, z_v, dt);
-            let s_new = self.qe_stock_step(s, v, v_new, z_s, dt);
-
-            stock_prices.push(s_new);
-            variances.push(v_new);
-        }
-
-        (HestonPath { stock_prices, variances }, randoms)
+        let randoms: Vec<(f64, f64)> = (0..self.config.n_steps)
+            .map(|_| (rng.next_normal(), rng.next_normal()))
+            .collect();
+        let path = self.simulate_path_from_normals(&randoms);
+        (path, randoms)
     }
 
     /// Run Monte Carlo simulation and return all paths
