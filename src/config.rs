@@ -147,3 +147,79 @@ impl VolSurfaceConfigFile {
         Ok(config)
     }
 }
+
+// ═════════════════════════════════════════════════════════════════════════
+// Live-trading bot runtime config  (config/trading_bot_config.json)
+// ═════════════════════════════════════════════════════════════════════════
+
+/// Live-trading parameters loaded from the `"bot_runtime"` key in
+/// `config/trading_bot_config.json`.  Every field has a sensible default
+/// so the bot starts even if the JSON file is absent or incomplete.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BotRuntimeConfig {
+    /// Minimum signal confidence (0–1) required before placing an order.
+    #[serde(default = "BotRuntimeConfig::default_min_confidence")]
+    pub min_confidence: f64,
+    /// Halt new orders once estimated daily spend exceeds this fraction of equity (0–1).
+    #[serde(default = "BotRuntimeConfig::default_max_daily_loss_pct")]
+    pub max_daily_loss_pct: f64,
+    /// Minimum seconds between signals on the same symbol.
+    #[serde(default = "BotRuntimeConfig::default_signal_cooldown_secs")]
+    pub signal_cooldown_secs: u64,
+    /// Rolling price-buffer size (number of ticks to keep per symbol).
+    #[serde(default = "BotRuntimeConfig::default_max_price_buf")]
+    pub max_price_buf: usize,
+    /// Minimum ticks in buffer before HV-21 can be computed (need 22 log-returns).
+    #[serde(default = "BotRuntimeConfig::default_min_prices_for_hv")]
+    pub min_prices_for_hv: usize,
+}
+
+impl BotRuntimeConfig {
+    fn default_min_confidence()       -> f64  { 0.60 }
+    fn default_max_daily_loss_pct()   -> f64  { 0.05 }
+    fn default_signal_cooldown_secs() -> u64  { 300  }
+    fn default_max_price_buf()        -> usize { 50  }
+    fn default_min_prices_for_hv()    -> usize { 22  }
+}
+
+impl Default for BotRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            min_confidence:       Self::default_min_confidence(),
+            max_daily_loss_pct:   Self::default_max_daily_loss_pct(),
+            signal_cooldown_secs: Self::default_signal_cooldown_secs(),
+            max_price_buf:        Self::default_max_price_buf(),
+            min_prices_for_hv:    Self::default_min_prices_for_hv(),
+        }
+    }
+}
+
+/// Top-level wrapper matching `config/trading_bot_config.json`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TradingBotConfigFile {
+    /// Runtime parameters used by the live-trading bot.
+    #[serde(default)]
+    pub bot_runtime: BotRuntimeConfig,
+}
+
+impl TradingBotConfigFile {
+    /// Load runtime config from `config/trading_bot_config.json`.
+    ///
+    /// Falls back to [`BotRuntimeConfig::default`] on any file or parse error
+    /// so the bot always starts with safe defaults.
+    pub fn load() -> BotRuntimeConfig {
+        let path = "config/trading_bot_config.json";
+        match fs::read_to_string(path) {
+            Ok(content) => serde_json::from_str::<TradingBotConfigFile>(&content)
+                .map(|f| f.bot_runtime)
+                .unwrap_or_else(|e| {
+                    log::warn!("trading_bot_config.json parse error: {} -- using defaults", e);
+                    BotRuntimeConfig::default()
+                }),
+            Err(_) => {
+                log::warn!("config/trading_bot_config.json not found -- using defaults");
+                BotRuntimeConfig::default()
+            }
+        }
+    }
+}

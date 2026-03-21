@@ -11,16 +11,18 @@ use sqlx::{Row, SqlitePool};
 /// A single trade execution persisted to the database.
 #[derive(Debug, Clone)]
 pub struct TradeRecord {
-    pub symbol:      String,
+    pub symbol:        String,
     /// "buy" | "sell" | "sell_short" | "buy_to_cover" | "tick"
-    pub action:      String,
-    pub quantity:    f64,
-    pub price:       f64,
-    pub order_id:    Option<String>,
-    pub fill_status: Option<String>,
-    pub strategy:    Option<String>,
+    pub action:        String,
+    pub quantity:      f64,
+    pub price:         f64,
+    pub order_id:      Option<String>,
+    pub fill_status:   Option<String>,
+    pub strategy:      Option<String>,
+    /// Human-readable error description when `fill_status = "rejected"` / `"error"`.
+    pub error_message: Option<String>,
     /// RFC-3339 timestamp
-    pub timestamp:   String,
+    pub timestamp:     String,
 }
 
 /// An open (or recently closed) position.
@@ -32,6 +34,8 @@ pub struct PositionRecord {
     /// RFC-3339 date of entry
     pub entry_date:  String,
     pub strategy:    Option<String>,
+    /// RFC-3339 datetime when the option expires (None for equity positions).
+    pub expires_at:  Option<String>,
 }
 
 // ─── TradeStore ───────────────────────────────────────────────────────────
@@ -69,17 +73,29 @@ impl TradeStore {
 
     /// Idempotent schema migration — safe to call on every start-up.
     async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+        // ── Schema version tracking ───────────────────────────────────────
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS schema_version (
+                version     INTEGER PRIMARY KEY,
+                applied_at  TEXT NOT NULL
+            )",
+        )
+        .execute(pool)
+        .await?;
+
+        // ── Core tables ───────────────────────────────────────────────
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS trades (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                symbol      TEXT    NOT NULL,
-                action      TEXT    NOT NULL,
-                quantity    REAL    NOT NULL,
-                price       REAL    NOT NULL,
-                order_id    TEXT,
-                fill_status TEXT,
-                strategy    TEXT,
-                timestamp   TEXT    NOT NULL
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol        TEXT    NOT NULL,
+                action        TEXT    NOT NULL,
+                quantity      REAL    NOT NULL,
+                price         REAL    NOT NULL,
+                order_id      TEXT,
+                fill_status   TEXT,
+                strategy      TEXT,
+                error_message TEXT,
+                timestamp     TEXT    NOT NULL
             )",
         )
         .execute(pool)
@@ -91,11 +107,34 @@ impl TradeStore {
                 qty         REAL NOT NULL,
                 entry_price REAL NOT NULL,
                 entry_date  TEXT NOT NULL,
-                strategy    TEXT
+                strategy    TEXT,
+                expires_at  TEXT
             )",
         )
         .execute(pool)
         .await?;
+
+        // ── Additive column migrations (ignored if column already exists) ───
+        let _ = sqlx::query("ALTER TABLE trades ADD COLUMN error_message TEXT")
+            .execute(pool).await;
+        let _ = sqlx::query("ALTER TABLE positions ADD COLUMN expires_at TEXT")
+            .execute(pool).await;
+
+        // ── Indexes ────────────────────────────────────────────────
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_trades_symbol    ON trades(symbol)"
+        ).execute(pool).await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_trades_timestamp ON trades(timestamp)"
+        ).execute(pool).await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_trades_status    ON trades(fill_status)"
+        ).execute(pool).await?;
+
+        // Record this migration run (version = 3, matching Tier 3)
+        sqlx::query(
+            "INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (3, datetime('now'))"
+        ).execute(pool).await?;
 
         Ok(())
     }
@@ -104,8 +143,8 @@ impl TradeStore {
     pub async fn insert_trade(&self, r: &TradeRecord) -> Result<(), sqlx::Error> {
         sqlx::query(
             "INSERT INTO trades
-             (symbol, action, quantity, price, order_id, fill_status, strategy, timestamp)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             (symbol, action, quantity, price, order_id, fill_status, strategy, error_message, timestamp)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         )
         .bind(&r.symbol)
         .bind(&r.action)
@@ -114,6 +153,7 @@ impl TradeStore {
         .bind(&r.order_id)
         .bind(&r.fill_status)
         .bind(&r.strategy)
+        .bind(&r.error_message)
         .bind(&r.timestamp)
         .execute(&self.pool)
         .await?;
@@ -124,14 +164,15 @@ impl TradeStore {
     pub async fn upsert_position(&self, p: &PositionRecord) -> Result<(), sqlx::Error> {
         sqlx::query(
             "INSERT OR REPLACE INTO positions
-             (symbol, qty, entry_price, entry_date, strategy)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+             (symbol, qty, entry_price, entry_date, strategy, expires_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         )
         .bind(&p.symbol)
         .bind(p.qty)
         .bind(p.entry_price)
         .bind(&p.entry_date)
         .bind(&p.strategy)
+        .bind(&p.expires_at)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -149,7 +190,7 @@ impl TradeStore {
     /// Return all currently open positions.
     pub async fn get_open_positions(&self) -> Result<Vec<PositionRecord>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT symbol, qty, entry_price, entry_date, strategy FROM positions",
+            "SELECT symbol, qty, entry_price, entry_date, strategy, expires_at FROM positions",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -162,6 +203,7 @@ impl TradeStore {
                 entry_price: row.get("entry_price"),
                 entry_date:  row.get("entry_date"),
                 strategy:    row.get("strategy"),
+                expires_at:  row.get("expires_at"),
             })
             .collect())
     }
@@ -172,7 +214,7 @@ impl TradeStore {
         limit: u32,
     ) -> Result<Vec<TradeRecord>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT symbol, action, quantity, price, order_id, fill_status, strategy, timestamp
+            "SELECT symbol, action, quantity, price, order_id, fill_status, strategy, error_message, timestamp
              FROM trades
              ORDER BY id DESC
              LIMIT ?1",
@@ -184,14 +226,15 @@ impl TradeStore {
         Ok(rows
             .into_iter()
             .map(|row| TradeRecord {
-                symbol:      row.get("symbol"),
-                action:      row.get("action"),
-                quantity:    row.get("quantity"),
-                price:       row.get("price"),
-                order_id:    row.get("order_id"),
-                fill_status: row.get("fill_status"),
-                strategy:    row.get("strategy"),
-                timestamp:   row.get("timestamp"),
+                symbol:        row.get("symbol"),
+                action:        row.get("action"),
+                quantity:      row.get("quantity"),
+                price:         row.get("price"),
+                order_id:      row.get("order_id"),
+                fill_status:   row.get("fill_status"),
+                strategy:      row.get("strategy"),
+                error_message: row.get("error_message"),
+                timestamp:     row.get("timestamp"),
             })
             .collect())
     }

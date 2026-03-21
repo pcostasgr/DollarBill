@@ -1,4 +1,11 @@
 {
+  "bot_runtime": {
+    "min_confidence":       0.60,
+    "max_daily_loss_pct":   0.05,
+    "signal_cooldown_secs": 300,
+    "max_price_buf":        50,
+    "min_prices_for_hv":    22
+  },
   "trading": {
     "position_size_shares": 100,
     "max_positions": 3,
