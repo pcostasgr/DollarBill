@@ -2,7 +2,9 @@
 // Called when `dollarbill trade --live` (or `--dry-run`) is invoked.
 
 use crate::alpaca::AlpacaClient;
+use crate::analysis::regime_detector::RegimeDetector;
 use crate::config;
+use crate::market_data::csv_loader::load_csv_closes;
 use crate::models::bs_mod::compute_historical_vol;
 use crate::models::heston::heston_start;
 use crate::persistence;
@@ -16,6 +18,7 @@ use crate::strategies::{
     cash_secured_puts::CashSecuredPuts,
 };
 use crate::streaming;
+use chrono::{Duration, NaiveDate, Utc};
 use log::{info, warn, error};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
@@ -69,12 +72,13 @@ pub async fn run_live_bot(
                 if !sqlite_syms.contains(&ap.symbol) {
                     println!("  📥 Importing {} from Alpaca into SQLite", ap.symbol);
                     let rec = persistence::PositionRecord {
-                        symbol:      ap.symbol.clone(),
-                        qty:         ap.qty.parse::<f64>().unwrap_or(0.0),
-                        entry_price: ap.avg_entry_price.parse::<f64>().unwrap_or(0.0),
-                        entry_date:  "reconciled".to_string(),
-                        strategy:    Some("reconciled".to_string()),
-                        expires_at:  None,
+                        symbol:            ap.symbol.clone(),
+                        qty:               ap.qty.parse::<f64>().unwrap_or(0.0),
+                        entry_price:       ap.avg_entry_price.parse::<f64>().unwrap_or(0.0),
+                        entry_date:        "reconciled".to_string(),
+                        strategy:          Some("reconciled".to_string()),
+                        expires_at:        None,
+                        premium_collected: None,
                     };
                     let _ = store.upsert_position(&rec).await;
                 }
@@ -87,6 +91,9 @@ pub async fn run_live_bot(
     let reconciled = store.get_open_positions().await.unwrap_or_default();
     let mut open_syms: HashSet<String> =
         reconciled.iter().map(|p| p.symbol.clone()).collect();
+    // Full position records in memory for close-logic lookups.
+    let mut open_positions: HashMap<String, persistence::PositionRecord> =
+        reconciled.into_iter().map(|p| (p.symbol.clone(), p)).collect();
     if !open_syms.is_empty() {
         println!("  [LOCK] {} open position(s) -- skipping duplicate entries",
             open_syms.len());
@@ -94,18 +101,57 @@ pub async fn run_live_bot(
 
     // ── Load runtime config ───────────────────────────────────────────────
     let bot_cfg = config::TradingBotConfigFile::load();
-    info!("Bot config: min_confidence={:.2} max_daily_loss={:.1}% cooldown={}s",
+    info!("Bot config: min_confidence={:.2} max_daily_loss={:.1}% cooldown={}s \
+profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
         bot_cfg.min_confidence,
         bot_cfg.max_daily_loss_pct * 100.0,
-        bot_cfg.signal_cooldown_secs);
+        bot_cfg.signal_cooldown_secs,
+        bot_cfg.profit_target_pct  * 100.0,
+        bot_cfg.stop_loss_pct      * 100.0,
+        bot_cfg.max_position_days,
+        bot_cfg.min_vol_percentile * 100.0);
 
-    let signal_cooldown_secs = bot_cfg.signal_cooldown_secs;
-    let min_prices_for_hv    = bot_cfg.min_prices_for_hv;
-    let max_price_buf        = bot_cfg.max_price_buf;
-    let min_confidence       = bot_cfg.min_confidence;
-    let max_daily_loss       = equity * bot_cfg.max_daily_loss_pct;
+    let signal_cooldown_secs  = bot_cfg.signal_cooldown_secs;
+    let min_prices_for_hv     = bot_cfg.min_prices_for_hv;
+    let max_price_buf         = bot_cfg.max_price_buf;
+    let min_confidence        = bot_cfg.min_confidence;
+    let profit_target_pct     = bot_cfg.profit_target_pct;
+    let stop_loss_pct         = bot_cfg.stop_loss_pct;
+    let max_position_days     = bot_cfg.max_position_days;
+    let min_vol_percentile    = bot_cfg.min_vol_percentile;
+    let max_daily_loss        = equity * bot_cfg.max_daily_loss_pct;
     let mut estimated_daily_loss = 0.0_f64;
     let mut circuit_broken       = false;
+
+    // ── Load per-symbol vol history for HV-rank gate (P2.2) ──────────────
+    // For each symbol, compute the 40th-percentile of rolling-22-day HV from
+    // the one-year CSV.  Signals are skipped if current HV is below this floor.
+    let mut vol_p40_threshold: HashMap<String, f64> = HashMap::new();
+    for sym in &symbols {
+        let csv = format!("data/{}_one_year.csv", sym.to_lowercase());
+        let alt = format!("data/{}_five_year.csv", sym.to_lowercase());
+        let path = if std::path::Path::new(&csv).exists() { csv } else { alt };
+        match load_csv_closes(&path) {
+            Ok(history) if history.len() >= 23 => {
+                let closes: Vec<f64> = history.iter().map(|d| d.close).collect();
+                let mut hvs: Vec<f64> = closes
+                    .windows(22)
+                    .map(|w| compute_historical_vol(w))
+                    .filter(|v| v.is_finite() && *v > 0.0)
+                    .collect();
+                if !hvs.is_empty() {
+                    hvs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                    let idx = ((hvs.len() as f64) * min_vol_percentile) as usize;
+                    let threshold = hvs[idx.min(hvs.len() - 1)];
+                    println!("  📈 {} HV p{:.0} threshold: {:.1}%",
+                        sym, min_vol_percentile * 100.0, threshold * 100.0);
+                    vol_p40_threshold.insert(sym.clone(), threshold);
+                }
+            }
+            Ok(_)  => warn!("Not enough history for {} vol rank — gate disabled", sym),
+            Err(e) => warn!("Could not load vol history for {}: {} — gate disabled", sym, e),
+        }
+    }
 
     // ── Strategy registry ─────────────────────────────────────────────────
     let mut registry = StrategyRegistry::new();
@@ -183,13 +229,115 @@ pub async fn run_live_bot(
                 let heston = heston_start(price, sigma, 1.0, 0.05);
                 let model_iv = heston.v0.sqrt();
 
+                // ── P2.1 Position close check ─────────────────────────────
+                if open_syms.contains(&sym) {
+                    if let Some(pos) = open_positions.get(&sym) {
+                        let today = Utc::now().date_naive();
+                        let mut should_close = false;
+                        let mut close_reason = String::new();
+
+                        // Days-based close: force exit after max_position_days
+                        if let Some(exp_str) = &pos.expires_at {
+                            if let Ok(exp_date) = NaiveDate::parse_from_str(exp_str, "%Y-%m-%d") {
+                                let remaining = (exp_date - today).num_days();
+                                if remaining <= 0 {
+                                    should_close = true;
+                                    close_reason = "expired / max days reached".to_string();
+                                } else if remaining <= 1 {
+                                    // 1 DTE — exit day before expiry to avoid pin risk
+                                    should_close = true;
+                                    close_reason = format!("1 DTE early exit (exp {})", exp_str);
+                                } else {
+                                    // P&L-based close using ATM option repricing
+                                    if let Some(entry_premium) = pos.premium_collected {
+                                        if entry_premium > 0.0 {
+                                            let remaining_t = (remaining as f64 / 365.0).max(1.0 / 365.0);
+                                            let current_val = price * sigma * remaining_t.sqrt();
+                                            let pct = current_val / entry_premium;
+                                            if pct <= profit_target_pct {
+                                                should_close = true;
+                                                close_reason = format!(
+                                                    "profit target hit ({:.0}% of premium remaining)",
+                                                    pct * 100.0);
+                                            } else if pct >= stop_loss_pct {
+                                                should_close = true;
+                                                close_reason = format!(
+                                                    "stop loss hit ({:.0}% of premium = {:.0}% loss)",
+                                                    pct * 100.0,
+                                                    (pct - 1.0) * 100.0);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            // No expiry stored — use calendar days from entry
+                            if let Ok(entry_date) = NaiveDate::parse_from_str(
+                                    &pos.entry_date[..10], "%Y-%m-%d") {
+                                let age = (today - entry_date).num_days();
+                                if age >= max_position_days {
+                                    should_close = true;
+                                    close_reason = format!("max {} days elapsed", age);
+                                }
+                            }
+                        }
+
+                        if should_close {
+                            info!("Closing {} ({}): {}", sym, pos.strategy.as_deref().unwrap_or("?"), close_reason);
+                            println!("  🔒 Closing {} — {}", sym, close_reason);
+                            if !dry_run {
+                                match client.close_position(&sym).await {
+                                    Ok(_) => {
+                                        let _ = store.close_position(&sym).await;
+                                        open_syms.remove(&sym);
+                                        open_positions.remove(&sym);
+                                        println!("    ✅ {} closed", sym);
+                                    }
+                                    Err(e) => {
+                                        error!("close_position failed for {}: {}", sym, e);
+                                        eprintln!("    ⚠️  Close failed for {}: {}", sym, e);
+                                    }
+                                }
+                            } else {
+                                println!("    [DRY RUN] Would close {}", sym);
+                            }
+                            continue; // Skip signal generation this tick — position is being closed
+                        }
+                    }
+                    // Position is open and not ready to close; skip new-entry signals
+                    continue;
+                }
+
+                // ── P2.2 HV-rank gate: skip low-IV environments ───────────
+                if let Some(&hv_floor) = vol_p40_threshold.get(&sym) {
+                    if sigma < hv_floor {
+                        // Current vol is below the 40th percentile — premium too thin
+                        continue;
+                    }
+                }
+
+                // ── P2.3 Regime detection ─────────────────────────────────
+                let trend_strength = {
+                    let n = prices.len();
+                    if n >= 2 {
+                        (prices[n - 1] / prices[0] - 1.0) / 0.10
+                    } else {
+                        0.0
+                    }
+                };
+                let regime = RegimeDetector::detect_from_scalars(sigma, trend_strength);
+
                 // Generate signals
                 let signals = registry.generate_all_signals(&sym, price, sigma, model_iv, sigma);
                 let actionable: Vec<_> = signals.iter()
                     .filter(|s| {
-                        s.confidence >= min_confidence
-                            && !matches!(s.action, SignalAction::NoAction)
-                            && !matches!(s.action, SignalAction::ClosePosition { .. })
+                        // Base confidence gate
+                        if s.confidence < min_confidence { return false; }
+                        if matches!(s.action, SignalAction::NoAction) { return false; }
+                        if matches!(s.action, SignalAction::ClosePosition { .. }) { return false; }
+                        // Regime weight gate: skip strategies with weight < 0.5
+                        let weight = RegimeDetector::weight_for(&regime, &s.strategy_name);
+                        s.confidence * weight >= min_confidence
                     })
                     .collect();
 
@@ -209,9 +357,9 @@ pub async fn run_live_bot(
                     println!("  Risk [{}]: {}", sym, w);
                 }
 
-                info!("Signal [{}] ${:.2} vol={:.1}% -- {} actionable signal(s)",
-                    sym, price, sigma * 100.0, actionable.len());
-                println!("[{}]  ${:.2}  vol={:.1}%", sym, price, sigma * 100.0);
+                info!("Signal [{}] ${:.2} vol={:.1}% regime={:?} -- {} actionable signal(s)",
+                    sym, price, sigma * 100.0, regime, actionable.len());
+                println!("[{}]  ${:.2}  vol={:.1}%  regime={:?}", sym, price, sigma * 100.0, regime);
                 for sig in &actionable {
                     let qty = decision.suggested_size.max(1) as u32;
                     println!("  📊 [{:<22}]  {:?}  K=${:.2}  exp={}d  conf={:.0}%  edge=${:.2}",
@@ -243,19 +391,23 @@ pub async fn run_live_bot(
                                         error!("CIRCUIT BREAKER: daily spend ${:.2} >= limit ${:.2} -- halting new orders",
                                             estimated_daily_loss, max_daily_loss);
                                     }
+                                    let expiry_date = Utc::now().date_naive()
+                                        + Duration::days(sig.expiry_days as i64);
                                     let pos = persistence::PositionRecord {
-                                        symbol:      sym.clone(),
-                                        qty:         qty as f64,
-                                        entry_price: price,
-                                        entry_date:  ts.clone(),
-                                        strategy:    Some(sig.strategy_name.clone()),
-                                        expires_at:  None,
+                                        symbol:            sym.clone(),
+                                        qty:               qty as f64,
+                                        entry_price:       price,
+                                        entry_date:        ts.clone(),
+                                        strategy:          Some(sig.strategy_name.clone()),
+                                        expires_at:        Some(expiry_date.format("%Y-%m-%d").to_string()),
+                                        premium_collected: Some(rough_premium),
                                     };
                                     if let Err(e) = store.upsert_position(&pos).await {
                                         error!("DB position upsert failed: {}", e);
                                         eprintln!("DB position error: {}", e);
                                     } else {
                                         open_syms.insert(sym.clone());
+                                        open_positions.insert(sym.clone(), pos);
                                     }
                                 }
                                 Err(e) => {

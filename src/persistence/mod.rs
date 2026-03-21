@@ -28,14 +28,16 @@ pub struct TradeRecord {
 /// An open (or recently closed) position.
 #[derive(Debug, Clone)]
 pub struct PositionRecord {
-    pub symbol:      String,
-    pub qty:         f64,
-    pub entry_price: f64,
+    pub symbol:            String,
+    pub qty:               f64,
+    pub entry_price:       f64,
     /// RFC-3339 date of entry
-    pub entry_date:  String,
-    pub strategy:    Option<String>,
-    /// RFC-3339 datetime when the option expires (None for equity positions).
-    pub expires_at:  Option<String>,
+    pub entry_date:        String,
+    pub strategy:          Option<String>,
+    /// ISO-8601 date when the option expires (None for equity / unknown).
+    pub expires_at:        Option<String>,
+    /// ATM option premium collected (or paid) at entry — used for P&L close checks.
+    pub premium_collected: Option<f64>,
 }
 
 // ─── TradeStore ───────────────────────────────────────────────────────────
@@ -120,6 +122,8 @@ impl TradeStore {
             .execute(pool).await;
         let _ = sqlx::query("ALTER TABLE positions ADD COLUMN expires_at TEXT")
             .execute(pool).await;
+        let _ = sqlx::query("ALTER TABLE positions ADD COLUMN premium_collected REAL")
+            .execute(pool).await;
 
         // ── Indexes ────────────────────────────────────────────────
         sqlx::query(
@@ -165,8 +169,8 @@ impl TradeStore {
     pub async fn upsert_position(&self, p: &PositionRecord) -> Result<(), sqlx::Error> {
         sqlx::query(
             "INSERT OR REPLACE INTO positions
-             (symbol, qty, entry_price, entry_date, strategy, expires_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+             (symbol, qty, entry_price, entry_date, strategy, expires_at, premium_collected)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         )
         .bind(&p.symbol)
         .bind(p.qty)
@@ -174,6 +178,7 @@ impl TradeStore {
         .bind(&p.entry_date)
         .bind(&p.strategy)
         .bind(&p.expires_at)
+        .bind(p.premium_collected)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -191,7 +196,7 @@ impl TradeStore {
     /// Return all currently open positions.
     pub async fn get_open_positions(&self) -> Result<Vec<PositionRecord>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT symbol, qty, entry_price, entry_date, strategy, expires_at FROM positions",
+            "SELECT symbol, qty, entry_price, entry_date, strategy, expires_at, premium_collected FROM positions",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -199,12 +204,13 @@ impl TradeStore {
         Ok(rows
             .into_iter()
             .map(|row| PositionRecord {
-                symbol:      row.get("symbol"),
-                qty:         row.get("qty"),
-                entry_price: row.get("entry_price"),
-                entry_date:  row.get("entry_date"),
-                strategy:    row.get("strategy"),
-                expires_at:  row.get("expires_at"),
+                symbol:            row.get("symbol"),
+                qty:               row.get("qty"),
+                entry_price:       row.get("entry_price"),
+                entry_date:        row.get("entry_date"),
+                strategy:          row.get("strategy"),
+                expires_at:        row.get("expires_at"),
+                premium_collected: row.get("premium_collected"),
             })
             .collect())
     }

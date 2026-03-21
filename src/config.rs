@@ -172,6 +172,21 @@ pub struct BotRuntimeConfig {
     /// Minimum ticks in buffer before HV-21 can be computed (need 22 log-returns).
     #[serde(default = "BotRuntimeConfig::default_min_prices_for_hv")]
     pub min_prices_for_hv: usize,
+    /// Close short position when the repriced option value falls to this fraction
+    /// of the collected premium (e.g. 0.50 = take profit at 50% of max profit).
+    #[serde(default = "BotRuntimeConfig::default_profit_target_pct")]
+    pub profit_target_pct: f64,
+    /// Close short position when the repriced option value reaches this multiple
+    /// of the collected premium (e.g. 2.0 = stop loss at 200% of premium).
+    #[serde(default = "BotRuntimeConfig::default_stop_loss_pct")]
+    pub stop_loss_pct: f64,
+    /// Force-close any open position after this many calendar days regardless of P&L.
+    #[serde(default = "BotRuntimeConfig::default_max_position_days")]
+    pub max_position_days: i64,
+    /// Minimum HV percentile vs 252-day history required to enter a short-vol
+    /// position (0–1). Signals skipped when realized vol is below this floor.
+    #[serde(default = "BotRuntimeConfig::default_min_vol_percentile")]
+    pub min_vol_percentile: f64,
 }
 
 impl BotRuntimeConfig {
@@ -180,6 +195,10 @@ impl BotRuntimeConfig {
     fn default_signal_cooldown_secs() -> u64  { 300  }
     fn default_max_price_buf()        -> usize { 50  }
     fn default_min_prices_for_hv()    -> usize { 22  }
+    fn default_profit_target_pct()    -> f64  { 0.50 }
+    fn default_stop_loss_pct()        -> f64  { 2.00 }
+    fn default_max_position_days()    -> i64  { 21   }
+    fn default_min_vol_percentile()   -> f64  { 0.40 }
 }
 
 impl Default for BotRuntimeConfig {
@@ -190,6 +209,10 @@ impl Default for BotRuntimeConfig {
             signal_cooldown_secs: Self::default_signal_cooldown_secs(),
             max_price_buf:        Self::default_max_price_buf(),
             min_prices_for_hv:    Self::default_min_prices_for_hv(),
+            profit_target_pct:    Self::default_profit_target_pct(),
+            stop_loss_pct:        Self::default_stop_loss_pct(),
+            max_position_days:    Self::default_max_position_days(),
+            min_vol_percentile:   Self::default_min_vol_percentile(),
         }
     }
 }
