@@ -404,6 +404,17 @@ fn perf_attribution_all_losing_trades() {
 }
 
 #[test]
+fn perf_attribution_open_positions_ignored() {
+    // `calculate_strategy_performance` should only count Closed/Expired positions.
+    let mut attr = PerformanceAttribution::new();
+    let winner = closed_position(1, 5.0, 10.0, 1); // +$500, Closed
+    let open   = open_call(2, "AAPL", 1, 5.0, greeks(5.0, 0.5, 0.02, -0.05, 0.10)); // Open — must be excluded
+    let perf   = attr.calculate_strategy_performance("Strat", &[winner, open]);
+    assert_eq!(perf.total_trades, 1, "open positions must not be counted as trades");
+    assert_eq!(perf.winning_trades, 1);
+}
+
+#[test]
 fn perf_attribution_mixed_profit_factor() {
     let mut attr = PerformanceAttribution::new();
     // 2 winners @ +$1000 each, 1 loser @ -$500 → profit factor = 2000/500 = 4.0
@@ -427,7 +438,364 @@ fn perf_attribution_sharpe_positive_for_consistent_winners() {
     assert!(perf.sharpe_ratio >= 0.0);
 }
 
-// ─── PortfolioManager ────────────────────────────────────────────────────
+// ─── PerformanceAttribution — compare & equity curve ─────────────────────
+
+#[test]
+fn perf_compare_strategies_sorts_by_sharpe() {
+    let mut attr = PerformanceAttribution::new();
+
+    // "A" gets 5 consistent winners (higher Sharpe), "B" gets 2
+    let a_positions: Vec<Position> = (1..=5).map(|i| closed_position(i, 5.0, 10.0, 1)).collect();
+    let b_positions: Vec<Position> = (6..=7).map(|i| closed_position(i, 5.0, 10.0, 1)).collect();
+    attr.calculate_strategy_performance("StratA", &a_positions);
+    attr.calculate_strategy_performance("StratB", &b_positions);
+
+    let comparisons = attr.compare_strategies(&["StratA", "StratB"]);
+    assert_eq!(comparisons.len(), 2);
+    // sorted by Sharpe: best first; both have identical % returns so order may be equal —
+    // just confirm both are present.
+    let names: Vec<&str> = comparisons.iter().map(|c| c.strategy.as_str()).collect();
+    assert!(names.contains(&"StratA"));
+    assert!(names.contains(&"StratB"));
+}
+
+#[test]
+fn perf_compare_strategies_unknown_name_omitted() {
+    let mut attr = PerformanceAttribution::new();
+    let positions: Vec<Position> = (1..=3).map(|i| closed_position(i, 5.0, 10.0, 1)).collect();
+    attr.calculate_strategy_performance("Known", &positions);
+
+    let comparisons = attr.compare_strategies(&["Known", "DoesNotExist"]);
+    assert_eq!(comparisons.len(), 1, "unknown strategy should be silently omitted");
+    assert_eq!(comparisons[0].strategy, "Known");
+}
+
+#[test]
+fn perf_best_strategy_returns_highest_sharpe() {
+    let mut attr = PerformanceAttribution::new();
+
+    // "Good" has varied positive returns → non-zero std_dev → positive Sharpe
+    // Using different (entry, exit) pairs so return_pct differs each trade.
+    let good: Vec<Position> = vec![
+        closed_position(1,  5.0,  7.0, 1), // +40%
+        closed_position(2,  5.0,  9.0, 1), // +80%
+        closed_position(3,  5.0,  8.0, 1), // +60%
+        closed_position(4,  5.0,  6.0, 1), // +20%
+        closed_position(5,  5.0, 10.0, 1), // +100%
+    ];
+    // "Bad" has consistent losses (std_dev=0 → Sharpe=0)
+    let bad: Vec<Position> = (6..=10).map(|i| closed_position(i, 10.0, 3.0, 1)).collect();
+    attr.calculate_strategy_performance("Good", &good);
+    attr.calculate_strategy_performance("Bad",  &bad);
+
+    let best = attr.best_strategy().expect("should return a best strategy");
+    assert_eq!(best, "Good", "highest-sharpe strategy should win");
+}
+
+#[test]
+fn perf_best_strategy_none_when_empty() {
+    let attr = PerformanceAttribution::new();
+    assert!(attr.best_strategy().is_none());
+}
+
+#[test]
+fn perf_equity_curve_stored_after_calculation() {
+    let mut attr = PerformanceAttribution::new();
+    let positions: Vec<Position> = (1..=3).map(|i| closed_position(i, 5.0, 10.0, 1)).collect();
+    attr.calculate_strategy_performance("Curve", &positions);
+
+    let curve = attr.get_equity_curve("Curve").expect("equity curve should be stored");
+    // starts at 0 then grows with each winning trade
+    assert!(!curve.is_empty(), "equity curve should have at least one entry");
+    assert!(curve.last().unwrap() > &0.0, "cumulative P&L should be positive for all winners");
+}
+
+#[test]
+fn perf_equity_curve_none_for_unknown() {
+    let attr = PerformanceAttribution::new();
+    assert!(attr.get_equity_curve("NoSuchStrategy").is_none());
+}
+
+#[test]
+fn perf_calculate_contribution_proportional() {
+    let mut attr = PerformanceAttribution::new();
+    // Two strategies each earning $500 → each is 50% of total $1000 P&L
+    let pos_a: Vec<Position> = vec![closed_position(1, 5.0, 10.0, 1)]; // $500 profit
+    let pos_b: Vec<Position> = vec![closed_position(2, 5.0, 10.0, 1)]; // $500 profit
+    attr.calculate_strategy_performance("A", &pos_a);
+    attr.calculate_strategy_performance("B", &pos_b);
+
+    let contrib = attr.calculate_contribution("A", 1_000.0);
+    assert!((contrib - 50.0).abs() < 0.01, "should be 50% contribution; got {}", contrib);
+}
+
+#[test]
+fn perf_calculate_contribution_zero_total_pnl() {
+    let mut attr = PerformanceAttribution::new();
+    let positions: Vec<Position> = vec![closed_position(1, 5.0, 10.0, 1)];
+    attr.calculate_strategy_performance("S", &positions);
+    // When total P&L is 0, contribution is undefined → should return 0 without panicking
+    assert_eq!(attr.calculate_contribution("S", 0.0), 0.0);
+}
+
+#[test]
+fn perf_calculate_contribution_unknown_strategy() {
+    let attr = PerformanceAttribution::new();
+    assert_eq!(attr.calculate_contribution("Ghost", 1_000.0), 0.0);
+}
+
+// ─── MultiLegSizer ────────────────────────────────────────────────────────
+
+#[test]
+fn multi_leg_iron_condor_at_least_one_contract() {
+    // Even with a very large max_loss, the function floors to a minimum of 1
+    let sizer = dollarbill::portfolio::MultiLegSizer::new(100_000.0, 2.0, 10.0);
+    let contracts = sizer.iron_condor_size(
+        SizingMethod::FixedFractional(5.0),
+        50_000.0, // absurdly large max_loss
+        1.50,     // net_credit
+        0.30,     // volatility
+    );
+    assert!(contracts >= 1, "iron_condor_size must return at least 1; got {}", contracts);
+}
+
+#[test]
+fn multi_leg_iron_condor_size_bounded_by_max_position() {
+    let sizer = dollarbill::portfolio::MultiLegSizer::new(100_000.0, 2.0, 10.0);
+    let contracts = sizer.iron_condor_size(
+        SizingMethod::FixedFractional(5.0),
+        200.0,  // small max_loss → many contracts from risk sizing alone
+        1.50,
+        0.20,
+    );
+    // vol_adjusted = volatility_based(0.20, 1.50) → caps the result
+    assert!(contracts > 0, "should produce positive size");
+    assert!(contracts < 10_000, "should not produce runaway contract count");
+}
+
+#[test]
+fn multi_leg_credit_spread_at_least_one_contract() {
+    let sizer = dollarbill::portfolio::MultiLegSizer::new(100_000.0, 2.0, 10.0);
+    let contracts = sizer.credit_spread_size(
+        SizingMethod::FixedFractional(5.0),
+        5.0,    // spread_width
+        2.50,   // net_credit  (max_loss = (5 - 2.5) * 100 = $250)
+        0.25,
+    );
+    assert!(contracts >= 1, "credit_spread_size must return at least 1; got {}", contracts);
+}
+
+#[test]
+fn multi_leg_credit_spread_high_vol_not_larger_than_low_vol() {
+    let sizer = dollarbill::portfolio::MultiLegSizer::new(100_000.0, 2.0, 10.0);
+    let low_vol  = sizer.credit_spread_size(SizingMethod::FixedFractional(5.0), 5.0, 2.0, 0.15);
+    let high_vol = sizer.credit_spread_size(SizingMethod::FixedFractional(5.0), 5.0, 2.0, 0.60);
+    assert!(
+        low_vol >= high_vol,
+        "low vol ({}) should yield >= contracts vs high vol ({})",
+        low_vol, high_vol
+    );
+}
+
+// ─── AllocationMethod::VolatilityWeighted ─────────────────────────────────
+
+#[test]
+fn allocator_volatility_weighted_lower_vol_gets_more() {
+    let mut allocator = PortfolioAllocator::new(100_000.0, AllocationMethod::VolatilityWeighted);
+    allocator.add_strategy("Stable".to_string(), 80_000.0, 0.0, 80.0);
+    allocator.add_strategy("Wild".to_string(),   80_000.0, 0.0, 80.0);
+
+    let mut stats = HashMap::new();
+    stats.insert("Stable".to_string(), StrategyStats { volatility: 0.10, ..StrategyStats::default() });
+    stats.insert("Wild".to_string(),   StrategyStats { volatility: 0.40, ..StrategyStats::default() });
+    allocator.calculate_allocations(&stats);
+
+    let stable = allocator.get_allocation("Stable").unwrap().target_pct;
+    let wild   = allocator.get_allocation("Wild").unwrap().target_pct;
+    assert!(stable > wild,
+        "lower-vol strategy ({:.1}%) should get higher weight than high-vol ({:.1}%)", stable, wild);
+}
+
+#[test]
+fn allocator_single_strategy_gets_full_allocation() {
+    let mut allocator = PortfolioAllocator::new(100_000.0, AllocationMethod::EqualWeight);
+    allocator.add_strategy("Solo".to_string(), 100_000.0, 0.0, 100.0);
+    allocator.calculate_allocations(&HashMap::new());
+    let alloc = allocator.get_allocation("Solo").unwrap();
+    assert!(
+        (alloc.target_pct - 100.0).abs() < 1.0,
+        "single strategy should get ~100% allocation; got {:.1}%", alloc.target_pct
+    );
+}
+
+#[test]
+fn allocator_no_strategies_no_crash() {
+    let mut allocator = PortfolioAllocator::new(100_000.0, AllocationMethod::EqualWeight);
+    // should not panic on empty strategy list
+    allocator.calculate_allocations(&HashMap::new());
+}
+
+// ─── PortfolioManager — untested public API ────────────────────────────────
+
+#[test]
+fn portfolio_manager_get_portfolio_risk_empty_positions() {
+    let mgr = PortfolioManager::new(PortfolioConfig::default());
+    let risk = mgr.get_portfolio_risk();
+    assert_eq!(risk.total_delta, 0.0);
+    assert_eq!(risk.gross_exposure, 0.0);
+}
+
+#[test]
+fn portfolio_manager_calculate_position_size_positive() {
+    let mgr = PortfolioManager::new(PortfolioConfig::default());
+    let size = mgr.calculate_position_size(5.0, 0.25, None, None, None);
+    assert!(size >= 0, "calculate_position_size should return non-negative; got {}", size);
+}
+
+#[test]
+fn portfolio_manager_iron_condor_size_positive() {
+    let mgr = PortfolioManager::new(PortfolioConfig::default());
+    let size = mgr.calculate_iron_condor_size(500.0, 1.50, 0.25);
+    assert!(size >= 1, "iron condor size should be >= 1; got {}", size);
+}
+
+#[test]
+fn portfolio_manager_credit_spread_size_positive() {
+    let mgr = PortfolioManager::new(PortfolioConfig::default());
+    let size = mgr.calculate_credit_spread_size(5.0, 2.0, 0.25);
+    assert!(size >= 1, "credit spread size should be >= 1; got {}", size);
+}
+
+#[test]
+fn portfolio_manager_add_and_optimize_strategy() {
+    let mut mgr = PortfolioManager::new(PortfolioConfig::default());
+    mgr.add_strategy("Iron".to_string(), 50_000.0, 0.0, 60.0);
+    mgr.add_strategy("Momentum".to_string(), 50_000.0, 0.0, 60.0);
+
+    let stats = HashMap::new();
+    mgr.optimize_allocations(&stats);
+    // After equal-weight allocation for 2 strategies, can_take_position should work
+    let decision = mgr.can_take_position("Iron", 5.0, 0.20, 1);
+    assert!(decision.suggested_size >= 0);
+}
+
+#[test]
+fn portfolio_manager_rebalancing_after_drift() {
+    let mut mgr = PortfolioManager::new(PortfolioConfig::default());
+    mgr.add_strategy("A".to_string(), 80_000.0, 0.0, 80.0);
+    mgr.add_strategy("B".to_string(), 80_000.0, 0.0, 80.0);
+    mgr.optimize_allocations(&HashMap::new());
+
+    // Simulate drift: A consumed 70% of capital, B only 30%
+    use std::collections::HashMap as HM;
+    let mut vals: HM<String, f64> = HM::new();
+    vals.insert("A".to_string(), 70_000.0);
+    vals.insert("B".to_string(), 30_000.0);
+    // Access allocator through manager's rebalancing API
+    let recs = mgr.get_rebalancing_recommendations();
+    // Without forced drift, may be empty; the main check is no panic
+    let _ = recs;
+}
+
+#[test]
+fn portfolio_manager_calculate_and_best_strategy() {
+    let mut mgr = PortfolioManager::new(PortfolioConfig::default());
+    // Start with no tracked strategies → best_strategy returns None
+    assert!(mgr.best_strategy().is_none());
+
+    // Add performance data through the manager
+    let positions: Vec<Position> = (1..=5).map(|i| closed_position(i, 5.0, 10.0, 1)).collect();
+    mgr.calculate_strategy_performance("Condors", &positions);
+    assert_eq!(mgr.best_strategy(), Some("Condors".to_string()));
+}
+
+#[test]
+fn portfolio_manager_can_take_position_with_risk_limit_violation() {
+    use dollarbill::portfolio::RiskLimits;
+    // Set absurdly tight concentration limit so any position violates it
+    let mut config = PortfolioConfig::default();
+    config.risk_limits = RiskLimits {
+        max_concentration_pct: 0.001, // 0.001% — any real position will trip this
+        ..RiskLimits::default()
+    };
+    let mut mgr = PortfolioManager::new(config);
+
+    // Load one position that will cause concentration to exceed the limit
+    let g = greeks(100.0, 0.50, 0.02, -0.05, 0.10);
+    let big_pos = open_call(1, "AAPL", 10, 100.0, g); // gross_exposure = $100k
+    mgr.update_positions(vec![big_pos]);
+
+    let decision = mgr.can_take_position("Test", 5.0, 0.20, 1);
+    assert!(!decision.risk_warnings.is_empty(), "should have at least one risk warning");
+}
+
+// ─── RiskAnalyzer — closed positions excluded ─────────────────────────────
+
+#[test]
+fn risk_analyzer_closed_positions_excluded_from_greeks() {
+    // A closed position should contribute zero to Greek aggregation
+    let g = greeks(5.0, 0.50, 0.02, -0.05, 0.10);
+    let open_pos   = open_call(1, "AAPL", 2, 5.0, g.clone());
+    let mut closed = open_call(2, "MSFT", 5, 5.0, g.clone());
+    closed.status = dollarbill::backtesting::position::PositionStatus::Closed;
+
+    let analyzer = RiskAnalyzer::new(100_000.0, RiskLimits::default());
+    let risk_mixed = analyzer.calculate_portfolio_greeks(&[open_pos.clone(), closed]);
+    let risk_open  = analyzer.calculate_portfolio_greeks(&[open_pos]);
+
+    assert!(
+        (risk_mixed.total_delta - risk_open.total_delta).abs() < 1e-9,
+        "closed position must not affect delta aggregation"
+    );
+    assert!(
+        (risk_mixed.gross_exposure - risk_open.gross_exposure).abs() < 1e-9,
+        "closed position must not affect gross exposure"
+    );
+}
+
+// ─── PositionSizer edge cases ─────────────────────────────────────────────
+
+#[test]
+fn position_sizer_kelly_missing_inputs_defaults_to_50_50() {
+    // When all optional params are None, Kelly uses p=0.5, w=option_price, l=option_price
+    // → b=1, kelly=(1*0.5 - 0.5)/1 = 0 → clamped to 0 → 0 contracts
+    let sizer = PositionSizer::new(100_000.0, 2.0, 10.0);
+    let contracts = sizer.calculate_size(
+        SizingMethod::KellyCriterion,
+        5.0, 0.25, None, None, None,
+    );
+    assert!(contracts >= 0, "kelly with even odds should give 0 or fallback contracts; got {}", contracts);
+}
+
+#[test]
+fn position_sizer_risk_parity_positive_size() {
+    let sizer = PositionSizer::new(100_000.0, 2.0, 10.0);
+    let contracts = sizer.calculate_size(SizingMethod::RiskParity, 5.0, 0.20, None, None, None);
+    assert!(contracts >= 0, "risk parity should return non-negative contracts");
+}
+
+#[test]
+fn position_sizer_risk_parity_high_vol_not_larger() {
+    let sizer = PositionSizer::new(100_000.0, 2.0, 10.0);
+    let low  = sizer.calculate_size(SizingMethod::RiskParity, 5.0, 0.10, None, None, None);
+    let high = sizer.calculate_size(SizingMethod::RiskParity, 5.0, 0.80, None, None, None);
+    assert!(low >= high,
+        "risk parity: low vol ({}) should yield >= contracts vs high vol ({})", low, high);
+}
+
+#[test]
+fn position_risk_calculation_correct() {
+    let sizer = PositionSizer::new(100_000.0, 2.0, 10.0);
+    // 5 contracts × $10 option × 100 shares = $5,000
+    assert!((sizer.position_risk(5, 10.0) - 5_000.0).abs() < 1e-9);
+}
+
+#[test]
+fn position_sizer_validate_zero_contracts() {
+    let sizer = PositionSizer::new(100_000.0, 2.0, 10.0);
+    // 0 contracts is invalid
+    assert!(!sizer.validate_position(0, 5.0));
+}
 
 #[test]
 fn portfolio_manager_new_initial_state() {

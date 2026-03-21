@@ -52,6 +52,7 @@ pub struct PositionRecord {
 ///     quantity: 1.0, price: 195.0,
 ///     order_id: None, fill_status: Some("filled".into()),
 ///     strategy: Some("Momentum".into()),
+///     error_message: None,
 ///     timestamp: "2025-01-01T09:30:00Z".into(),
 /// };
 /// store.insert_trade(&rec).await.unwrap();
