@@ -13,7 +13,10 @@ mod alpaca;
 mod config;
 mod analysis;
 mod portfolio;
+mod streaming;
+mod persistence;
 
+use clap::{Parser, Subcommand};
 use market_data::csv_loader::{load_csv_closes, HistoricalDay};
 use models::bs_mod::{compute_historical_vol, black_scholes_call};
 use models::heston::{heston_start, MonteCarloConfig, HestonParams, HestonMonteCarlo};
@@ -28,27 +31,106 @@ use utils::action_table_out;
 use utils::pnl_output;
 use std::time::{Duration, Instant};
 
-// ========== CONFIGURATION ==========
-const USE_LIVE_DATA: bool = false;  // Set to true for Yahoo Finance, false for CSV
-const RUN_CALIBRATION_DEMO: bool = true;  // Set to false to skip calibration demo
-// ===================================
+// ─── CLI definition ────────────────────────────────────────────────────────
+
+#[derive(Parser)]
+#[command(name = "dollarbill", version, about = "Options pricing & algorithmic trading toolkit")]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Run the interactive demo (default behaviour)
+    Demo {
+        /// Underlying symbol (CSV must exist in data/)
+        #[arg(long, default_value = "TSLA")]
+        symbol: String,
+    },
+
+    /// Price an ATM option using Heston/BSM models
+    Price {
+        /// Underlying symbol — reads data/{symbol}_*.csv for implied vol
+        symbol: String,
+        /// Strike price in dollars
+        strike: f64,
+        /// Time to expiry in years (0.25 = ~3 months)
+        #[arg(long, default_value_t = 1.0)]
+        dte: f64,
+        /// Risk-free rate (0.05 = 5 %)
+        #[arg(long, default_value_t = 0.05)]
+        rate: f64,
+    },
+
+    /// Run backtests across configured symbols and optionally update the
+    /// performance matrix used by strategy matching.
+    Backtest {
+        /// Limit to a single symbol — runs all configured symbols if absent
+        #[arg(long)]
+        symbol: Option<String>,
+        /// Persist results to models/performance_matrix.json
+        #[arg(long)]
+        save: bool,
+    },
+
+    /// Print trading signals for configured symbols
+    Signals {
+        /// Limit to a single symbol
+        #[arg(long)]
+        symbol: Option<String>,
+    },
+
+    /// Calibrate the Heston model against synthetic market data for a symbol
+    Calibrate {
+        /// Symbol name (e.g. TSLA)
+        symbol: String,
+    },
+
+    /// Start the paper-trading bot
+    /// Requires ALPACA_API_KEY and ALPACA_API_SECRET environment variables.
+    Trade {
+        /// Print orders but do not submit them to Alpaca
+        #[arg(long)]
+        dry_run: bool,
+        /// Stream live prices via Alpaca WebSocket and persist fills to SQLite
+        #[arg(long)]
+        live: bool,
+    },
+}
+
+// ─── Entry point ───────────────────────────────────────────────────────────
 
 #[tokio::main]
 async fn main() {
+    let cli = Cli::parse();
+    match cli.command {
+        Commands::Demo { symbol } => cmd_demo(&symbol),
+        Commands::Price { symbol, strike, dte, rate } => cmd_price(&symbol, strike, dte, rate),
+        Commands::Backtest { symbol, save } => cmd_backtest(symbol.as_deref(), save),
+        Commands::Signals { symbol } => cmd_signals(symbol.as_deref()),
+        Commands::Calibrate { symbol } => cmd_calibrate(&symbol),
+        Commands::Trade { dry_run, live } => cmd_trade(dry_run, live).await,
+    }
+}
+
+// ─── Subcommand: demo ──────────────────────────────────────────────────────
+
+fn cmd_demo(symbol: &str) {
     println!("{}", "=".repeat(70));
     println!("    BLACK-SCHOLES & HESTON OPTIONS PRICING SYSTEM");
     println!("    Modular Architecture with Carr-Madan Analytical Pricing");
     println!("{}", "=".repeat(70));
 
-    let symbol = "TSLA";
     let n_days = 10;
     let rate = 0.05;
     let time_to_maturity = 1.0;
 
+    let csv_path = find_csv(symbol);
     let start = Instant::now();
-    let history = match load_csv_closes("data/tesla_one_year.csv") {
-        Ok(h) => { println!("\n✓ Loaded from CSV (USE_LIVE_DATA = {})", USE_LIVE_DATA); h },
-        Err(e) => { println!("✗ CSV load failed: {}", e); return; },
+    let history = match load_csv_closes(&csv_path) {
+        Ok(h) => { println!("\n✓ Loaded {} from {}", symbol, csv_path); h }
+        Err(e) => { println!("✗ CSV load failed: {}", e); return; }
     };
     let load_time = start.elapsed();
 
@@ -62,9 +144,310 @@ async fn main() {
         demo_analytical_pricing(current_price, time_to_maturity, rate, sigma, &heston_params);
     let speedup = demo_monte_carlo(heston_params.clone(), current_price, carr_madan_time);
     demo_strategy_signals(symbol, current_price, sigma, &heston_params);
-    if RUN_CALIBRATION_DEMO { demo_calibration(current_price, rate); }
+    demo_calibration(current_price, rate);
     demo_summary(speedup);
 }
+
+// ─── Subcommand: price ─────────────────────────────────────────────────────
+
+fn cmd_price(symbol: &str, strike: f64, dte: f64, rate: f64) {
+    let csv_path = find_csv(symbol);
+    let history = match load_csv_closes(&csv_path) {
+        Ok(h) => h,
+        Err(e) => { eprintln!("Failed to load {}: {}", csv_path, e); return; }
+    };
+    let closes: Vec<f64> = history.iter().map(|d| d.close).collect();
+    let sigma = compute_historical_vol(&closes);
+    let spot = *closes.last().unwrap();
+    let heston_params = heston_start(spot, sigma, dte, rate);
+
+    let moneyness = classify_moneyness(strike, spot, 0.05);
+    let heston_price = heston_call_carr_madan(spot, strike, dte, rate, &heston_params);
+    let bs = black_scholes_call(spot, strike, dte, rate, sigma);
+
+    println!("\n{}", "=".repeat(60));
+    println!("OPTION PRICING  —  {} @ ${:.2}", symbol, spot);
+    println!("{}", "=".repeat(60));
+    println!("Strike:       ${:.2}  ({})", strike, format!("{:?}", moneyness));
+    println!("DTE (years):   {:.4}", dte);
+    println!("Rate:          {:.2}%", rate * 100.0);
+    println!("Hist. Vol:     {:.2}%", sigma * 100.0);
+    println!();
+    println!("Heston (Carr-Madan):  ${:.4}", heston_price);
+    println!("Black-Scholes:        ${:.4}", bs.price);
+    println!("  Delta {:+.4}  Gamma {:.4}  Vega {:.4}  Theta {:.4}",
+             bs.delta, bs.gamma, bs.vega, bs.theta);
+}
+
+// ─── Subcommand: backtest ──────────────────────────────────────────────────
+
+fn cmd_backtest(symbol: Option<&str>, save: bool) {
+    use backtesting::engine::{BacktestEngine, BacktestConfig};
+    use analysis::performance_matrix::{PerformanceMatrix,
+        PerformanceMetrics as PerfMetrics};
+    use market_data::symbols::load_stocks_with_sectors;
+
+    let symbols: Vec<String> = match symbol {
+        Some(s) => vec![s.to_string()],
+        None => match load_stocks_with_sectors() {
+            Ok(v) => v.into_iter().map(|(sym, _)| sym).collect(),
+            Err(e) => { eprintln!("Failed to load symbols: {}", e); return; }
+        },
+    };
+
+    // Load or start fresh performance matrix
+    let mut matrix = PerformanceMatrix::load_from_file("models/performance_matrix.json")
+        .unwrap_or_else(|_| PerformanceMatrix::new());
+
+    let strategies: &[(&str, f64)] = &[
+        ("Momentum",         0.20),
+        ("Mean Reversion",   0.35),
+        ("Breakout",         0.15),
+        ("Vol Arbitrage",    0.30),
+        ("Cash-Secured Puts",0.25),
+    ];
+
+    println!("{}", "=".repeat(70));
+    println!("RUNNING BACKTESTS");
+    println!("{}", "=".repeat(70));
+
+    let mut ran = 0usize;
+    for sym in &symbols {
+        let csv_path = find_csv(sym);
+        let history = match load_csv_closes(&csv_path) {
+            Ok(h) => h,
+            Err(_) => {
+                println!("  ⚠  {} — no CSV data, skipping", sym);
+                continue;
+            }
+        };
+
+        println!("\n📊 {}  ({} trading days)", sym, history.len());
+
+        for &(strategy_name, vol_threshold) in strategies {
+            let config = BacktestConfig {
+                initial_capital: 100_000.0,
+                ..BacktestConfig::default()
+            };
+            let mut engine = BacktestEngine::new(config);
+            let result = engine.run_simple_strategy(sym, history.clone(), vol_threshold);
+            let m = &result.metrics;
+
+            // Convert backtesting::PerformanceMetrics → analysis::PerformanceMetrics
+            let pm = PerfMetrics {
+                total_return: m.total_return_pct / 100.0 + 1.0,
+                sharpe_ratio: m.sharpe_ratio,
+                max_drawdown: m.max_drawdown_pct / 100.0,
+                win_rate: m.win_rate,
+                profit_factor: m.profit_factor,
+                total_trades: m.total_trades,
+                avg_holding_period: m.avg_days_held,
+            };
+
+            println!("  [{:>22}]  Sharpe {:+.2}  Return {:+.1}%  MaxDD {:.1}%  Trades {}",
+                     strategy_name,
+                     pm.sharpe_ratio,
+                     (pm.total_return - 1.0) * 100.0,
+                     pm.max_drawdown * 100.0,
+                     pm.total_trades);
+
+            matrix.add_result(sym, strategy_name, pm);
+            ran += 1;
+        }
+    }
+
+    println!("\n✅ Ran {} backtests across {} symbols", ran, symbols.len());
+
+    if save {
+        std::fs::create_dir_all("models").ok();
+        match matrix.save_to_file("models/performance_matrix.json") {
+            Ok(_) => println!("💾 Saved  →  models/performance_matrix.json"),
+            Err(e) => eprintln!("❌ Save failed: {}", e),
+        }
+    } else {
+        println!("(Pass --save to persist results to models/performance_matrix.json)");
+    }
+}
+
+// ─── Subcommand: signals ───────────────────────────────────────────────────
+
+fn cmd_signals(symbol: Option<&str>) {
+    use market_data::symbols::load_stocks_with_sectors;
+    use strategies::matching::StrategyMatcher;
+
+    let symbols: Vec<String> = match symbol {
+        Some(s) => vec![s.to_string()],
+        None => match load_stocks_with_sectors() {
+            Ok(v) => v.into_iter().map(|(s, _)| s).collect(),
+            Err(e) => { eprintln!("Failed to load stocks: {}", e); return; }
+        },
+    };
+
+    println!("{}", "=".repeat(70));
+    println!("TRADING SIGNALS");
+    println!("{}", "=".repeat(70));
+
+    // Load the strategy matcher — use saved models if available
+    let matcher = StrategyMatcher::load_from_files(
+        "models/stock_classifier.json",
+        "models/performance_matrix.json",
+    ).unwrap_or_else(|_| StrategyMatcher::new());
+
+    for sym in &symbols {
+        let csv_path = find_csv(sym);
+        let history = match load_csv_closes(&csv_path) {
+            Ok(h) => h,
+            Err(_) => {
+                println!("  ⚠  {} — no data", sym);
+                continue;
+            }
+        };
+        let closes: Vec<f64> = history.iter().map(|d| d.close).collect();
+        let sigma = compute_historical_vol(&closes);
+        let spot = *closes.last().unwrap();
+        let rate = 0.05;
+        let heston_params = heston_start(spot, sigma, 1.0, rate);
+
+        let recs = matcher.get_recommendations(sym);
+        println!("\n[{}]  spot=${:.2}  vol={:.1}%", sym, spot, sigma * 100.0);
+        if recs.confidence_score > 0.0 {
+            println!("  Recommended: {}  (confidence {:.0}%)",
+                     recs.recommended_strategy, recs.confidence_score * 100.0);
+        }
+
+        let mut reg = StrategyRegistry::new();
+        reg.register(Box::new(VolMeanReversion::new()));
+        let signals = reg.generate_all_signals(sym, spot, sigma, heston_params.v0.sqrt(), sigma);
+        for sig in &signals {
+            println!("  {:?}  strike=${:.2}  exp={}d  conf={:.0}%  edge=${:.2}",
+                     sig.action, sig.strike, sig.expiry_days,
+                     sig.confidence * 100.0, sig.edge);
+        }
+    }
+}
+
+// ─── Subcommand: calibrate ─────────────────────────────────────────────────
+
+fn cmd_calibrate(symbol: &str) {
+    let csv_path = find_csv(symbol);
+    let history = match load_csv_closes(&csv_path) {
+        Ok(h) => h,
+        Err(e) => { eprintln!("Failed to load {}: {}", csv_path, e); return; }
+    };
+    let closes: Vec<f64> = history.iter().map(|d| d.close).collect();
+    let spot = *closes.last().unwrap();
+    let rate = 0.05;
+    demo_calibration(spot, rate);
+}
+
+// ─── Subcommand: trade ─────────────────────────────────────────────────────
+
+async fn cmd_trade(dry_run: bool, live: bool) {
+    use alpaca::AlpacaClient;
+    use market_data::symbols::load_enabled_stocks;
+
+    let client = match AlpacaClient::from_env() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("❌ Alpaca credentials not found: {}", e);
+            eprintln!("   Set ALPACA_API_KEY and ALPACA_API_SECRET env vars.");
+            return;
+        }
+    };
+
+    let symbols = match load_enabled_stocks() {
+        Ok(s) => s,
+        Err(e) => { eprintln!("Failed to load symbols: {}", e); return; }
+    };
+
+    println!("{}", "=".repeat(70));
+    println!("PAPER TRADING BOT{}{}",
+             if dry_run { "  [DRY RUN]" } else { "" },
+             if live    { "  [LIVE STREAM]" } else { "" });
+    println!("{}", "=".repeat(70));
+
+    // Fetch account status
+    match client.get_account().await {
+        Ok(acct) => println!("Account: {}  equity=${:.2}  buying_power=${:.2}",
+                             acct.status,
+                             acct.equity_f64().unwrap_or(0.0),
+                             acct.buying_power_f64().unwrap_or(0.0)),
+        Err(e) => { eprintln!("Failed to fetch account: {}", e); return; }
+    }
+
+    if live {
+        // Open the SQLite trade store
+        let store = match persistence::TradeStore::new("data/trades.db").await {
+            Ok(s) => s,
+            Err(e) => { eprintln!("Failed to open trade database: {}", e); return; }
+        };
+
+        println!("📡 Connecting to Alpaca live stream for {} symbols...", symbols.len());
+        let mut stream = match streaming::AlpacaStream::connect_from_env(&symbols).await {
+            Ok(s) => s,
+            Err(e) => { eprintln!("WebSocket connect failed: {}", e); return; }
+        };
+
+        println!("✅ Stream connected — press Ctrl-C to stop\n");
+        loop {
+            match stream.next_event().await {
+                Some(streaming::MarketEvent::Trade(t)) => {
+                    println!("[TRADE] {}  ${:.4}  ×{}", t.symbol, t.price, t.size);
+                    // Persist tick to SQLite
+                    let rec = persistence::TradeRecord {
+                        symbol: t.symbol,
+                        action: "tick".to_string(),
+                        quantity: t.size as f64,
+                        price: t.price,
+                        order_id: None,
+                        fill_status: Some("tick".to_string()),
+                        strategy: None,
+                        timestamp: t.timestamp,
+                    };
+                    if let Err(e) = store.insert_trade(&rec).await {
+                        eprintln!("DB write error: {}", e);
+                    }
+                }
+                Some(streaming::MarketEvent::Quote(q)) => {
+                    println!("[QUOTE] {}  bid=${:.4} ask=${:.4}", q.symbol, q.bid_price, q.ask_price);
+                }
+                Some(streaming::MarketEvent::Disconnected) | None => {
+                    println!("Stream disconnected.");
+                    break;
+                }
+            }
+        }
+    } else {
+        println!("Symbols: {:?}", symbols);
+        if dry_run {
+            println!("[DRY RUN] Would evaluate signals and submit paper orders.");
+        } else {
+            println!("Run with --live to start the WebSocket stream, or --dry-run for simulation.");
+        }
+    }
+}
+
+// ─── Helpers ───────────────────────────────────────────────────────────────
+
+/// Return the most suitable CSV path for a symbol.
+fn find_csv(symbol: &str) -> String {
+    let lower = symbol.to_lowercase();
+    let candidates = [
+        format!("data/{}_five_year.csv", lower),
+        format!("data/{}_one_year.csv", lower),
+        // Legacy naming used for TSLA before consistent naming was adopted
+        "data/tesla_one_year.csv".to_string(),
+    ];
+    for path in &candidates {
+        if std::path::Path::new(path).exists() {
+            return path.clone();
+        }
+    }
+    // Default fallback that will produce a clear error message
+    candidates[0].clone()
+}
+
+// ─── Demo helper functions (used by `demo` subcommand) ────────────────────
 
 fn demo_market_analysis(history: &[HistoricalDay], n_days: usize, sigma: f64, load_time: Duration) {
     println!("Loaded {} trading days", history.len());
@@ -283,11 +666,7 @@ fn demo_summary(speedup: f64) {
     println!("✓ Volatility smile captured by Heston characteristic function");
     println!("✓ Monte Carlo validation ({:.0}x slower)", speedup);
     println!("✓ Strategy framework operational");
-    if RUN_CALIBRATION_DEMO { println!("✓ Parameter calibration working (argmin optimizer)"); }
-    println!("\nNext Steps:");
-    println!("  1. Add live options data feed (Polygon.io API)");
-    println!("  2. Calibrate to real market options chain");
-    println!("  3. Add more trading strategies");
-    println!("  4. Build execution layer");
+    println!("✓ Parameter calibration working (argmin optimizer)");
+    println!("\nRun `dollarbill --help` to explore all CLI subcommands.");
     println!("{}", "=".repeat(70));
 }

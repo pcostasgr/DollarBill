@@ -11,3 +11,5 @@ pub mod alpaca;
 pub mod config;
 pub mod analysis;
 pub mod portfolio;
+pub mod streaming;
+pub mod persistence;
