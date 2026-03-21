@@ -1,8 +1,6 @@
 # 🚀 DollarBill Getting Started Guide
 
-**Get trading with enhanced multi-dimensional personality-driven strategies in under 7 minutes (fast track) or 15 minutes (step-by-step)**
-
-**⭐ NEW: Advanced Personality System** - Now featuring 15+ sophisticated features with percentile-based volatility analysis, market regime detection, and intelligent confidence scoring!
+**Get trading with multi-dimensional personality-driven strategies in under 7 minutes (fast track) or 15 minutes (step-by-step)**
 
 ## ⚡ Quick Prerequisites (2 minutes)
 
@@ -30,6 +28,74 @@ pip install pandas plotly yfinance
 ```
 
 **✅ Python Environment Fixed**: Automated setup resolves all dependency issues!
+
+---
+
+## 🖥️ CLI Reference
+
+After `cargo build --release`, all functionality is available through the main binary.
+
+> **Windows (PowerShell):** use `.\target\release\dollarbill.exe`  
+> **Linux / macOS:** use `./target/release/dollarbill`
+
+```
+Usage: dollarbill <COMMAND>
+
+Commands:
+  demo      Run the interactive demo (pricing showcase)
+  price     Price a single option using Heston + BSM
+  backtest  Run backtests across configured symbols
+  signals   Print current trading signals
+  calibrate Calibrate Heston parameters for a symbol
+  trade     Start the paper-trading bot
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+```
+
+### Quick CLI examples
+
+```powershell
+# Interactive pricing demo with TSLA data
+.\target\release\dollarbill.exe demo --symbol TSLA
+
+# Price an AAPL 200-strike call expiring in 3 months (PowerShell)
+.\target\release\dollarbill.exe price AAPL 200 --dte 0.25
+
+# Run backtests on all configured symbols and save the results
+.\target\release\dollarbill.exe backtest --save
+
+# Backtest a single symbol only
+.\target\release\dollarbill.exe backtest --symbol NVDA
+
+# Show trading signals for all configured symbols
+.\target\release\dollarbill.exe signals
+
+# Show signals for a single symbol
+.\target\release\dollarbill.exe signals --symbol NVDA
+
+# Subscribe to the Alpaca live stream for real-time signals
+.\target\release\dollarbill.exe signals --live
+
+# Calibrate Heston parameters for TSLA
+.\target\release\dollarbill.exe calibrate TSLA
+
+# Paper trade — dry run (prints orders, submits nothing)
+.\target\release\dollarbill.exe trade --dry-run
+
+# Paper trade with live Alpaca WebSocket stream
+$env:ALPACA_API_KEY   = "your-paper-api-key"
+$env:ALPACA_API_SECRET = "your-paper-api-secret"
+.\target\release\dollarbill.exe trade --live
+```
+
+Run any subcommand with `--help` for its full option list:
+```powershell
+.\target\release\dollarbill.exe trade --help
+```
+
+---
 
 ### Fast Track: Personality Trading (7 minutes)
 
@@ -152,13 +218,16 @@ cargo run --example personality_based_bot -- --dry-run
 
 #### Step 6: Go Live (2 minutes)
 Set up Alpaca paper trading:
-```bash
-# Set your Alpaca credentials
-$env:ALPACA_API_KEY="your-paper-api-key"
-$env:ALPACA_API_SECRET="your-paper-api-secret"
+```powershell
+# Set your Alpaca credentials (PowerShell)
+$env:ALPACA_API_KEY   = "your-paper-api-key"
+$env:ALPACA_API_SECRET = "your-paper-api-secret"
 
-# Start automated trading
-cargo run --example personality_based_bot -- --continuous 5
+# Dry-run first — prints orders but submits nothing
+.\target\release\dollarbill.exe trade --dry-run
+
+# Start the live paper-trading bot with Alpaca WebSocket stream
+.\target\release\dollarbill.exe trade --live
 ```
 
 ## 📊 What Just Happened
@@ -175,8 +244,8 @@ cargo run --example personality_based_bot -- --continuous 5
 
 ## 🎛️ Quick Configuration
 
-### Personality Bot Settings
-Edit `config/personality_bot_config.json`:
+### Bot Settings
+Edit `config/trading_bot_config.json`:
 ```json
 {
   "trading": {

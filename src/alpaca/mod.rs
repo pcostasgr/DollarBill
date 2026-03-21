@@ -3,6 +3,7 @@
 #![allow(unused_imports)]
 
 pub mod client;
+pub mod live_bot;
 pub mod types;
 
 pub use client::AlpacaClient;

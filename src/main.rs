@@ -17,20 +17,12 @@ mod streaming;
 mod persistence;
 
 use clap::{Parser, Subcommand};
-use log::{info, warn, error};
-use market_data::csv_loader::{load_csv_closes, HistoricalDay};
+use market_data::csv_loader::load_csv_closes;
 use models::bs_mod::{compute_historical_vol, black_scholes_call};
-use models::heston::{heston_start, MonteCarloConfig, HestonParams, HestonMonteCarlo};
-use models::heston_analytical::{
-    heston_call_carr_madan, classify_moneyness, Moneyness,
-    heston_call_otm, heston_call_itm, heston_put_otm, heston_put_itm,
-    heston_put_carr_madan,
-};
+use models::heston::{heston_start, HestonParams};
+use models::heston_analytical::{heston_call_carr_madan, classify_moneyness, Moneyness};
 use strategies::{StrategyRegistry, vol_mean_reversion::VolMeanReversion};
-use calibration::{create_mock_market_data, calibrate_heston, CalibParams};
-use utils::action_table_out;
-use utils::pnl_output;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 // ─── CLI definition ────────────────────────────────────────────────────────
 
@@ -125,6 +117,8 @@ async fn main() {
 // ─── Subcommand: demo ──────────────────────────────────────────────────────
 
 fn cmd_demo(symbol: &str) {
+    use utils::demo;
+
     println!("{}", "=".repeat(70));
     println!("    BLACK-SCHOLES & HESTON OPTIONS PRICING SYSTEM");
     println!("    Modular Architecture with Carr-Madan Analytical Pricing");
@@ -147,13 +141,13 @@ fn cmd_demo(symbol: &str) {
     let current_price = *closes.last().unwrap();
     let heston_params = heston_start(current_price, sigma, time_to_maturity, rate);
 
-    demo_market_analysis(&history, n_days, sigma, load_time);
+    demo::demo_market_analysis(&history, n_days, sigma, load_time);
     let (_, carr_madan_time) =
-        demo_analytical_pricing(current_price, time_to_maturity, rate, sigma, &heston_params);
-    let speedup = demo_monte_carlo(heston_params.clone(), current_price, carr_madan_time);
-    demo_strategy_signals(symbol, current_price, sigma, &heston_params);
-    demo_calibration(current_price, rate);
-    demo_summary(speedup);
+        demo::demo_analytical_pricing(current_price, time_to_maturity, rate, sigma, &heston_params);
+    let speedup = demo::demo_monte_carlo(heston_params.clone(), current_price, carr_madan_time);
+    demo::demo_strategy_signals(symbol, current_price, sigma, &heston_params);
+    demo::demo_calibration(current_price, rate);
+    demo::demo_summary(speedup);
 }
 
 // ─── Subcommand: price ─────────────────────────────────────────────────────
@@ -454,6 +448,7 @@ async fn cmd_signals_live(symbol: Option<&str>) {
 // ─── Subcommand: calibrate ─────────────────────────────────────────────────
 
 fn cmd_calibrate(symbol: &str) {
+    use utils::demo;
     let csv_path = find_csv(symbol);
     let history = match load_csv_closes(&csv_path) {
         Ok(h) => h,
@@ -462,23 +457,14 @@ fn cmd_calibrate(symbol: &str) {
     let closes: Vec<f64> = history.iter().map(|d| d.close).collect();
     let spot = *closes.last().unwrap();
     let rate = 0.05;
-    demo_calibration(spot, rate);
+    demo::demo_calibration(spot, rate);
 }
 
 // ─── Subcommand: trade ─────────────────────────────────────────────────────
 
 async fn cmd_trade(dry_run: bool, live: bool) {
-    use alpaca::AlpacaClient;
+    use alpaca::{AlpacaClient, live_bot};
     use market_data::symbols::load_enabled_stocks;
-    use portfolio::{PortfolioManager, PortfolioConfig};
-    use strategies::{
-        SignalAction, StrategyRegistry,
-        momentum::MomentumStrategy,
-        mean_reversion::MeanReversionStrategy,
-        breakout::BreakoutStrategy,
-        vol_arbitrage::VolatilityArbitrageStrategy,
-        cash_secured_puts::CashSecuredPuts,
-    };
 
     let client = match AlpacaClient::from_env() {
         Ok(c) => c,
@@ -500,7 +486,6 @@ async fn cmd_trade(dry_run: bool, live: bool) {
              if live    { "  [LIVE STREAM]" } else { "" });
     println!("{}", "=".repeat(70));
 
-    // Fetch and display account status
     let account = match client.get_account().await {
         Ok(a) => a,
         Err(e) => { eprintln!("Failed to fetch account: {}", e); return; }
@@ -514,319 +499,13 @@ async fn cmd_trade(dry_run: bool, live: bool) {
         let equity  = account.equity_f64().unwrap_or(100_000.0);
         let buy_pwr = account.buying_power_f64().unwrap_or(equity);
 
-        // ── Portfolio manager — shared risk gate for all orders ───────────
-        let mut pm = PortfolioManager::new(PortfolioConfig {
-            initial_capital: equity,
-            ..PortfolioConfig::default()
-        });
-        pm.sync_from_account(equity, buy_pwr);
-
-        // ── Persistent trade store ────────────────────────────────────────
         let store = match persistence::TradeStore::new("data/trades.db").await {
             Ok(s) => s,
             Err(e) => { eprintln!("Failed to open trade database: {}", e); return; }
         };
-
-        // ── Restore open positions from previous sessions ─────────────────
         let persisted = store.get_open_positions().await.unwrap_or_default();
-        if !persisted.is_empty() {
-            println!("\n📂  {} persisted position(s) restored:", persisted.len());
-            for p in &persisted {
-                println!("     {} qty={:.0} @ ${:.2}  [{}]",
-                    p.symbol, p.qty, p.entry_price,
-                    p.strategy.as_deref().unwrap_or("—"));
-            }
-        }
 
-        // ── Reconcile SQLite state against live Alpaca positions ──────────
-        println!("\n🔄 Reconciling positions with Alpaca…");
-        match client.get_positions().await {
-            Ok(alpaca_pos) => {
-                let alpaca_syms: std::collections::HashSet<String> =
-                    alpaca_pos.iter().map(|p| p.symbol.clone()).collect();
-                // Remove SQLite records absent from Alpaca (must have closed/expired)
-                for p in &persisted {
-                    if !alpaca_syms.contains(&p.symbol) {
-                        eprintln!("  ⚠  {} in SQLite but absent from Alpaca — removing stale record",
-                            p.symbol);
-                        let _ = store.close_position(&p.symbol).await;
-                    } else {
-                        println!("  ✅ {} confirmed open in Alpaca", p.symbol);
-                    }
-                }
-                // Import Alpaca positions not yet tracked in SQLite
-                let sqlite_syms: std::collections::HashSet<String> =
-                    persisted.iter().map(|p| p.symbol.clone()).collect();
-                for ap in &alpaca_pos {
-                    if !sqlite_syms.contains(&ap.symbol) {
-                        println!("  📥 Importing {} from Alpaca into SQLite", ap.symbol);
-                        let rec = persistence::PositionRecord {
-                            symbol:      ap.symbol.clone(),
-                            qty:         ap.qty.parse::<f64>().unwrap_or(0.0),
-                            entry_price: ap.avg_entry_price.parse::<f64>().unwrap_or(0.0),
-                            entry_date:  "reconciled".to_string(),
-                            strategy:    Some("reconciled".to_string()),
-                            expires_at:  None,
-                        };
-                        let _ = store.upsert_position(&rec).await;
-                    }
-                }
-            }
-            Err(e) => eprintln!("⚠️  Position reconciliation skipped: {}", e),
-        }
-
-        // In-memory open-position guard (rebuilt from reconciled SQLite state).
-        // Prevents the bot from opening a second position in a symbol it already holds.
-        let reconciled = store.get_open_positions().await.unwrap_or_default();
-        let mut open_syms: std::collections::HashSet<String> =
-            reconciled.iter().map(|p| p.symbol.clone()).collect();
-        if !open_syms.is_empty() {
-            println!("  [LOCK] {} open position(s) -- skipping duplicate entries",
-                open_syms.len());
-        }
-
-        // ── Load runtime config from trading_bot_config.json ─────────────
-        let bot_cfg = config::TradingBotConfigFile::load();
-        info!("Bot config: min_confidence={:.2} max_daily_loss={:.1}% cooldown={}s",
-            bot_cfg.min_confidence,
-            bot_cfg.max_daily_loss_pct * 100.0,
-            bot_cfg.signal_cooldown_secs);
-
-        // ── Strategy registry ─────────────────────────────────────────────
-        let mut registry = StrategyRegistry::new();
-        registry.register(Box::new(MomentumStrategy::new()));
-        registry.register(Box::new(MeanReversionStrategy::new()));
-        registry.register(Box::new(BreakoutStrategy::new()));
-        registry.register(Box::new(VolatilityArbitrageStrategy::new()));
-        registry.register(Box::new(CashSecuredPuts::new()));
-
-        // ── Rolling price buffers and signal-cooldown trackers ────────────
-        let mut price_buf: std::collections::HashMap<String, std::collections::VecDeque<f64>>
-            = std::collections::HashMap::new();
-        let mut last_signal: std::collections::HashMap<String, Instant>
-            = std::collections::HashMap::new();
-        const SIGNAL_COOLDOWN_SECS: u64   = 300; // 5-minute cooldown per symbol
-        const MIN_PRICES_FOR_HV:    usize = 22;  // need 22 ticks for HV-21
-        const MAX_PRICE_BUF:        usize = 50;  // rolling window size
-        const MIN_CONFIDENCE:       f64   = 0.60;
-        let signal_cooldown_secs = bot_cfg.signal_cooldown_secs;
-        let min_prices_for_hv    = bot_cfg.min_prices_for_hv;
-        let max_price_buf        = bot_cfg.max_price_buf;
-        let min_confidence       = bot_cfg.min_confidence;
-        /// Halt new orders once estimated daily spend reaches this fraction of equity.
-        const MAX_DAILY_LOSS_PCT:   f64   = 0.05; // 5 %
-        let max_daily_loss           = equity * bot_cfg.max_daily_loss_pct;
-        let mut estimated_daily_loss = 0.0_f64;
-        let mut circuit_broken       = false;
-
-        println!("📡 Connecting to Alpaca live stream for {} symbols...", symbols.len());
-        let mut stream = match streaming::AlpacaStream::connect_from_env(&symbols).await {
-            Ok(s) => s,
-            Err(e) => { eprintln!("WebSocket connect failed: {}", e); return; }
-        };
-        println!("Stream connected -- press Ctrl-C to stop\n");
-
-        // Graceful Ctrl-C shutdown
-        let mut ctrl_c_trade = std::pin::pin!(tokio::signal::ctrl_c());
-        loop {
-            let event = tokio::select! {
-                biased;
-                res = &mut ctrl_c_trade => {
-                    let _ = res;
-                    info!("Ctrl-C received -- shutting down trading bot gracefully.");
-                    break;
-                }
-                ev = stream.next_event() => ev,
-            };
-            match event {
-                Some(streaming::MarketEvent::Trade(t)) => {
-                    let sym   = t.symbol.clone();
-                    let price = t.price;
-                    let ts    = t.timestamp.clone();
-
-                    // Persist raw tick
-                    let rec = persistence::TradeRecord {
-                        symbol:        sym.clone(),
-                        action:        "tick".to_string(),
-                        quantity:      t.size as f64,
-                        price,
-                        order_id:      None,
-                        fill_status:   Some("tick".to_string()),
-                        strategy:      None,
-                        error_message: None,
-                        timestamp:     ts.clone(),
-                    };
-                    if let Err(e) = store.insert_trade(&rec).await {
-                        eprintln!("DB write error: {}", e);
-                    }
-
-                    // Update rolling price buffer
-                    let buf = price_buf.entry(sym.clone())
-                        .or_insert_with(std::collections::VecDeque::new);
-                    buf.push_back(price);
-                    if buf.len() > max_price_buf { buf.pop_front(); }
-                    if buf.len() < min_prices_for_hv { continue; }
-
-                    // Circuit breaker — stop new signals if daily loss limit is hit
-                    if circuit_broken {
-                        continue;
-                    }
-
-                    // Signal cooldown check
-                    let now = Instant::now();
-                    if let Some(&prev) = last_signal.get(&sym) {
-                        if now.duration_since(prev).as_secs() < signal_cooldown_secs { continue; }
-                    }
-
-                    // Volatility + Heston params from rolling ticks
-                    let prices: Vec<f64> = buf.iter().copied().collect();
-                    let sigma = compute_historical_vol(&prices);
-                    if sigma < 1e-8 { continue; }
-                    let heston = heston_start(price, sigma, 1.0, 0.05);
-                    let model_iv = heston.v0.sqrt();
-
-                    // Generate signals
-                    let signals = registry.generate_all_signals(&sym, price, sigma, model_iv, sigma);
-                    let actionable: Vec<_> = signals.iter()
-                        .filter(|s| {
-                            s.confidence >= min_confidence
-                                && !matches!(s.action, SignalAction::NoAction)
-                                && !matches!(s.action, SignalAction::ClosePosition { .. })
-                        })
-                        .collect();
-
-                    if actionable.is_empty() { continue; }
-                    last_signal.insert(sym.clone(), now);
-
-                    // Portfolio risk gate
-                    // Rough ATM premium ≈ spot × vol × √(30/365)
-                    let rough_premium = (price * sigma * (30.0_f64 / 365.0).sqrt()).max(0.01);
-                    let decision = pm.can_take_position(
-                        &actionable[0].strategy_name,
-                        rough_premium,
-                        sigma,
-                        1,
-                    );
-                    for w in &decision.risk_warnings {
-                        warn!("Risk gate [{}]: {}", sym, w);
-                        println!("  Risk [{}]: {}", sym, w);
-                    }
-
-                    info!("Signal [{}] ${:.2} vol={:.1}% -- {} actionable signal(s)",
-                        sym, price, sigma * 100.0, actionable.len());
-                    println!("[{}]  ${:.2}  vol={:.1}%", sym, price, sigma * 100.0);
-                    for sig in &actionable {
-                        let qty = decision.suggested_size.max(1) as u32;
-                        println!("  📊 [{:<22}]  {:?}  K=${:.2}  exp={}d  conf={:.0}%  edge=${:.2}",
-                            sig.strategy_name, sig.action,
-                            sig.strike, sig.expiry_days,
-                            sig.confidence * 100.0, sig.edge);
-
-                        if dry_run {
-                            println!("    [DRY RUN] Would submit {} x {}", qty, sym);
-                            continue;
-                        }
-                        if !decision.can_trade { continue; }
-                        // Deduplication guard -- skip if we already hold an open position
-                        if open_syms.contains(&sym) {
-                            println!("    [SKIP] {} -- open position already tracked", sym);
-                            continue;
-                        }
-
-                        match AlpacaClient::signal_to_options_order(&sig.action, &sym, qty, None) {
-                            Ok(order) => {
-                                match client.submit_options_order(&order).await {
-                                    Ok(filled) => {
-                                        info!("Order submitted: id={} sym={} status={} strategy={}",
-                                            filled.id, sym, filled.status, sig.strategy_name);
-                                        println!("    Submitted: {} ({})", filled.id, filled.status);
-                                        // Update circuit-breaker spend tracker
-                                        estimated_daily_loss += rough_premium * qty as f64 * 100.0;
-                                        if estimated_daily_loss >= max_daily_loss && !circuit_broken {
-                                            circuit_broken = true;
-                                            error!("CIRCUIT BREAKER: daily spend ${:.2} >= limit ${:.2} -- halting new orders",
-                                                estimated_daily_loss, max_daily_loss);
-                                        }
-                                        let pos = persistence::PositionRecord {
-                                            symbol:      sym.clone(),
-                                            qty:         qty as f64,
-                                            entry_price: price,
-                                            entry_date:  ts.clone(),
-                                            strategy:    Some(sig.strategy_name.clone()),
-                                            expires_at:  None,
-                                        };
-                                        if let Err(e) = store.upsert_position(&pos).await {
-                                            error!("DB position upsert failed: {}", e);
-                                            eprintln!("DB position error: {}", e);
-                                        } else {
-                                            open_syms.insert(sym.clone());
-                                        }
-                                    }
-                                    Err(e) => {
-                                        error!("Order failed: sym={} error={}", sym, e);
-                                        eprintln!("    Order failed: {}", e);
-                                        let fail_rec = persistence::TradeRecord {
-                                            symbol:        sym.clone(),
-                                            action:        format!("{:?}", sig.action),
-                                            quantity:      qty as f64,
-                                            price,
-                                            order_id:      None,
-                                            fill_status:   Some("error".to_string()),
-                                            strategy:      Some(sig.strategy_name.clone()),
-                                            error_message: Some(e.to_string()),
-                                            timestamp:     ts.clone(),
-                                        };
-                                        let _ = store.insert_trade(&fail_rec).await;
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                error!("Cannot build order for {:?}: {}", sig.action, e);
-                                eprintln!("    Cannot build order for {:?}: {}", sig.action, e);
-                            }
-                        }
-                    }
-                }
-                Some(streaming::MarketEvent::Quote(q)) => {
-                    println!("[QUOTE] {}  bid=${:.4} ask=${:.4}", q.symbol, q.bid_price, q.ask_price);
-                }
-                Some(streaming::MarketEvent::Reconnected) => {
-                    info!("Stream reconnected.");
-                    println!("Stream reconnected -- resuming trading loop.");
-                }
-                Some(streaming::MarketEvent::Disconnected) | None => {
-                    error!("Stream permanently disconnected -- stopping bot.");
-                    println!("Stream permanently disconnected -- stopping bot.");
-                    break;
-                }
-            }
-        }
-
-        // Graceful shutdown: close stream, cancel open orders, log session summary
-        info!("Shutting down -- closing WebSocket...");
-        let _ = stream.close().await;
-
-        info!("Cancelling any open orders...");
-        match client.cancel_all_orders().await {
-            Ok(cancelled) if !cancelled.is_empty() => {
-                warn!("{} order(s) cancelled on shutdown", cancelled.len());
-                for o in &cancelled {
-                    warn!("  Cancelled: id={} status={}", o.id, o.status);
-                }
-            }
-            Ok(_)   => info!("No open orders to cancel."),
-            Err(e)  => warn!("cancel_all_orders failed: {}", e),
-        }
-
-        let final_positions = store.get_open_positions().await.unwrap_or_default();
-        let session_trades  = store.get_trade_history(200).await.unwrap_or_default();
-        let session_orders  = session_trades.iter().filter(|t| t.action != "tick").count();
-        info!("Session summary: {} open position(s) | {} orders | ${:.2} estimated daily spend",
-            final_positions.len(), session_orders, estimated_daily_loss);
-        println!("\n--- Session summary ---");
-        println!("  Open positions : {}", final_positions.len());
-        println!("  Orders this run: {}", session_orders);
-        println!("  Est. daily spend: ${:.2}", estimated_daily_loss);
+        live_bot::run_live_bot(client, symbols, equity, buy_pwr, dry_run, store, persisted).await;
     } else {
         println!("Symbols: {:?}", symbols);
         if dry_run {
@@ -855,228 +534,4 @@ fn find_csv(symbol: &str) -> String {
     }
     // Default fallback that will produce a clear error message
     candidates[0].clone()
-}
-
-// ─── Demo helper functions (used by `demo` subcommand) ────────────────────
-
-fn demo_market_analysis(history: &[HistoricalDay], n_days: usize, sigma: f64, load_time: Duration) {
-    println!("Loaded {} trading days", history.len());
-    println!("Historical Volatility: {:.2}%", sigma * 100.0);
-    action_table_out::show_action_table(history, n_days, sigma);
-    if history.len() >= n_days {
-        pnl_output::show_pnl_post_mortem(history, n_days, sigma);
-    }
-    println!("\nCSV load time: {:.6} ms", load_time.as_secs_f64() * 1000.0);
-}
-
-/// Displays Heston params, Carr-Madan pricing, BS comparison, and vol smile.
-/// Returns the ATM Carr-Madan price and the time taken to compute it.
-fn demo_analytical_pricing(
-    current_price: f64,
-    time_to_maturity: f64,
-    rate: f64,
-    sigma: f64,
-    heston_params: &HestonParams,
-) -> (f64, Duration) {
-    // ── Heston parameters ────────────────────────────────────────────────
-    println!("\n{}", "=".repeat(70));
-    println!("HESTON MODEL PARAMETERS");
-    println!("{}", "=".repeat(70));
-    println!("Spot Price (S0):        ${:.2}", heston_params.s0);
-    println!("Initial Variance (v0):  {:.4} (vol: {:.2}%)",
-             heston_params.v0, heston_params.v0.sqrt() * 100.0);
-    println!("Long-term Var (θ):      {:.4}", heston_params.theta);
-    println!("Mean Reversion (κ):     {:.2}", heston_params.kappa);
-    println!("Vol-of-Vol (σ):         {:.2}", heston_params.sigma);
-    println!("Correlation (ρ):        {:.2}", heston_params.rho);
-    println!("Risk-free Rate (r):     {:.2}%", heston_params.r * 100.0);
-    println!("Time to Maturity (T):   {:.2} years", heston_params.t);
-
-    // ── Carr-Madan analytical pricing ────────────────────────────────────
-    println!("\n{}", "=".repeat(70));
-    println!("CARR-MADAN ANALYTICAL PRICING (Fast & Deterministic)");
-    println!("{}", "=".repeat(70));
-    let atm_strike = current_price;
-    let moneyness = classify_moneyness(atm_strike, current_price, 0.05);
-    println!("\nPricing ATM Call Option:");
-    println!("Strike: ${:.2} ({})", atm_strike,
-             if moneyness == Moneyness::ATM { "ATM ✓" } else { "NOT ATM" });
-    let carr_madan_start = Instant::now();
-    let carr_madan_price = heston_call_carr_madan(
-        current_price, atm_strike, time_to_maturity, rate, heston_params,
-    );
-    let carr_madan_time = carr_madan_start.elapsed();
-    println!("Carr-Madan Price: ${:.2}", carr_madan_price);
-    println!("Computation Time: {:.3} ms", carr_madan_time.as_secs_f64() * 1000.0);
-
-    // ── Black-Scholes comparison ─────────────────────────────────────────
-    println!("\n{}", "=".repeat(70));
-    println!("BLACK-SCHOLES COMPARISON");
-    println!("{}", "=".repeat(70));
-    let bs_greeks = black_scholes_call(current_price, atm_strike, time_to_maturity, rate, sigma);
-    println!("\nBlack-Scholes ATM Call:");
-    println!("Price:  ${:.2}", bs_greeks.price);
-    println!("Delta:  {:.4}", bs_greeks.delta);
-    println!("Gamma:  {:.4}", bs_greeks.gamma);
-    println!("Vega:   {:.2}", bs_greeks.vega);
-    println!("Theta:  {:.2}", bs_greeks.theta);
-    println!("Rho:    {:.2}", bs_greeks.rho);
-    println!("\nCarr-Madan vs Black-Scholes:");
-    println!("Price Difference: ${:.2} ({:.1}%)",
-             carr_madan_price - bs_greeks.price,
-             (carr_madan_price - bs_greeks.price) / bs_greeks.price * 100.0);
-    println!("Speed Advantage: Carr-Madan is analytical (no Monte Carlo noise)");
-
-    // ── Volatility smile across strikes ──────────────────────────────────
-    println!("\n{}", "=".repeat(70));
-    println!("VOLATILITY SMILE: Pricing Across Strikes");
-    println!("{}", "=".repeat(70));
-    let strikes = vec![
-        (current_price * 0.80, "Deep ITM"),
-        (current_price * 0.90, "ITM"),
-        (current_price * 1.00, "ATM"),
-        (current_price * 1.10, "OTM"),
-        (current_price * 1.20, "Deep OTM"),
-    ];
-    println!("\nCALL OPTIONS:");
-    println!("{:<12} {:<10} {:<12} {:<12} {:<10}", "Strike", "Moneyness", "Heston", "Black-Scholes", "Diff %");
-    println!("{}", "-".repeat(70));
-    for (strike, label) in &strikes {
-        let heston_price = if strike < &current_price {
-            heston_call_itm(current_price, *strike, time_to_maturity, rate, heston_params)
-        } else if strike > &current_price {
-            heston_call_otm(current_price, *strike, time_to_maturity, rate, heston_params)
-        } else {
-            carr_madan_price
-        };
-        let bs_price = black_scholes_call(current_price, *strike, time_to_maturity, rate, sigma).price;
-        let diff_pct = (heston_price - bs_price) / bs_price * 100.0;
-        println!("{:<12.2} {:<10} ${:<11.2} ${:<11.2} {:>9.1}%",
-                 strike, label, heston_price, bs_price, diff_pct);
-    }
-    println!("\nPUT OPTIONS:");
-    println!("{:<12} {:<10} {:<12} {:<12} {:<10}", "Strike", "Moneyness", "Heston", "Black-Scholes", "Diff %");
-    println!("{}", "-".repeat(70));
-    for (strike, label) in &strikes {
-        let heston_price = if strike > &current_price {
-            heston_put_otm(current_price, *strike, time_to_maturity, rate, heston_params)
-        } else if strike < &current_price {
-            heston_put_itm(current_price, *strike, time_to_maturity, rate, heston_params)
-        } else {
-            heston_put_carr_madan(current_price, *strike, time_to_maturity, rate, heston_params)
-        };
-        let bs_call = black_scholes_call(current_price, *strike, time_to_maturity, rate, sigma).price;
-        let bs_put = bs_call - current_price + strike * (-rate * time_to_maturity).exp();
-        let diff_pct = (heston_price - bs_put) / bs_put * 100.0;
-        println!("{:<12.2} {:<10} ${:<11.2} ${:<11.2} {:>9.1}%",
-                 strike, label, heston_price, bs_put, diff_pct);
-    }
-    println!("\n💡 Heston captures volatility smile/skew - prices differ from constant-vol BS");
-
-    (carr_madan_price, carr_madan_time)
-}
-
-/// Runs 100K-path Monte Carlo validation. Returns the Carr-Madan speedup factor.
-fn demo_monte_carlo(heston_params: HestonParams, atm_strike: f64, carr_madan_time: Duration) -> f64 {
-    println!("\n{}", "=".repeat(70));
-    println!("MONTE CARLO VALIDATION (100K paths)");
-    println!("{}", "=".repeat(70));
-    let config = MonteCarloConfig { n_paths: 100_000, n_steps: 500, seed: 42, use_antithetic: true };
-    let mc = match HestonMonteCarlo::new(heston_params, config) {
-        Ok(mc) => mc,
-        Err(e) => { eprintln!("Invalid Heston parameters: {}", e); return 1.0; }
-    };
-    let mc_start = Instant::now();
-    let mc_greeks = mc.greeks_european_call(atm_strike);
-    let mc_time = mc_start.elapsed();
-    println!("\nMonte Carlo Results:");
-    println!("Price:  ${:.2}", mc_greeks.price);
-    println!("Delta:  {:.4}", mc_greeks.delta);
-    println!("Gamma:  {:.4}", mc_greeks.gamma);
-    println!("Vega:   {:.2}", mc_greeks.vega);
-    println!("Theta:  {:.2}", mc_greeks.theta);
-    println!("Rho:    {:.2}", mc_greeks.rho);
-    println!("Time:   {:.1} seconds", mc_time.as_secs_f64());
-    let speedup = mc_time.as_secs_f64() / carr_madan_time.as_secs_f64();
-    println!("\nSpeed Comparison:");
-    println!("Carr-Madan: {:.3} ms", carr_madan_time.as_secs_f64() * 1000.0);
-    println!("Monte Carlo: {:.1} seconds", mc_time.as_secs_f64());
-    println!("Speedup: {:.0}x faster ⚡", speedup);
-    speedup
-}
-
-fn demo_strategy_signals(symbol: &str, current_price: f64, sigma: f64, heston_params: &HestonParams) {
-    println!("\n{}", "=".repeat(70));
-    println!("TRADING STRATEGY SIGNALS");
-    println!("{}", "=".repeat(70));
-    let mut registry = StrategyRegistry::new();
-    registry.register(Box::new(VolMeanReversion::new()));
-    println!("\nActive Strategies:");
-    for (i, name) in registry.list_strategies().iter().enumerate() {
-        println!("  {}. {}", i + 1, name);
-    }
-    let signals = registry.generate_all_signals(
-        symbol, current_price, sigma, heston_params.v0.sqrt(), sigma,
-    );
-    if !signals.is_empty() {
-        println!("\n📊 Signal Summary:");
-        for signal in &signals {
-            println!("\n[{} - {}]", signal.symbol, signal.strategy_name);
-            println!("   Action: {:?}", signal.action);
-            println!("   Strike: ${:.2}", signal.strike);
-            println!("   Expiry: {} days", signal.expiry_days);
-            println!("   Confidence: {:.0}%", signal.confidence * 100.0);
-            println!("   Est. Edge: ${:.2}", signal.edge);
-        }
-    }
-}
-
-fn demo_calibration(current_price: f64, rate: f64) {
-    println!("\n{}", "=".repeat(70));
-    println!("CALIBRATION DEMONSTRATION");
-    println!("{}", "=".repeat(70));
-    let true_params = CalibParams { kappa: 3.5, theta: 0.25, sigma: 0.45, rho: -0.75, v0: 0.30 };
-    println!("\n🎯 True Parameters (hidden from optimizer):");
-    println!("  κ = {:.2}, θ = {:.4}, σ = {:.2}, ρ = {:.2}, v₀ = {:.4}",
-             true_params.kappa, true_params.theta, true_params.sigma,
-             true_params.rho, true_params.v0);
-    let strikes: Vec<f64> = [0.85, 0.90, 0.95, 1.00, 1.05, 1.10, 1.15]
-        .iter().map(|k| current_price * k).collect();
-    let maturities = vec![30.0 / 365.0, 60.0 / 365.0];
-    let market_data = create_mock_market_data(current_price, rate, &true_params, &strikes, &maturities);
-    println!("📊 Generated {} synthetic market options", market_data.len());
-    let initial_guess = CalibParams { kappa: 2.0, theta: 0.35, sigma: 0.30, rho: -0.60, v0: 0.35 };
-    println!("\n🔧 Initial Guess:");
-    println!("  κ = {:.2}, θ = {:.4}, σ = {:.2}, ρ = {:.2}, v₀ = {:.4}",
-             initial_guess.kappa, initial_guess.theta, initial_guess.sigma,
-             initial_guess.rho, initial_guess.v0);
-    let calib_start = Instant::now();
-    match calibrate_heston(current_price, rate, market_data, initial_guess) {
-        Ok(result) => {
-            let calib_time = calib_start.elapsed();
-            result.print_summary();
-            println!("\n⏱️  Calibration Time: {:.2} seconds", calib_time.as_secs_f64());
-            println!("\n📈 Recovery Accuracy:");
-            println!("  κ error: {:.2}%", (result.params.kappa - true_params.kappa).abs() / true_params.kappa * 100.0);
-            println!("  θ error: {:.2}%", (result.params.theta - true_params.theta).abs() / true_params.theta * 100.0);
-            println!("  σ error: {:.2}%", (result.params.sigma - true_params.sigma).abs() / true_params.sigma * 100.0);
-            println!("  ρ error: {:.2}%", (result.params.rho - true_params.rho).abs() / true_params.rho.abs() * 100.0);
-            println!("  v₀ error: {:.2}%", (result.params.v0 - true_params.v0).abs() / true_params.v0 * 100.0);
-        }
-        Err(e) => println!("❌ Calibration failed: {}", e),
-    }
-}
-
-fn demo_summary(speedup: f64) {
-    println!("\n{}", "=".repeat(70));
-    println!("SYSTEM SUMMARY");
-    println!("{}", "=".repeat(70));
-    println!("✓ Modular architecture implemented");
-    println!("✓ Carr-Madan analytical pricing (ATM/OTM/ITM)");
-    println!("✓ Volatility smile captured by Heston characteristic function");
-    println!("✓ Monte Carlo validation ({:.0}x slower)", speedup);
-    println!("✓ Strategy framework operational");
-    println!("✓ Parameter calibration working (argmin optimizer)");
-    println!("\nRun `dollarbill --help` to explore all CLI subcommands.");
-    println!("{}", "=".repeat(70));
 }
