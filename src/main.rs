@@ -79,6 +79,9 @@ enum Commands {
         /// Limit to a single symbol
         #[arg(long)]
         symbol: Option<String>,
+        /// Subscribe to the Alpaca live stream and generate signals in real time
+        #[arg(long)]
+        live: bool,
     },
 
     /// Calibrate the Heston model against synthetic market data for a symbol
@@ -108,7 +111,7 @@ async fn main() {
         Commands::Demo { symbol } => cmd_demo(&symbol),
         Commands::Price { symbol, strike, dte, rate } => cmd_price(&symbol, strike, dte, rate),
         Commands::Backtest { symbol, save } => cmd_backtest(symbol.as_deref(), save),
-        Commands::Signals { symbol } => cmd_signals(symbol.as_deref()),
+        Commands::Signals { symbol, live } => cmd_signals(symbol.as_deref(), live).await,
         Commands::Calibrate { symbol } => cmd_calibrate(&symbol),
         Commands::Trade { dry_run, live } => cmd_trade(dry_run, live).await,
     }
@@ -271,7 +274,12 @@ fn cmd_backtest(symbol: Option<&str>, save: bool) {
 
 // ─── Subcommand: signals ───────────────────────────────────────────────────
 
-fn cmd_signals(symbol: Option<&str>) {
+async fn cmd_signals(symbol: Option<&str>, live: bool) {
+    if live {
+        cmd_signals_live(symbol).await;
+        return;
+    }
+
     use market_data::symbols::load_stocks_with_sectors;
     use strategies::matching::StrategyMatcher;
 
@@ -326,6 +334,104 @@ fn cmd_signals(symbol: Option<&str>) {
     }
 }
 
+/// Subscribe to the Alpaca live stream and print signals as prices arrive.
+async fn cmd_signals_live(symbol: Option<&str>) {
+    use market_data::symbols::load_stocks_with_sectors;
+    use strategies::{
+        SignalAction, StrategyRegistry,
+        momentum::MomentumStrategy,
+        mean_reversion::MeanReversionStrategy,
+        breakout::BreakoutStrategy,
+        vol_arbitrage::VolatilityArbitrageStrategy,
+        cash_secured_puts::CashSecuredPuts,
+    };
+
+    let symbols: Vec<String> = match symbol {
+        Some(s) => vec![s.to_string()],
+        None => match load_stocks_with_sectors() {
+            Ok(v) => v.into_iter().map(|(s, _)| s).collect(),
+            Err(e) => { eprintln!("Failed to load symbols: {}", e); return; }
+        },
+    };
+
+    println!("{}", "=".repeat(70));
+    println!("LIVE SIGNALS  ({} symbols)", symbols.len());
+    println!("{}", "=".repeat(70));
+
+    let mut stream = match streaming::AlpacaStream::connect_from_env(&symbols).await {
+        Ok(s) => s,
+        Err(e) => { eprintln!("WebSocket connect failed: {}", e); return; }
+    };
+    println!("✅ Stream connected — press Ctrl-C to stop\n");
+
+    let mut registry = StrategyRegistry::new();
+    registry.register(Box::new(MomentumStrategy::new()));
+    registry.register(Box::new(MeanReversionStrategy::new()));
+    registry.register(Box::new(BreakoutStrategy::new()));
+    registry.register(Box::new(VolatilityArbitrageStrategy::new()));
+    registry.register(Box::new(CashSecuredPuts::new()));
+
+    let mut price_buf: std::collections::HashMap<String, std::collections::VecDeque<f64>>
+        = std::collections::HashMap::new();
+    let mut last_signal: std::collections::HashMap<String, Instant>
+        = std::collections::HashMap::new();
+    const SIGNAL_COOLDOWN_SECS: u64   = 300;
+    const MIN_PRICES_FOR_HV:    usize = 22;
+    const MAX_PRICE_BUF:        usize = 50;
+    const MIN_CONFIDENCE:       f64   = 0.60;
+
+    loop {
+        match stream.next_event().await {
+            Some(streaming::MarketEvent::Trade(t)) => {
+                let sym = t.symbol.clone();
+                let buf = price_buf.entry(sym.clone())
+                    .or_insert_with(std::collections::VecDeque::new);
+                buf.push_back(t.price);
+                if buf.len() > MAX_PRICE_BUF { buf.pop_front(); }
+                if buf.len() < MIN_PRICES_FOR_HV { continue; }
+
+                let now = Instant::now();
+                if let Some(&prev) = last_signal.get(&sym) {
+                    if now.duration_since(prev).as_secs() < SIGNAL_COOLDOWN_SECS { continue; }
+                }
+
+                let prices: Vec<f64> = buf.iter().copied().collect();
+                let sigma = compute_historical_vol(&prices);
+                if sigma < 1e-8 { continue; }
+                let spot = t.price;
+                let heston = heston_start(spot, sigma, 1.0, 0.05);
+                let model_iv = heston.v0.sqrt();
+
+                let signals = registry.generate_all_signals(&sym, spot, sigma, model_iv, sigma);
+                let actionable: Vec<_> = signals.iter()
+                    .filter(|s| {
+                        s.confidence >= MIN_CONFIDENCE
+                            && !matches!(s.action, SignalAction::NoAction)
+                            && !matches!(s.action, SignalAction::ClosePosition { .. })
+                    })
+                    .collect();
+
+                if actionable.is_empty() { continue; }
+                last_signal.insert(sym.clone(), now);
+
+                println!("\n[{}]  ${:.2}  vol={:.1}%", sym, spot, sigma * 100.0);
+                for sig in &actionable {
+                    println!("  📊 [{:<22}]  {:?}  K=${:.2}  exp={}d  conf={:.0}%  edge=${:.2}",
+                        sig.strategy_name, sig.action,
+                        sig.strike, sig.expiry_days,
+                        sig.confidence * 100.0, sig.edge);
+                }
+            }
+            // Suppress quote noise in signals-only mode
+            Some(streaming::MarketEvent::Quote(_)) => {}
+            Some(streaming::MarketEvent::Disconnected) | None => {
+                println!("Stream disconnected.");
+                break;
+            }
+        }
+    }
+}
+
 // ─── Subcommand: calibrate ─────────────────────────────────────────────────
 
 fn cmd_calibrate(symbol: &str) {
@@ -345,6 +451,15 @@ fn cmd_calibrate(symbol: &str) {
 async fn cmd_trade(dry_run: bool, live: bool) {
     use alpaca::AlpacaClient;
     use market_data::symbols::load_enabled_stocks;
+    use portfolio::{PortfolioManager, PortfolioConfig};
+    use strategies::{
+        SignalAction, StrategyRegistry,
+        momentum::MomentumStrategy,
+        mean_reversion::MeanReversionStrategy,
+        breakout::BreakoutStrategy,
+        vol_arbitrage::VolatilityArbitrageStrategy,
+        cash_secured_puts::CashSecuredPuts,
+    };
 
     let client = match AlpacaClient::from_env() {
         Ok(c) => c,
@@ -366,46 +481,172 @@ async fn cmd_trade(dry_run: bool, live: bool) {
              if live    { "  [LIVE STREAM]" } else { "" });
     println!("{}", "=".repeat(70));
 
-    // Fetch account status
-    match client.get_account().await {
-        Ok(acct) => println!("Account: {}  equity=${:.2}  buying_power=${:.2}",
-                             acct.status,
-                             acct.equity_f64().unwrap_or(0.0),
-                             acct.buying_power_f64().unwrap_or(0.0)),
+    // Fetch and display account status
+    let account = match client.get_account().await {
+        Ok(a) => a,
         Err(e) => { eprintln!("Failed to fetch account: {}", e); return; }
-    }
+    };
+    println!("Account: {}  equity=${:.2}  buying_power=${:.2}",
+             account.status,
+             account.equity_f64().unwrap_or(0.0),
+             account.buying_power_f64().unwrap_or(0.0));
 
     if live {
-        // Open the SQLite trade store
+        let equity  = account.equity_f64().unwrap_or(100_000.0);
+        let buy_pwr = account.buying_power_f64().unwrap_or(equity);
+
+        // ── Portfolio manager — shared risk gate for all orders ───────────
+        let mut pm = PortfolioManager::new(PortfolioConfig {
+            initial_capital: equity,
+            ..PortfolioConfig::default()
+        });
+        pm.sync_from_account(equity, buy_pwr);
+
+        // ── Persistent trade store ────────────────────────────────────────
         let store = match persistence::TradeStore::new("data/trades.db").await {
             Ok(s) => s,
             Err(e) => { eprintln!("Failed to open trade database: {}", e); return; }
         };
+
+        // ── Restore open positions from previous sessions ─────────────────
+        let persisted = store.get_open_positions().await.unwrap_or_default();
+        if !persisted.is_empty() {
+            println!("\n📂  {} persisted position(s) restored:", persisted.len());
+            for p in &persisted {
+                println!("     {} qty={:.0} @ ${:.2}  [{}]",
+                    p.symbol, p.qty, p.entry_price,
+                    p.strategy.as_deref().unwrap_or("—"));
+            }
+        }
+
+        // ── Strategy registry ─────────────────────────────────────────────
+        let mut registry = StrategyRegistry::new();
+        registry.register(Box::new(MomentumStrategy::new()));
+        registry.register(Box::new(MeanReversionStrategy::new()));
+        registry.register(Box::new(BreakoutStrategy::new()));
+        registry.register(Box::new(VolatilityArbitrageStrategy::new()));
+        registry.register(Box::new(CashSecuredPuts::new()));
+
+        // ── Rolling price buffers and signal-cooldown trackers ────────────
+        let mut price_buf: std::collections::HashMap<String, std::collections::VecDeque<f64>>
+            = std::collections::HashMap::new();
+        let mut last_signal: std::collections::HashMap<String, Instant>
+            = std::collections::HashMap::new();
+        const SIGNAL_COOLDOWN_SECS: u64   = 300; // 5-minute cooldown per symbol
+        const MIN_PRICES_FOR_HV:    usize = 22;  // need 22 ticks for HV-21
+        const MAX_PRICE_BUF:        usize = 50;  // rolling window size
+        const MIN_CONFIDENCE:       f64   = 0.60;
 
         println!("📡 Connecting to Alpaca live stream for {} symbols...", symbols.len());
         let mut stream = match streaming::AlpacaStream::connect_from_env(&symbols).await {
             Ok(s) => s,
             Err(e) => { eprintln!("WebSocket connect failed: {}", e); return; }
         };
-
         println!("✅ Stream connected — press Ctrl-C to stop\n");
+
         loop {
             match stream.next_event().await {
                 Some(streaming::MarketEvent::Trade(t)) => {
-                    println!("[TRADE] {}  ${:.4}  ×{}", t.symbol, t.price, t.size);
-                    // Persist tick to SQLite
+                    let sym   = t.symbol.clone();
+                    let price = t.price;
+                    let ts    = t.timestamp.clone();
+
+                    // Persist raw tick
                     let rec = persistence::TradeRecord {
-                        symbol: t.symbol,
-                        action: "tick".to_string(),
-                        quantity: t.size as f64,
-                        price: t.price,
-                        order_id: None,
+                        symbol:      sym.clone(),
+                        action:      "tick".to_string(),
+                        quantity:    t.size as f64,
+                        price,
+                        order_id:    None,
                         fill_status: Some("tick".to_string()),
-                        strategy: None,
-                        timestamp: t.timestamp,
+                        strategy:    None,
+                        timestamp:   ts.clone(),
                     };
                     if let Err(e) = store.insert_trade(&rec).await {
                         eprintln!("DB write error: {}", e);
+                    }
+
+                    // Update rolling price buffer
+                    let buf = price_buf.entry(sym.clone())
+                        .or_insert_with(std::collections::VecDeque::new);
+                    buf.push_back(price);
+                    if buf.len() > MAX_PRICE_BUF { buf.pop_front(); }
+                    if buf.len() < MIN_PRICES_FOR_HV { continue; }
+
+                    // Signal cooldown check
+                    let now = Instant::now();
+                    if let Some(&prev) = last_signal.get(&sym) {
+                        if now.duration_since(prev).as_secs() < SIGNAL_COOLDOWN_SECS { continue; }
+                    }
+
+                    // Volatility + Heston params from rolling ticks
+                    let prices: Vec<f64> = buf.iter().copied().collect();
+                    let sigma = compute_historical_vol(&prices);
+                    if sigma < 1e-8 { continue; }
+                    let heston = heston_start(price, sigma, 1.0, 0.05);
+                    let model_iv = heston.v0.sqrt();
+
+                    // Generate signals
+                    let signals = registry.generate_all_signals(&sym, price, sigma, model_iv, sigma);
+                    let actionable: Vec<_> = signals.iter()
+                        .filter(|s| {
+                            s.confidence >= MIN_CONFIDENCE
+                                && !matches!(s.action, SignalAction::NoAction)
+                                && !matches!(s.action, SignalAction::ClosePosition { .. })
+                        })
+                        .collect();
+
+                    if actionable.is_empty() { continue; }
+                    last_signal.insert(sym.clone(), now);
+
+                    // Portfolio risk gate
+                    // Rough ATM premium ≈ spot × vol × √(30/365)
+                    let rough_premium = (price * sigma * (30.0_f64 / 365.0).sqrt()).max(0.01);
+                    let decision = pm.can_take_position(
+                        &actionable[0].strategy_name,
+                        rough_premium,
+                        sigma,
+                        1,
+                    );
+                    for w in &decision.risk_warnings {
+                        println!("  ⚠️  Risk [{}]: {}", sym, w);
+                    }
+
+                    println!("[{}]  ${:.2}  vol={:.1}%", sym, price, sigma * 100.0);
+                    for sig in &actionable {
+                        let qty = decision.suggested_size.max(1) as u32;
+                        println!("  📊 [{:<22}]  {:?}  K=${:.2}  exp={}d  conf={:.0}%  edge=${:.2}",
+                            sig.strategy_name, sig.action,
+                            sig.strike, sig.expiry_days,
+                            sig.confidence * 100.0, sig.edge);
+
+                        if dry_run {
+                            println!("    [DRY RUN] Would submit {} × {}", qty, sym);
+                            continue;
+                        }
+                        if !decision.can_trade { continue; }
+
+                        match AlpacaClient::signal_to_options_order(&sig.action, &sym, qty, None) {
+                            Ok(order) => {
+                                match client.submit_options_order(&order).await {
+                                    Ok(filled) => {
+                                        println!("    ✅ Submitted: {} ({})", filled.id, filled.status);
+                                        let pos = persistence::PositionRecord {
+                                            symbol:      sym.clone(),
+                                            qty:         qty as f64,
+                                            entry_price: price,
+                                            entry_date:  ts.clone(),
+                                            strategy:    Some(sig.strategy_name.clone()),
+                                        };
+                                        if let Err(e) = store.upsert_position(&pos).await {
+                                            eprintln!("DB position error: {}", e);
+                                        }
+                                    }
+                                    Err(e) => eprintln!("    ❌ Order failed: {}", e),
+                                }
+                            }
+                            Err(e) => eprintln!("    ❌ Cannot build order for {:?}: {}", sig.action, e),
+                        }
                     }
                 }
                 Some(streaming::MarketEvent::Quote(q)) => {
