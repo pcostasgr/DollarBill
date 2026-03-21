@@ -424,8 +424,11 @@ async fn cmd_signals_live(symbol: Option<&str>) {
             }
             // Suppress quote noise in signals-only mode
             Some(streaming::MarketEvent::Quote(_)) => {}
+            Some(streaming::MarketEvent::Reconnected) => {
+                println!("🔄 Stream reconnected — resuming signals.");
+            }
             Some(streaming::MarketEvent::Disconnected) | None => {
-                println!("Stream disconnected.");
+                println!("❌ Stream permanently disconnected.");
                 break;
             }
         }
@@ -519,6 +522,42 @@ async fn cmd_trade(dry_run: bool, live: bool) {
             }
         }
 
+        // ── Reconcile SQLite state against live Alpaca positions ──────────
+        println!("\n🔄 Reconciling positions with Alpaca…");
+        match client.get_positions().await {
+            Ok(alpaca_pos) => {
+                let alpaca_syms: std::collections::HashSet<String> =
+                    alpaca_pos.iter().map(|p| p.symbol.clone()).collect();
+                // Remove SQLite records absent from Alpaca (must have closed/expired)
+                for p in &persisted {
+                    if !alpaca_syms.contains(&p.symbol) {
+                        eprintln!("  ⚠  {} in SQLite but absent from Alpaca — removing stale record",
+                            p.symbol);
+                        let _ = store.close_position(&p.symbol).await;
+                    } else {
+                        println!("  ✅ {} confirmed open in Alpaca", p.symbol);
+                    }
+                }
+                // Import Alpaca positions not yet tracked in SQLite
+                let sqlite_syms: std::collections::HashSet<String> =
+                    persisted.iter().map(|p| p.symbol.clone()).collect();
+                for ap in &alpaca_pos {
+                    if !sqlite_syms.contains(&ap.symbol) {
+                        println!("  📥 Importing {} from Alpaca into SQLite", ap.symbol);
+                        let rec = persistence::PositionRecord {
+                            symbol:      ap.symbol.clone(),
+                            qty:         ap.qty.parse::<f64>().unwrap_or(0.0),
+                            entry_price: ap.avg_entry_price.parse::<f64>().unwrap_or(0.0),
+                            entry_date:  "reconciled".to_string(),
+                            strategy:    Some("reconciled".to_string()),
+                        };
+                        let _ = store.upsert_position(&rec).await;
+                    }
+                }
+            }
+            Err(e) => eprintln!("⚠️  Position reconciliation skipped: {}", e),
+        }
+
         // ── Strategy registry ─────────────────────────────────────────────
         let mut registry = StrategyRegistry::new();
         registry.register(Box::new(MomentumStrategy::new()));
@@ -536,6 +575,11 @@ async fn cmd_trade(dry_run: bool, live: bool) {
         const MIN_PRICES_FOR_HV:    usize = 22;  // need 22 ticks for HV-21
         const MAX_PRICE_BUF:        usize = 50;  // rolling window size
         const MIN_CONFIDENCE:       f64   = 0.60;
+        /// Halt new orders once estimated daily spend reaches this fraction of equity.
+        const MAX_DAILY_LOSS_PCT:   f64   = 0.05; // 5 %
+        let max_daily_loss           = equity * MAX_DAILY_LOSS_PCT;
+        let mut estimated_daily_loss = 0.0_f64;
+        let mut circuit_broken       = false;
 
         println!("📡 Connecting to Alpaca live stream for {} symbols...", symbols.len());
         let mut stream = match streaming::AlpacaStream::connect_from_env(&symbols).await {
@@ -572,6 +616,11 @@ async fn cmd_trade(dry_run: bool, live: bool) {
                     buf.push_back(price);
                     if buf.len() > MAX_PRICE_BUF { buf.pop_front(); }
                     if buf.len() < MIN_PRICES_FOR_HV { continue; }
+
+                    // Circuit breaker — stop new signals if daily loss limit is hit
+                    if circuit_broken {
+                        continue;
+                    }
 
                     // Signal cooldown check
                     let now = Instant::now();
@@ -631,6 +680,13 @@ async fn cmd_trade(dry_run: bool, live: bool) {
                                 match client.submit_options_order(&order).await {
                                     Ok(filled) => {
                                         println!("    ✅ Submitted: {} ({})", filled.id, filled.status);
+                                        // Update circuit-breaker spend tracker
+                                        estimated_daily_loss += rough_premium * qty as f64 * 100.0;
+                                        if estimated_daily_loss >= max_daily_loss && !circuit_broken {
+                                            circuit_broken = true;
+                                            eprintln!("🚨 CIRCUIT BREAKER: Estimated daily spend ${:.2} ≥ limit ${:.2} — halting new orders",
+                                                estimated_daily_loss, max_daily_loss);
+                                        }
                                         let pos = persistence::PositionRecord {
                                             symbol:      sym.clone(),
                                             qty:         qty as f64,
@@ -652,8 +708,11 @@ async fn cmd_trade(dry_run: bool, live: bool) {
                 Some(streaming::MarketEvent::Quote(q)) => {
                     println!("[QUOTE] {}  bid=${:.4} ask=${:.4}", q.symbol, q.bid_price, q.ask_price);
                 }
+                Some(streaming::MarketEvent::Reconnected) => {
+                    println!("🔄 Stream reconnected — resuming trading loop.");
+                }
                 Some(streaming::MarketEvent::Disconnected) | None => {
-                    println!("Stream disconnected.");
+                    println!("❌ Stream permanently disconnected — stopping bot.");
                     break;
                 }
             }

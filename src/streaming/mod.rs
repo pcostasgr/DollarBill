@@ -7,6 +7,7 @@
 // consolidated tape (requires a paid market-data subscription).
 
 use std::error::Error;
+use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
@@ -56,7 +57,9 @@ pub struct StreamQuote {
 pub enum MarketEvent {
     Trade(StreamTrade),
     Quote(StreamQuote),
-    /// The server closed the connection or an unrecoverable error occurred.
+    /// The stream successfully reconnected after a transient connection drop.
+    Reconnected,
+    /// The server closed the connection and all reconnection attempts failed.
     Disconnected,
 }
 
@@ -81,8 +84,12 @@ type WsStream = tokio_tungstenite::WebSocketStream<
 /// # }
 /// ```
 pub struct AlpacaStream {
-    write: futures_util::stream::SplitSink<WsStream, Message>,
-    read:  futures_util::stream::SplitStream<WsStream>,
+    write:      futures_util::stream::SplitSink<WsStream, Message>,
+    read:       futures_util::stream::SplitStream<WsStream>,
+    /// Stored credentials and subscription list used for automatic reconnection.
+    api_key:    String,
+    api_secret: String,
+    symbols:    Vec<String>,
 }
 
 impl AlpacaStream {
@@ -153,16 +160,40 @@ impl AlpacaStream {
             let _ = msg?.into_text()?;
         }
 
-        Ok(Self { write, read })
+        Ok(Self {
+            write,
+            read,
+            api_key:    api_key.to_string(),
+            api_secret: api_secret.to_string(),
+            symbols:    symbols.to_vec(),
+        })
     }
 
-    /// Receive the next [`MarketEvent`].  Returns `None` only if the stream
-    /// is exhausted (server closed cleanly).
+    /// Receive the next [`MarketEvent`].
+    ///
+    /// On network drops or server disconnections, automatically reconnects with
+    /// exponential backoff (up to 10 attempts, 500 ms → 16 s per attempt).
+    /// Returns `Some(MarketEvent::Reconnected)` when the stream is restored.
+    /// Returns `Some(MarketEvent::Disconnected)` only after all reconnection
+    /// attempts fail. Returns `None` on a clean server-side close.
     pub async fn next_event(&mut self) -> Option<MarketEvent> {
         loop {
-            let raw = match self.read.next().await? {
-                Ok(m)  => m,
-                Err(_) => return Some(MarketEvent::Disconnected),
+            let raw = match self.read.next().await {
+                Some(Ok(m)) => m,
+                Some(Err(e)) => {
+                    eprintln!("⚠️  Stream error: {} — reconnecting…", e);
+                    if self.reconnect_with_backoff().await.is_ok() {
+                        return Some(MarketEvent::Reconnected);
+                    }
+                    return Some(MarketEvent::Disconnected);
+                }
+                None => {
+                    eprintln!("⚠️  Stream closed by server — reconnecting…");
+                    if self.reconnect_with_backoff().await.is_ok() {
+                        return Some(MarketEvent::Reconnected);
+                    }
+                    return None;
+                }
             };
 
             let text = match raw.to_text() {
@@ -189,6 +220,40 @@ impl AlpacaStream {
                 }
             }
         }
+    }
+
+    /// Reconnect to the Alpaca data stream with exponential backoff.
+    ///
+    /// Attempts up to 10 reconnections: 500 ms → doubling each time, capped at 16 s.
+    async fn reconnect_with_backoff(&mut self) -> Result<(), Box<dyn Error>> {
+        const MAX_ATTEMPTS: u32  = 10;
+        const BASE_DELAY_MS: u64 = 500;
+        const MAX_DELAY_MS:  u64 = 16_000;
+
+        let key     = self.api_key.clone();
+        let secret  = self.api_secret.clone();
+        let symbols = self.symbols.clone();
+
+        let mut delay_ms = BASE_DELAY_MS;
+        for attempt in 1..=MAX_ATTEMPTS {
+            eprintln!("   Reconnect attempt {}/{} (delay {}ms)…",
+                attempt, MAX_ATTEMPTS, delay_ms);
+            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+            match Self::connect_to(STREAM_URL, &key, &secret, &symbols).await {
+                Ok(new_stream) => {
+                    let AlpacaStream { write, read, .. } = new_stream;
+                    self.write = write;
+                    self.read  = read;
+                    eprintln!("✅ Stream reconnected (attempt {})", attempt);
+                    return Ok(());
+                }
+                Err(e) => {
+                    eprintln!("   Attempt {} failed: {}", attempt, e);
+                    delay_ms = (delay_ms * 2).min(MAX_DELAY_MS);
+                }
+            }
+        }
+        Err("Stream: all reconnection attempts exhausted".into())
     }
 
     /// Gracefully close the WebSocket connection.

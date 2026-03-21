@@ -212,8 +212,15 @@ impl AlpacaClient {
                 }
             }
         }
-        // Return last known state even if still pending
-        self.get_order(order_id).await
+        // Timeout: cancel the dangling order to avoid an unintended late fill
+        let total_wait_secs = FILL_POLL_INTERVAL_SECS * FILL_POLL_MAX_ATTEMPTS as u64;
+        eprintln!("⚠️  Order {} not filled after {}s — attempting cancel",
+            order_id, total_wait_secs);
+        if let Err(e) = self.cancel_order(order_id).await {
+            eprintln!("   Cancel failed (order may already be terminal): {}", e);
+        }
+        Err(format!("Order {} timed out after {}s and was canceled",
+            order_id, total_wait_secs).into())
     }
 
     // ============ Position Methods ============
