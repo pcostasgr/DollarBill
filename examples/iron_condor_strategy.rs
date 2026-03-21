@@ -18,6 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         min_volume: 10,                  // Minimum volume
         max_spread_pct: 20.0,            // Max 20% bid-ask spread
         risk_free_rate: 0.045,           // 4.5% risk-free rate
+        iv_rank_threshold: 0.5,          // Only sell options in top-half IV regime
     };
 
     // Test symbols with options data

@@ -92,7 +92,7 @@ impl TradingStrategy for MomentumStrategy {
             let confidence = (score.min(0.8) + confirmation_bonus).min(1.0);
             vec![TradeSignal {
                 symbol: symbol.to_string(),
-                action: SignalAction::BuyStraddle,
+                action: SignalAction::BuyStraddle { strike: spot, days_to_expiry: 30 },
                 strike: spot,
                 expiry_days: 30,
                 confidence,
@@ -104,7 +104,7 @@ impl TradingStrategy for MomentumStrategy {
             let confidence = (score.abs().min(0.8) + confirmation_bonus).min(1.0);
             vec![TradeSignal {
                 symbol: symbol.to_string(),
-                action: SignalAction::SellStraddle,
+                action: SignalAction::SellStraddle { strike: spot, days_to_expiry: 30 },
                 strike: spot,
                 expiry_days: 30,
                 confidence,

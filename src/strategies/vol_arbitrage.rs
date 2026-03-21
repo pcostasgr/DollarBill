@@ -51,17 +51,22 @@ impl VolatilityArbitrageStrategy {
     }
 
     /// Determine optimal strategy based on IV/RV relationship
-    fn select_vol_strategy(&self, iv_premium: f64, market_iv: f64) -> Option<SignalAction> {
+    fn select_vol_strategy(&self, iv_premium: f64, market_iv: f64, spot: f64, expiry_days: usize) -> Option<SignalAction> {
         if iv_premium > self.min_edge {
             // IV is rich - sell volatility
             if market_iv > 0.4 {
-                Some(SignalAction::SellStraddle) // High IV - sell straddle
+                Some(SignalAction::SellStraddle { strike: spot, days_to_expiry: expiry_days }) // High IV - sell straddle
             } else {
-                Some(SignalAction::IronButterfly { wing_width: 0.1 }) // Moderate IV - iron butterfly
+                // Moderate IV - iron butterfly with 10% wings
+                Some(SignalAction::IronButterfly {
+                    center_strike: spot,
+                    wing_width: spot * 0.10,
+                    days_to_expiry: expiry_days,
+                })
             }
         } else if iv_premium < -self.min_edge {
             // IV is cheap - buy volatility
-            Some(SignalAction::BuyStraddle)
+            Some(SignalAction::BuyStraddle { strike: spot, days_to_expiry: expiry_days })
         } else {
             None // No clear edge
         }
@@ -86,16 +91,16 @@ impl TradingStrategy for VolatilityArbitrageStrategy {
         let total_edge = vol_premium + iv_model_edge;
         
         let mut signals = vec![];
+        // Select expiry based on volatility regime (needed by select_vol_strategy for OCC symbols)
+        let expiry_days = if market_iv > 0.5 { 14 } else if market_iv > 0.3 { 21 } else { 30 };
 
-        if let Some(action) = self.select_vol_strategy(total_edge, market_iv) {
+        if let Some(action) = self.select_vol_strategy(total_edge, market_iv, spot, expiry_days) {
             // Calculate confidence based on edge magnitude and consistency
             let edge_confidence = (total_edge.abs() / 0.1).min(1.0); // Scale to 0-1
             let iv_confidence = (market_iv / 0.5).min(1.0); // Higher IV = more confidence
             let confidence = (edge_confidence * 0.7 + iv_confidence * 0.3).min(0.95);
 
             if confidence > 0.3 {
-                // Select expiry based on volatility regime
-                let expiry_days = if market_iv > 0.5 { 14 } else if market_iv > 0.3 { 21 } else { 30 };
                 
                 signals.push(TradeSignal {
                     symbol: symbol.to_string(),

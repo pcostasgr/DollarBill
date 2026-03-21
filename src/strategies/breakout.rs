@@ -90,7 +90,7 @@ impl TradingStrategy for BreakoutStrategy {
 
             vec![TradeSignal {
                 symbol: symbol.to_string(),
-                action: SignalAction::IronButterfly { wing_width: spot * 0.05 },
+                action: SignalAction::IronButterfly { center_strike: spot, wing_width: spot * 0.05, days_to_expiry: 14 },
                 strike: spot,
                 expiry_days: 14,
                 confidence,
@@ -105,7 +105,7 @@ impl TradingStrategy for BreakoutStrategy {
             if compression > 0.2 {
                 vec![TradeSignal {
                     symbol: symbol.to_string(),
-                    action: SignalAction::SellStraddle,
+                    action: SignalAction::SellStraddle { strike: spot, days_to_expiry: 30 },
                     strike: spot,
                     expiry_days: 30,
                     confidence: compression.min(0.85),

@@ -5,6 +5,7 @@ use std::time::Duration;
 use reqwest::{Client, header, StatusCode};
 use serde::{Deserialize, de::DeserializeOwned};
 use super::types::*;
+use crate::strategies::SignalAction;
 
 const PAPER_TRADING_URL: &str = "https://paper-api.alpaca.markets";
 const LIVE_TRADING_URL: &str = "https://api.alpaca.markets";
@@ -421,6 +422,152 @@ impl AlpacaClient {
         let expiry = target + Duration::days(days_ahead as i64);
         ((expiry.year() % 100) as u32, expiry.month(), expiry.day())
     }
+
+    /// Convert a [`SignalAction`] into an [`OptionsOrderRequest`] ready to submit to Alpaca.
+    ///
+    /// # Arguments
+    /// * `signal`      — the strategy signal (BuyCall, SellPut, IronCondor, etc.)
+    /// * `underlying`  — ticker symbol, e.g. `"AAPL"`
+    /// * `contracts`   — number of contracts (1 contract = 100 shares)
+    /// * `limit_price` — net debit/credit to pay/receive; `None` for market execution
+    ///
+    /// # Returns
+    /// `Ok(OptionsOrderRequest)` that can be passed directly to [`submit_options_order`].
+    /// Returns `Err` for signals that have no options representation (`NoAction`).
+    ///
+    /// [`submit_options_order`]: Self::submit_options_order
+    pub fn signal_to_options_order(
+        signal: &SignalAction,
+        underlying: &str,
+        contracts: u32,
+        limit_price: Option<f64>,
+    ) -> Result<OptionsOrderRequest, Box<dyn Error>> {
+        let legs = Self::signal_to_legs(signal, underlying)?;
+        Ok(OptionsOrderRequest {
+            r#type: if limit_price.is_some() { OrderType::Limit } else { OrderType::Market },
+            time_in_force: TimeInForce::Day,
+            order_class: if legs.len() > 1 { "mleg".to_string() } else { "simple".to_string() },
+            legs: legs.into_iter().map(|(sym, side, intent)| OptionsLeg {
+                symbol: sym,
+                ratio_qty: contracts,
+                side,
+                position_intent: intent.to_string(),
+            }).collect(),
+            limit_price,
+            client_order_id: None,
+        })
+    }
+
+    /// Internal: build (occ_symbol, side, position_intent) tuples for each leg.
+    fn signal_to_legs(
+        signal: &SignalAction,
+        underlying: &str,
+    ) -> Result<Vec<(String, OrderSide, &'static str)>, Box<dyn Error>> {
+        match signal {
+            SignalAction::BuyCall { strike, days_to_expiry, .. } => {
+                let (yy, mm, dd) = Self::expiry_from_dte(*days_to_expiry);
+                Ok(vec![(Self::occ_symbol(underlying, yy, mm, dd, true, *strike),
+                          OrderSide::Buy, "buy_to_open")])
+            }
+            SignalAction::BuyPut { strike, days_to_expiry, .. } => {
+                let (yy, mm, dd) = Self::expiry_from_dte(*days_to_expiry);
+                Ok(vec![(Self::occ_symbol(underlying, yy, mm, dd, false, *strike),
+                          OrderSide::Buy, "buy_to_open")])
+            }
+            SignalAction::SellCall { strike, days_to_expiry, .. } => {
+                let (yy, mm, dd) = Self::expiry_from_dte(*days_to_expiry);
+                Ok(vec![(Self::occ_symbol(underlying, yy, mm, dd, true, *strike),
+                          OrderSide::Sell, "sell_to_open")])
+            }
+            SignalAction::SellPut { strike, days_to_expiry, .. } => {
+                let (yy, mm, dd) = Self::expiry_from_dte(*days_to_expiry);
+                Ok(vec![(Self::occ_symbol(underlying, yy, mm, dd, false, *strike),
+                          OrderSide::Sell, "sell_to_open")])
+            }
+            SignalAction::CreditCallSpread { sell_strike, buy_strike, days_to_expiry } => {
+                let (yy, mm, dd) = Self::expiry_from_dte(*days_to_expiry);
+                Ok(vec![
+                    (Self::occ_symbol(underlying, yy, mm, dd, true, *sell_strike),
+                     OrderSide::Sell, "sell_to_open"),
+                    (Self::occ_symbol(underlying, yy, mm, dd, true, *buy_strike),
+                     OrderSide::Buy, "buy_to_open"),
+                ])
+            }
+            SignalAction::CreditPutSpread { sell_strike, buy_strike, days_to_expiry } => {
+                let (yy, mm, dd) = Self::expiry_from_dte(*days_to_expiry);
+                Ok(vec![
+                    (Self::occ_symbol(underlying, yy, mm, dd, false, *sell_strike),
+                     OrderSide::Sell, "sell_to_open"),
+                    (Self::occ_symbol(underlying, yy, mm, dd, false, *buy_strike),
+                     OrderSide::Buy, "buy_to_open"),
+                ])
+            }
+            SignalAction::IronCondor {
+                sell_call_strike, buy_call_strike,
+                sell_put_strike,  buy_put_strike,
+                days_to_expiry,
+            } => {
+                let (yy, mm, dd) = Self::expiry_from_dte(*days_to_expiry);
+                Ok(vec![
+                    (Self::occ_symbol(underlying, yy, mm, dd, true,  *sell_call_strike),
+                     OrderSide::Sell, "sell_to_open"),
+                    (Self::occ_symbol(underlying, yy, mm, dd, true,  *buy_call_strike),
+                     OrderSide::Buy,  "buy_to_open"),
+                    (Self::occ_symbol(underlying, yy, mm, dd, false, *sell_put_strike),
+                     OrderSide::Sell, "sell_to_open"),
+                    (Self::occ_symbol(underlying, yy, mm, dd, false, *buy_put_strike),
+                     OrderSide::Buy,  "buy_to_open"),
+                ])
+            }
+            SignalAction::CoveredCall { sell_strike, days_to_expiry } => {
+                let (yy, mm, dd) = Self::expiry_from_dte(*days_to_expiry);
+                Ok(vec![(Self::occ_symbol(underlying, yy, mm, dd, true, *sell_strike),
+                          OrderSide::Sell, "sell_to_open")])
+            }
+            SignalAction::SellStraddle { strike, days_to_expiry } => {
+                let (yy, mm, dd) = Self::expiry_from_dte(*days_to_expiry);
+                Ok(vec![
+                    (Self::occ_symbol(underlying, yy, mm, dd, true,  *strike),
+                     OrderSide::Sell, "sell_to_open"),
+                    (Self::occ_symbol(underlying, yy, mm, dd, false, *strike),
+                     OrderSide::Sell, "sell_to_open"),
+                ])
+            }
+            SignalAction::BuyStraddle { strike, days_to_expiry } => {
+                let (yy, mm, dd) = Self::expiry_from_dte(*days_to_expiry);
+                Ok(vec![
+                    (Self::occ_symbol(underlying, yy, mm, dd, true,  *strike),
+                     OrderSide::Buy, "buy_to_open"),
+                    (Self::occ_symbol(underlying, yy, mm, dd, false, *strike),
+                     OrderSide::Buy, "buy_to_open"),
+                ])
+            }
+            SignalAction::IronButterfly { center_strike, wing_width, days_to_expiry } => {
+                let (yy, mm, dd) = Self::expiry_from_dte(*days_to_expiry);
+                Ok(vec![
+                    (Self::occ_symbol(underlying, yy, mm, dd, true,  *center_strike),
+                     OrderSide::Sell, "sell_to_open"),
+                    (Self::occ_symbol(underlying, yy, mm, dd, true,  *center_strike + *wing_width),
+                     OrderSide::Buy,  "buy_to_open"),
+                    (Self::occ_symbol(underlying, yy, mm, dd, false, *center_strike),
+                     OrderSide::Sell, "sell_to_open"),
+                    (Self::occ_symbol(underlying, yy, mm, dd, false, (*center_strike - *wing_width).max(0.01)),
+                     OrderSide::Buy,  "buy_to_open"),
+                ])
+            }
+            SignalAction::CashSecuredPut { strike, days_to_expiry } => {
+                let (yy, mm, dd) = Self::expiry_from_dte(*days_to_expiry);
+                Ok(vec![(Self::occ_symbol(underlying, yy, mm, dd, false, *strike),
+                          OrderSide::Sell, "sell_to_open")])
+            }
+            SignalAction::ClosePosition { position_id } => {
+                Err(format!("ClosePosition({position_id}) is not an options order signal").into())
+            }
+            SignalAction::NoAction => {
+                Err("NoAction cannot be converted to an order".into())
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -501,5 +648,177 @@ mod tests {
                 dte, yy, mm, dd
             );
         }
+    }
+
+    // ---- signal_to_options_order tests ----------------------------------------
+
+    #[test]
+    fn test_signal_to_options_order_buy_call_single_leg() {
+        use crate::strategies::SignalAction;
+        let sig = SignalAction::BuyCall { strike: 150.0, days_to_expiry: 30, volatility: 0.3 };
+        let req = AlpacaClient::signal_to_options_order(&sig, "AAPL", 1, Some(2.50))
+            .expect("should succeed");
+        assert_eq!(req.legs.len(), 1);
+        let leg = &req.legs[0];
+        assert_eq!(leg.side, OrderSide::Buy);
+        assert_eq!(leg.position_intent, "buy_to_open");
+        assert!(leg.symbol.contains('C'), "call OCC symbol must contain 'C'");
+        assert_eq!(req.limit_price, Some(2.50));
+    }
+
+    #[test]
+    fn test_signal_to_options_order_sell_put_single_leg() {
+        use crate::strategies::SignalAction;
+        let sig = SignalAction::SellPut { strike: 140.0, days_to_expiry: 45, volatility: 0.25 };
+        let req = AlpacaClient::signal_to_options_order(&sig, "AAPL", 2, None)
+            .expect("should succeed");
+        assert_eq!(req.legs.len(), 1);
+        let leg = &req.legs[0];
+        assert_eq!(leg.side, OrderSide::Sell);
+        assert_eq!(leg.position_intent, "sell_to_open");
+        assert!(leg.symbol.contains('P'), "put OCC symbol must contain 'P'");
+        assert_eq!(leg.ratio_qty, 2);
+    }
+
+    #[test]
+    fn test_signal_to_options_order_credit_call_spread_two_legs() {
+        use crate::strategies::SignalAction;
+        let sig = SignalAction::CreditCallSpread {
+            sell_strike: 155.0,
+            buy_strike: 160.0,
+            days_to_expiry: 30,
+        };
+        let req = AlpacaClient::signal_to_options_order(&sig, "AAPL", 1, Some(-1.50))
+            .expect("should succeed");
+        assert_eq!(req.legs.len(), 2);
+        assert_eq!(req.legs[0].side, OrderSide::Sell);
+        assert_eq!(req.legs[1].side, OrderSide::Buy);
+        assert_eq!(req.order_class, "mleg");
+    }
+
+    #[test]
+    fn test_signal_to_options_order_iron_condor_four_legs() {
+        use crate::strategies::SignalAction;
+        let sig = SignalAction::IronCondor {
+            sell_call_strike: 160.0,
+            buy_call_strike: 165.0,
+            sell_put_strike: 140.0,
+            buy_put_strike: 135.0,
+            days_to_expiry: 45,
+        };
+        let req = AlpacaClient::signal_to_options_order(&sig, "SPY", 1, Some(-2.00))
+            .expect("should succeed");
+        assert_eq!(req.legs.len(), 4, "iron condor needs exactly 4 legs");
+        assert_eq!(req.order_class, "mleg");
+        // Leg order: sell call, buy call, sell put, buy put
+        assert_eq!(req.legs[0].side, OrderSide::Sell);
+        assert_eq!(req.legs[1].side, OrderSide::Buy);
+        assert_eq!(req.legs[2].side, OrderSide::Sell);
+        assert_eq!(req.legs[3].side, OrderSide::Buy);
+    }
+
+    #[test]
+    fn test_signal_to_options_order_no_action_returns_err() {
+        use crate::strategies::SignalAction;
+        let result = AlpacaClient::signal_to_options_order(
+            &SignalAction::NoAction, "AAPL", 1, None,
+        );
+        assert!(result.is_err(), "NoAction must return Err");
+    }
+
+    #[test]
+    fn test_signal_to_options_order_covered_call_single_leg() {
+        use crate::strategies::SignalAction;
+        let sig = SignalAction::CoveredCall { sell_strike: 155.0, days_to_expiry: 14 };
+        let req = AlpacaClient::signal_to_options_order(&sig, "AAPL", 1, Some(1.00))
+            .expect("should succeed");
+        assert_eq!(req.legs.len(), 1);
+        assert_eq!(req.legs[0].side, OrderSide::Sell);
+        assert_eq!(req.legs[0].position_intent, "sell_to_open");
+    }
+
+    // ── New multi-leg variants ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_signal_to_options_order_sell_straddle_two_legs() {
+        use crate::strategies::SignalAction;
+        let sig = SignalAction::SellStraddle { strike: 200.0, days_to_expiry: 30 };
+        let req = AlpacaClient::signal_to_options_order(&sig, "TSLA", 1, None)
+            .expect("SellStraddle should produce a valid order");
+        assert_eq!(req.legs.len(), 2, "sell straddle needs exactly 2 legs");
+        assert_eq!(req.order_class, "mleg");
+        // Both legs sell-to-open
+        assert!(req.legs.iter().all(|l| l.side == OrderSide::Sell));
+        assert!(req.legs.iter().all(|l| l.position_intent == "sell_to_open"));
+        // One call leg, one put leg
+        assert!(req.legs.iter().any(|l| l.symbol.contains('C')), "must have a call leg");
+        assert!(req.legs.iter().any(|l| l.symbol.contains('P')), "must have a put leg");
+        // Both legs reference the same strike (00200000)
+        assert!(req.legs.iter().all(|l| l.symbol.contains("00200000")));
+    }
+
+    #[test]
+    fn test_signal_to_options_order_buy_straddle_two_legs() {
+        use crate::strategies::SignalAction;
+        let sig = SignalAction::BuyStraddle { strike: 150.0, days_to_expiry: 21 };
+        let req = AlpacaClient::signal_to_options_order(&sig, "AAPL", 1, None)
+            .expect("BuyStraddle should produce a valid order");
+        assert_eq!(req.legs.len(), 2, "buy straddle needs exactly 2 legs");
+        assert_eq!(req.order_class, "mleg");
+        // Both legs buy-to-open
+        assert!(req.legs.iter().all(|l| l.side == OrderSide::Buy));
+        assert!(req.legs.iter().all(|l| l.position_intent == "buy_to_open"));
+        // One call, one put
+        assert!(req.legs.iter().any(|l| l.symbol.contains('C')));
+        assert!(req.legs.iter().any(|l| l.symbol.contains('P')));
+        // Both at the same strike (00150000)
+        assert!(req.legs.iter().all(|l| l.symbol.contains("00150000")));
+    }
+
+    #[test]
+    fn test_signal_to_options_order_iron_butterfly_four_legs() {
+        use crate::strategies::SignalAction;
+        let sig = SignalAction::IronButterfly {
+            center_strike: 400.0,
+            wing_width: 10.0,
+            days_to_expiry: 14,
+        };
+        let req = AlpacaClient::signal_to_options_order(&sig, "SPY", 1, Some(-2.00))
+            .expect("IronButterfly should produce a valid order");
+        assert_eq!(req.legs.len(), 4, "iron butterfly needs exactly 4 legs");
+        assert_eq!(req.order_class, "mleg");
+        // Leg order: sell ATM call, buy OTM call, sell ATM put, buy OTM put
+        assert_eq!(req.legs[0].side, OrderSide::Sell); // sell call (ATM)
+        assert_eq!(req.legs[1].side, OrderSide::Buy);  // buy  call (OTM)
+        assert_eq!(req.legs[2].side, OrderSide::Sell); // sell put  (ATM)
+        assert_eq!(req.legs[3].side, OrderSide::Buy);  // buy  put  (OTM)
+        // ATM body strikes → 00400000
+        assert!(req.legs[0].symbol.contains("00400000"), "sell-call must be ATM");
+        assert!(req.legs[2].symbol.contains("00400000"), "sell-put must be ATM");
+        // OTM wing strikes → 00410000 and 00390000
+        assert!(req.legs[1].symbol.contains("00410000"), "buy-call wing should be center+width");
+        assert!(req.legs[3].symbol.contains("00390000"), "buy-put wing should be center-width");
+        // Correct option types
+        assert!(req.legs[0].symbol.contains('C'));
+        assert!(req.legs[1].symbol.contains('C'));
+        assert!(req.legs[2].symbol.contains('P'));
+        assert!(req.legs[3].symbol.contains('P'));
+    }
+
+    #[test]
+    fn test_signal_to_options_order_cash_secured_put_single_leg() {
+        use crate::strategies::SignalAction;
+        // Strike = 5% OTM on a $170 stock → 170 * 0.95 = 161.5
+        let sig = SignalAction::CashSecuredPut { strike: 161.5, days_to_expiry: 30 };
+        let req = AlpacaClient::signal_to_options_order(&sig, "COIN", 1, Some(3.00))
+            .expect("CashSecuredPut should produce a valid order");
+        assert_eq!(req.legs.len(), 1, "cash-secured put is a single leg");
+        let leg = &req.legs[0];
+        assert_eq!(leg.side, OrderSide::Sell);
+        assert_eq!(leg.position_intent, "sell_to_open");
+        assert!(leg.symbol.contains('P'), "must be a put");
+        // Strike 161.5 → 00161500
+        assert!(leg.symbol.contains("00161500"), "OCC strike encoding mismatch");
+        assert_eq!(req.limit_price, Some(3.00));
     }
 }

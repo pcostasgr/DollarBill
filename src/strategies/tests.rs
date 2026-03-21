@@ -78,7 +78,7 @@ mod tests {
             assert!(!signals.is_empty(), "{} should produce a signal", scenario);
             
             for signal in signals {
-                assert!(matches!(signal.action, SignalAction::BuyStraddle | SignalAction::SellStraddle));
+                assert!(matches!(signal.action, SignalAction::BuyStraddle { .. } | SignalAction::SellStraddle { .. }));
                 assert!(signal.confidence > 0.0 && signal.confidence <= 1.0);
                 println!("  Signal: {:?} | Confidence: {:.1}%", signal.action, signal.confidence * 100.0);
             }
@@ -141,12 +141,13 @@ mod tests {
         assert!(!signals.is_empty(), "Should generate signals with high IV edge");
         
         for signal in &signals {
-            if let SignalAction::CashSecuredPut { strike_pct } = signal.action {
-                assert!(strike_pct > 0.0 && strike_pct < 0.1); // Reasonable OTM percentage
+            if let SignalAction::CashSecuredPut { strike, days_to_expiry } = signal.action {
+                assert!(strike > 0.0); // Absolute strike must be positive
+                assert!(days_to_expiry > 0);
                 assert!(signal.confidence > 0.5); // High confidence for good setups
                 
-                println!("💰 Cash-Secured Put: {} | Strike: {:.1}% OTM | Conf: {:.1}%", 
-                    signal.symbol, strike_pct * 100.0, signal.confidence * 100.0);
+                println!("💰 Cash-Secured Put: {} | Strike: {:.2} | DTE: {} | Conf: {:.1}%", 
+                    signal.symbol, strike, days_to_expiry, signal.confidence * 100.0);
             }
         }
     }
@@ -185,7 +186,7 @@ mod tests {
         let signals = strategy.generate_signals("SPY", 400.0, 0.20, 0.18, 0.20);
         if !signals.is_empty() {
             for signal in &signals {
-                assert!(matches!(signal.action, SignalAction::SellStraddle));
+                assert!(matches!(signal.action, SignalAction::SellStraddle { .. }));
             }
         }
     }

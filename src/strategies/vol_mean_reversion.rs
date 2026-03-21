@@ -55,7 +55,7 @@ impl TradingStrategy for VolMeanReversion {
             
             signals.push(TradeSignal {
                 symbol: symbol.to_string(),
-                action: SignalAction::IronButterfly { wing_width: 50.0 },
+                action: SignalAction::IronButterfly { center_strike: spot, wing_width: spot * 0.05, days_to_expiry: 30 },
                 strike: spot,
                 expiry_days: 30,
                 confidence: (zscore / 3.0).min(1.0),
@@ -71,7 +71,7 @@ impl TradingStrategy for VolMeanReversion {
             
             signals.push(TradeSignal {
                 symbol: symbol.to_string(),
-                action: SignalAction::BuyStraddle,
+                action: SignalAction::BuyStraddle { strike: spot, days_to_expiry: 30 },
                 strike: spot,
                 expiry_days: 30,
                 confidence: (zscore.abs() / 3.0).min(1.0),

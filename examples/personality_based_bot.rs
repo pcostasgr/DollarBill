@@ -857,15 +857,14 @@ async fn try_submit_options(
         }
 
         // ── Cash-secured put (single-leg, OTM put) ────────────────────────────
-        SignalAction::CashSecuredPut { strike_pct } => {
-            let strike = current_price * (1.0 - strike_pct);
-            let (yy, mm, dd) = AlpacaClient::expiry_from_dte(DEFAULT_DTE);
-            let occ = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, strike);
-            println!("   {} | 🎯 CASH-SECURED PUT → {} ({:.1}% OTM, conf {:.1}%)",
-                symbol, occ, strike_pct * 100.0, confidence * 100.0);
+        SignalAction::CashSecuredPut { strike, days_to_expiry } => {
+            let (yy, mm, dd) = AlpacaClient::expiry_from_dte(*days_to_expiry);
+            let occ = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, *strike);
+            println!("   {} | 🎯 CASH-SECURED PUT → {} (strike {:.2}, conf {:.1}%)",
+                symbol, occ, strike, confidence * 100.0);
             let submitted = client.submit_order(&single_leg(occ, OrderSide::Sell)).await?;
             println!("   {} | ✅ order {} ({})", symbol, submitted.id, submitted.status);
-            audit_log(symbol, "CASH_PUT", 1.0, strike, &submitted.id, &submitted.status, "options signal");
+            audit_log(symbol, "CASH_PUT", 1.0, *strike, &submitted.id, &submitted.status, "options signal");
             Ok(true)
         }
 
@@ -881,10 +880,10 @@ async fn try_submit_options(
         }
 
         // ── Two-leg: sell straddle ─────────────────────────────────────────────
-        SignalAction::SellStraddle => {
-            let (yy, mm, dd) = AlpacaClient::expiry_from_dte(DEFAULT_DTE);
-            let call_occ = AlpacaClient::occ_symbol(symbol, yy, mm, dd, true,  current_price);
-            let put_occ  = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, current_price);
+        SignalAction::SellStraddle { strike, days_to_expiry } => {
+            let (yy, mm, dd) = AlpacaClient::expiry_from_dte(*days_to_expiry);
+            let call_occ = AlpacaClient::occ_symbol(symbol, yy, mm, dd, true,  *strike);
+            let put_occ  = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, *strike);
             println!("   {} | 🎯 SELL STRADDLE → C:{} P:{} (conf {:.1}%)",
                 symbol, call_occ, put_occ, confidence * 100.0);
             let mleg = OptionsOrderRequest {
@@ -907,10 +906,10 @@ async fn try_submit_options(
         }
 
         // ── Two-leg: buy straddle ──────────────────────────────────────────────
-        SignalAction::BuyStraddle => {
-            let (yy, mm, dd) = AlpacaClient::expiry_from_dte(DEFAULT_DTE);
-            let call_occ = AlpacaClient::occ_symbol(symbol, yy, mm, dd, true,  current_price);
-            let put_occ  = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, current_price);
+        SignalAction::BuyStraddle { strike, days_to_expiry } => {
+            let (yy, mm, dd) = AlpacaClient::expiry_from_dte(*days_to_expiry);
+            let call_occ = AlpacaClient::occ_symbol(symbol, yy, mm, dd, true,  *strike);
+            let put_occ  = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, *strike);
             println!("   {} | 🎯 BUY STRADDLE → C:{} P:{} (conf {:.1}%)",
                 symbol, call_occ, put_occ, confidence * 100.0);
             let mleg = OptionsOrderRequest {
@@ -933,12 +932,12 @@ async fn try_submit_options(
         }
 
         // ── Four-leg: iron butterfly (body sell straddle + wing buys) ──────────
-        SignalAction::IronButterfly { wing_width } => {
-            let (yy, mm, dd) = AlpacaClient::expiry_from_dte(DEFAULT_DTE);
-            let sc = AlpacaClient::occ_symbol(symbol, yy, mm, dd, true,  current_price);
-            let sp = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, current_price);
-            let bc = AlpacaClient::occ_symbol(symbol, yy, mm, dd, true,  current_price + wing_width);
-            let bp = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, current_price - wing_width);
+        SignalAction::IronButterfly { center_strike, wing_width, days_to_expiry } => {
+            let (yy, mm, dd) = AlpacaClient::expiry_from_dte(*days_to_expiry);
+            let sc = AlpacaClient::occ_symbol(symbol, yy, mm, dd, true,  *center_strike);
+            let sp = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, *center_strike);
+            let bc = AlpacaClient::occ_symbol(symbol, yy, mm, dd, true,  *center_strike + *wing_width);
+            let bp = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, (*center_strike - *wing_width).max(0.01));
             println!("   {} | 🎯 IRON BUTTERFLY → wings ±{:.2} (conf {:.1}%)",
                 symbol, wing_width, confidence * 100.0);
             let mleg = OptionsOrderRequest {

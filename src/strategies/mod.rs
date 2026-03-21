@@ -41,11 +41,13 @@ pub enum SignalAction {
     // Position management
     ClosePosition { position_id: usize },
     
-    // Multi-leg strategies
-    SellStraddle,
-    BuyStraddle,
-    IronButterfly { wing_width: f64 },
-    CashSecuredPut { strike_pct: f64 },
+    // Multi-leg strategies (all carry explicit strike + DTE so they can be routed
+    // directly to Alpaca as OCC option orders without needing extra context).
+    SellStraddle { strike: f64, days_to_expiry: usize },
+    BuyStraddle  { strike: f64, days_to_expiry: usize },
+    IronButterfly { center_strike: f64, wing_width: f64, days_to_expiry: usize },
+    /// Sell an OTM put at an *absolute* strike price (not a percentage).
+    CashSecuredPut { strike: f64, days_to_expiry: usize },
     
     // Spread strategies (Phase 5)
     IronCondor { 

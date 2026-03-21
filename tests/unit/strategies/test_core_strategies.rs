@@ -33,7 +33,7 @@ fn momentum_iv_expanding_signals_buy_straddle() {
     let s = MomentumStrategy::new();
     let signals = s.generate_signals("TSLA", 200.0, 0.35, 0.30, 0.25);
     assert!(
-        matches!(first_action(signals), Some(SignalAction::BuyStraddle)),
+        matches!(first_action(signals), Some(SignalAction::BuyStraddle { .. })),
         "IV expanding 40% above HV should produce BuyStraddle"
     );
 }
@@ -46,7 +46,7 @@ fn momentum_iv_compressing_signals_sell_straddle() {
     let s = MomentumStrategy::new();
     let signals = s.generate_signals("AAPL", 150.0, 0.17, 0.15, 0.25);
     assert!(
-        matches!(first_action(signals), Some(SignalAction::SellStraddle)),
+        matches!(first_action(signals), Some(SignalAction::SellStraddle { .. })),
         "IV compressing 32% below HV should produce SellStraddle"
     );
 }
@@ -97,7 +97,7 @@ fn mean_rev_iv_rich_signals_sell_straddle() {
     let s = MeanReversionStrategy::new();
     let signals = s.generate_signals("COIN", 100.0, 0.50, 0.30, 0.25);
     assert!(
-        matches!(first_action(signals), Some(SignalAction::SellStraddle)),
+        matches!(first_action(signals), Some(SignalAction::SellStraddle { .. })),
         "IV 3.2 z-scores above model should produce SellStraddle"
     );
 }
@@ -110,7 +110,7 @@ fn mean_rev_iv_cheap_signals_buy_straddle() {
     let s = MeanReversionStrategy::new();
     let signals = s.generate_signals("AAPL", 180.0, 0.25, 0.40, 0.25);
     assert!(
-        matches!(first_action(signals), Some(SignalAction::BuyStraddle)),
+        matches!(first_action(signals), Some(SignalAction::BuyStraddle { .. })),
         "IV 2.4 z-scores below model should produce BuyStraddle"
     );
 }
@@ -144,7 +144,7 @@ fn breakout_iv_expansion_with_confirmation_signals_iron_butterfly() {
     let s = BreakoutStrategy::new();
     let signals = s.generate_signals("TSLA", 200.0, 0.65, 0.55, 0.40);
     match first_action(signals) {
-        Some(SignalAction::IronButterfly { wing_width }) => {
+        Some(SignalAction::IronButterfly { wing_width, .. }) => {
             assert!(wing_width > 0.0, "wing_width must be positive");
         }
         other => panic!("Expected IronButterfly, got {:?}", other),
@@ -160,7 +160,7 @@ fn breakout_consolidation_signals_sell_straddle() {
     // market_iv (0.23) below historical_vol (0.25) → compression
     let signals = s.generate_signals("QQQ", 350.0, 0.23, 0.20, 0.25);
     assert!(
-        matches!(first_action(signals), Some(SignalAction::SellStraddle)),
+        matches!(first_action(signals), Some(SignalAction::SellStraddle { .. })),
         "IV below historical vol should produce SellStraddle"
     );
 }
@@ -198,7 +198,7 @@ fn vol_arb_iv_rich_high_vol_signals_sell_straddle() {
     let s = VolatilityArbitrageStrategy::new();
     let signals = s.generate_signals("TSLA", 200.0, 0.50, 0.40, 0.35);
     assert!(
-        matches!(first_action(signals), Some(SignalAction::SellStraddle)),
+        matches!(first_action(signals), Some(SignalAction::SellStraddle { .. })),
         "Rich IV at high vol level should produce SellStraddle"
     );
 }
@@ -211,7 +211,7 @@ fn vol_arb_iv_cheap_signals_buy_straddle() {
     let s = VolatilityArbitrageStrategy::new();
     let signals = s.generate_signals("AAPL", 150.0, 0.25, 0.30, 0.35);
     assert!(
-        matches!(first_action(signals), Some(SignalAction::BuyStraddle)),
+        matches!(first_action(signals), Some(SignalAction::BuyStraddle { .. })),
         "Cheap IV should produce BuyStraddle"
     );
 }
@@ -233,7 +233,7 @@ fn vol_arb_moderate_rich_iv_signals_iron_butterfly() {
     let s = VolatilityArbitrageStrategy::new();
     let signals = s.generate_signals("QQQ", 350.0, 0.35, 0.28, 0.25);
     match first_action(signals) {
-        Some(SignalAction::IronButterfly { wing_width }) => {
+        Some(SignalAction::IronButterfly { wing_width, .. }) => {
             assert!(wing_width > 0.0, "wing_width must be positive");
         }
         other => panic!("Expected IronButterfly for moderate rich IV, got {:?}", other),

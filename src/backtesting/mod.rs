@@ -8,6 +8,7 @@ pub mod engine;
 pub mod metrics;
 pub mod liquidity;
 pub mod ledger;
+pub mod margin;
 
 pub use position::{Position, PositionStatus};
 pub use trade::{Trade, TradeType};
@@ -16,3 +17,10 @@ pub use crate::strategies::SignalAction;
 pub use metrics::{BacktestResult, PerformanceMetrics, EquityCurve};
 pub use liquidity::{LiquidityTier, MidPriceImpact};
 pub use ledger::Ledger;
+pub use margin::{
+    naked_call_margin, naked_put_margin,
+    credit_spread_margin, iron_condor_margin, cash_secured_put_margin,
+    has_sufficient_margin, MarginRequirement, MarginRule,
+    max_loss_credit_spread, max_loss_iron_condor,
+    max_profit_short, max_loss_naked_put,
+};

@@ -86,7 +86,7 @@ pub struct OrderRequest {
     pub client_order_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OrderSide {
     Buy,

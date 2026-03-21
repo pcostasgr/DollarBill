@@ -82,7 +82,7 @@ impl TradingStrategy for MeanReversionStrategy {
             let confidence = ((z.abs() - 1.5).max(0.0) / 2.0).min(0.85);
             vec![TradeSignal {
                 symbol: symbol.to_string(),
-                action: SignalAction::BuyStraddle,
+                action: SignalAction::BuyStraddle { strike: spot, days_to_expiry: 21 },
                 strike: spot,
                 expiry_days: 21,
                 confidence,
@@ -94,7 +94,7 @@ impl TradingStrategy for MeanReversionStrategy {
             let confidence = ((z - 1.5).max(0.0) / 2.0).min(0.85);
             vec![TradeSignal {
                 symbol: symbol.to_string(),
-                action: SignalAction::SellStraddle,
+                action: SignalAction::SellStraddle { strike: spot, days_to_expiry: 21 },
                 strike: spot,
                 expiry_days: 21,
                 confidence,

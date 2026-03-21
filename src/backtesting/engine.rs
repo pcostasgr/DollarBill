@@ -4,6 +4,7 @@ use crate::backtesting::position::{Position, PositionStatus, OptionType};
 use crate::backtesting::trade::{Trade, TradeType};
 use crate::backtesting::metrics::{BacktestResult, PerformanceMetrics, EquityCurve};
 use crate::backtesting::ledger::Ledger;
+use crate::backtesting::margin::{naked_call_margin, naked_put_margin, has_sufficient_margin};
 use crate::models::american::{american_call_binomial, american_put_binomial, BinomialConfig, ExerciseStyle};
 use crate::models::bs_mod::{black_scholes_merton_call, black_scholes_merton_put};
 use crate::market_data::csv_loader::HistoricalDay;
@@ -218,8 +219,14 @@ pub struct BacktestConfig {
     pub position_size_pct: f64,  // Percentage of capital per position (used if no portfolio manager)
     pub days_to_expiry: usize,  // Option expiration in days
     pub max_days_hold: usize,  // Maximum days to hold before forced close
-    pub stop_loss_pct: Option<f64>,  // Optional stop loss
-    pub take_profit_pct: Option<f64>,  // Optional take profit
+    pub stop_loss_pct: Option<f64>,  // Optional stop loss for long positions
+    pub take_profit_pct: Option<f64>,  // Optional take profit for long positions
+    /// Short-position take-profit: close when option price drops to
+    /// `entry_price × (1 − short_take_profit_pct / 100)`.  `50.0` = exit at 50% max-profit.
+    pub short_take_profit_pct: Option<f64>,
+    /// Short-position stop-loss: close when option price rises to
+    /// `entry_price × (1 + short_stop_loss_pct / 100)`. `200.0` = exit when option is 3× entry.
+    pub short_stop_loss_pct: Option<f64>,
     pub use_portfolio_management: bool,  // Enable portfolio-based position sizing and risk limits
     /// Continuous annual dividend yield for the underlying asset.  Passed to the
     /// CRR binomial tree when pricing American options so early-exercise is
@@ -237,8 +244,11 @@ impl Default for BacktestConfig {
             position_size_pct: 10.0,
             days_to_expiry: 30,  // 30-day options
             max_days_hold: 21,  // Close after 21 days (70% of expiry)
-            stop_loss_pct: Some(50.0),  // 50% stop loss
-            take_profit_pct: Some(100.0),  // 100% take profit
+            stop_loss_pct: Some(50.0),  // 50% stop loss (long positions)
+            take_profit_pct: Some(100.0),  // 100% take profit (long positions)
+            // Standard short-options management rules (TastyTrade / CBOE conventions)
+            short_take_profit_pct: Some(50.0), // Close short at 50% of max profit
+            short_stop_loss_pct: Some(200.0),  // Stop short when option reaches 3× entry
             use_portfolio_management: false,  // Disabled by default for backward compatibility
             dividend_yield: 0.0,
         }
@@ -443,33 +453,30 @@ impl BacktestEngine {
                             self.open_covered_call(symbol, spot, sell_strike, days_to_expiry, &day.date, current_vol);
                         },
                         // Multi-leg strategies via legacy signal variants
-                        SignalAction::SellStraddle => {
-                            // Sell ATM straddle: short call + short put at spot
-                            self.open_short_call_position(symbol, spot, spot, 30, current_vol, &day.date);
-                            self.open_short_put_position(symbol, spot, spot, 30, current_vol, &day.date);
+                        SignalAction::SellStraddle { strike, days_to_expiry } => {
+                            // Sell ATM (or specified) straddle: short call + short put
+                            self.open_short_call_position(symbol, spot, strike, days_to_expiry, current_vol, &day.date);
+                            self.open_short_put_position(symbol, spot, strike, days_to_expiry, current_vol, &day.date);
                         },
-                        SignalAction::BuyStraddle => {
-                            // Buy ATM straddle: long call + long put at spot
-                            self.open_call_position(symbol, spot, spot, 30, current_vol, &day.date, ExerciseStyle::European);
-                            self.open_put_position(symbol, spot, spot, 30, current_vol, &day.date, ExerciseStyle::European);
+                        SignalAction::BuyStraddle { strike, days_to_expiry } => {
+                            // Buy straddle: long call + long put
+                            self.open_call_position(symbol, spot, strike, days_to_expiry, current_vol, &day.date, ExerciseStyle::European);
+                            self.open_put_position(symbol, spot, strike, days_to_expiry, current_vol, &day.date, ExerciseStyle::European);
                         },
-                        SignalAction::IronButterfly { wing_width } => {
-                            // Iron butterfly: sell ATM call + sell ATM put,
-                            // buy OTM call @ spot+wing, buy OTM put @ spot-wing
-                            let days = 30;
+                        SignalAction::IronButterfly { center_strike, wing_width, days_to_expiry } => {
+                            // Iron butterfly: sell ATM call + put, buy OTM call + put
                             self.open_iron_condor(
                                 symbol, spot,
-                                spot,              // sell call strike (ATM)
-                                spot + wing_width, // buy call strike  (OTM)
-                                spot,              // sell put strike  (ATM)
-                                spot - wing_width, // buy put strike   (OTM)
-                                days, &day.date, current_vol,
+                                center_strike,                // sell call strike (ATM)
+                                center_strike + wing_width,   // buy call strike  (OTM)
+                                center_strike,                // sell put strike  (ATM)
+                                center_strike - wing_width,   // buy put strike   (OTM)
+                                days_to_expiry, &day.date, current_vol,
                             );
                         },
-                        SignalAction::CashSecuredPut { strike_pct } => {
-                            // Cash-secured put: sell OTM put at spot*(1 - strike_pct)
-                            let put_strike = spot * (1.0 - strike_pct);
-                            self.open_short_put_position(symbol, spot, put_strike, 30, current_vol, &day.date);
+                        SignalAction::CashSecuredPut { strike, days_to_expiry } => {
+                            // Cash-secured put: sell put at the specified absolute strike
+                            self.open_short_put_position(symbol, spot, strike, days_to_expiry, current_vol, &day.date);
                         },
                         SignalAction::NoAction => {
                             // Do nothing
@@ -710,7 +717,13 @@ impl BacktestEngine {
         if !self.can_open_position_with_portfolio_check(symbol, greeks.price, volatility, position_size) {
             return;
         }
-        
+
+        // Reg T margin check: do we have enough capital to hold this naked short call?
+        let margin = naked_call_margin(spot, strike, greeks.price);
+        if !has_sufficient_margin(&margin, position_size as i32, self.current_capital) {
+            return;
+        }
+
         // For short positions, quantity is negative
         let position = Position::new(
             self.position_counter,
@@ -788,7 +801,13 @@ impl BacktestEngine {
         if !self.can_open_position_with_portfolio_check(symbol, greeks.price, volatility, position_size) {
             return;
         }
-        
+
+        // Reg T margin check: do we have enough capital to hold this naked short put?
+        let margin = naked_put_margin(spot, strike, greeks.price);
+        if !has_sufficient_margin(&margin, position_size as i32, self.current_capital) {
+            return;
+        }
+
         // For short positions, quantity is negative
         let position = Position::new(
             self.position_counter,
@@ -1150,8 +1169,35 @@ impl BacktestEngine {
                 positions_to_close.push((position.id, days_held, "Near Expiry".to_string()));
                 continue;
             }
-            
-            // Stop loss
+
+            // ── Short-specific profit/stop (measured against premium received) ──────
+            if position.quantity < 0 && position.entry_price > 0.0 {
+                // Derive current option price from unrealized P&L:
+                //   unrealized_pnl = (current - entry) × qty × 100
+                //   → current = entry + unrealized_pnl / (qty × 100)
+                let current_price = position.entry_price
+                    + position.unrealized_pnl / (position.quantity as f64 * 100.0);
+
+                if let Some(tp) = self.config.short_take_profit_pct {
+                    // 50% profit target: option dropped to ≤50% of entry premium
+                    if current_price <= position.entry_price * (1.0 - tp / 100.0) {
+                        positions_to_close.push((position.id, days_held, "Short Take Profit".to_string()));
+                        continue;
+                    }
+                }
+                if let Some(sl) = self.config.short_stop_loss_pct {
+                    // 200% stop: option rose to ≥300% of entry (we've lost 2× the premium)
+                    if current_price >= position.entry_price * (1.0 + sl / 100.0) {
+                        positions_to_close.push((position.id, days_held, "Short Stop Loss".to_string()));
+                        continue;
+                    }
+                }
+                // Neither short-specific exit triggered — skip the long-style checks
+                // (long-style percentages are meaningless for credit positions).
+                continue;
+            }
+
+            // Stop loss (long positions)
             if let Some(stop_pct) = self.config.stop_loss_pct {
                 let loss_pct = (position.unrealized_pnl / (position.entry_price * position.quantity.abs() as f64 * 100.0)) * 100.0;
                 if loss_pct < -stop_pct {
@@ -1282,33 +1328,61 @@ impl BacktestEngine {
             .filter(|(_, p)| matches!(p.status, PositionStatus::Open))
             .map(|(idx, p)| {
                 let is_call = matches!(p.option_type, OptionType::Call);
-                (idx, p.entry_date.clone(), is_call, p.strike, p.quantity)
+                (idx, p.id, p.symbol.clone(), p.entry_date.clone(), p.entry_price, is_call, p.strike, p.quantity)
             })
             .collect();
-        
-        for (idx, entry_date, is_call, strike, quantity) in positions_to_close {
+
+        for (idx, pos_id, symbol, entry_date, entry_price, is_call, strike, quantity) in positions_to_close {
             let days_held = self.calculate_days_between(&entry_date, date);
-            
-            // Calculate intrinsic value at expiry
+
+            // Expiry value: intrinsic only (time value = 0 at expiry)
             let intrinsic = if is_call {
                 (spot - strike).max(0.0)
             } else {
                 (strike - spot).max(0.0)
             };
-            
+
             if intrinsic > 0.0 {
-                // ITM: close at intrinsic value and settle capital
+                // ITM exercise (long) or assignment (short)
+                let commission = self.calculate_commission(quantity.unsigned_abs() as i32);
                 self.positions[idx].close(intrinsic, date.to_string(), spot, days_held);
-                // Long (qty > 0) receives intrinsic; short (qty < 0) pays intrinsic
-                let settlement = intrinsic * quantity as f64 * 100.0;
-                self.current_capital += settlement;
-                if settlement >= 0.0 {
-                    self.ledger.credit(settlement, 0.0, settlement);
+
+                // Gross settlement: positive for longs (receive intrinsic), negative for shorts (pay)
+                let gross = intrinsic * quantity as f64 * 100.0;
+                let net   = gross - commission;
+                self.current_capital += net;
+
+                // Record the closing trade so P&L analytics include expiry settlements
+                let trade = Trade::new(
+                    pos_id,
+                    TradeType::Exit,
+                    date.to_string(),
+                    symbol,
+                    intrinsic,
+                    quantity,
+                    spot,
+                    None,
+                    commission,
+                );
+                self.trades.push(trade);
+
+                // Ledger accounting
+                let entry_qty = quantity.unsigned_abs() as f64;
+                let realized  = gross - entry_price * entry_qty * 100.0 - commission;
+                if gross >= 0.0 {
+                    // Long exercise: credit net proceeds
+                    self.ledger.credit(net, commission, realized);
                 } else {
-                    self.ledger.debit(settlement.abs(), 0.0);
+                    // Short assignment: debit gross + commission
+                    self.ledger.debit(gross.abs() + commission, commission);
+                    if realized != 0.0 {
+                        self.ledger.credit(0.0, 0.0, realized);
+                    }
                 }
             } else {
-                // OTM: expires worthless
+                // OTM: expires worthless — no commission charged (standard brokerage practice)
+                // Long: lose full premium (already deducted at entry)
+                // Short: keep full premium (already credited at entry)
                 self.positions[idx].expire(date.to_string(), spot, days_held);
             }
         }

@@ -580,7 +580,115 @@ impl AdvancedStockClassifier {
         
         Ok(avg_reversion)
     }
-    fn calculate_sr_strength(&self, _history: &[HistoricalDay]) -> Result<f64, Box<dyn Error>> { Ok(0.6) }
+    /// Calculate support/resistance strength by identifying local price extremes and
+    /// measuring how reliably price reverses at those levels vs breaking through them.
+    ///
+    /// Algorithm:
+    /// 1. Find all local highs and lows over a rolling window.
+    /// 2. Cluster nearby levels (within 1% of each other) into single S/R zones.
+    /// 3. For each zone, count subsequent price observations that bounce vs break.
+    /// 4. Strength = bounce_count / (bounce_count + break_count), averaged across zones.
+    fn calculate_sr_strength(&self, history: &[HistoricalDay]) -> Result<f64, Box<dyn Error>> {
+        const LOOKBACK_DAYS: usize = 252;
+        const EXTREMA_WINDOW: usize = 5;       // bars on each side to qualify as extremum
+        const CLUSTER_PCT: f64 = 0.01;         // 1% — levels within 1% are the same zone
+        const TOUCH_PCT: f64 = 0.005;          // 0.5% — "touching" a level
+        const MIN_TOUCHES: usize = 2;          // ignore zones hit fewer than twice
+
+        let data = if history.len() > LOOKBACK_DAYS {
+            &history[history.len() - LOOKBACK_DAYS..]
+        } else {
+            history
+        };
+
+        if data.len() < EXTREMA_WINDOW * 2 + 1 {
+            return Ok(0.5);
+        }
+
+        let closes: Vec<f64> = data.iter().map(|d| d.close).collect();
+        let n = closes.len();
+
+        // ── Step 1: collect local highs and lows ───────────────────────────
+        let mut levels: Vec<f64> = Vec::new();
+        for i in EXTREMA_WINDOW..n - EXTREMA_WINDOW {
+            let window_before = &closes[i - EXTREMA_WINDOW..i];
+            let window_after  = &closes[i + 1..=i + EXTREMA_WINDOW];
+            let price = closes[i];
+
+            let is_high = window_before.iter().all(|&p| p <= price)
+                && window_after.iter().all(|&p| p <= price);
+            let is_low  = window_before.iter().all(|&p| p >= price)
+                && window_after.iter().all(|&p| p >= price);
+
+            if is_high || is_low {
+                levels.push(price);
+            }
+        }
+
+        if levels.len() < 2 {
+            return Ok(0.5);
+        }
+
+        // ── Step 2: cluster nearby levels into zones ────────────────────────
+        levels.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let mut zones: Vec<f64> = Vec::new();
+        let mut cluster_start = levels[0];
+        let mut cluster_count = 1u32;
+        let mut cluster_sum = levels[0];
+
+        for &lvl in levels.iter().skip(1) {
+            if (lvl - cluster_start) / cluster_start < CLUSTER_PCT {
+                cluster_sum += lvl;
+                cluster_count += 1;
+            } else {
+                zones.push(cluster_sum / cluster_count as f64);
+                cluster_start = lvl;
+                cluster_sum = lvl;
+                cluster_count = 1;
+            }
+        }
+        zones.push(cluster_sum / cluster_count as f64);
+
+        // ── Step 3: score each zone on bounce vs break rate ─────────────────
+        let mut total_strength = 0.0_f64;
+        let mut scored_zones = 0usize;
+
+        for zone_price in &zones {
+            let mut bounces = 0usize;
+            let mut breaks  = 0usize;
+
+            // Walk through the price series; when we touch the zone, check what
+            // happens one bar later.
+            for i in 0..n - 1 {
+                let price = closes[i];
+                let next  = closes[i + 1];
+                let dist  = (price - zone_price).abs() / zone_price;
+
+                if dist <= TOUCH_PCT {
+                    // A small follow-through away from the zone = break;
+                    // reversal toward the interior = bounce.
+                    let continued_away = (next - zone_price).abs() > dist * 1.5;
+                    if continued_away {
+                        breaks += 1;
+                    } else {
+                        bounces += 1;
+                    }
+                }
+            }
+
+            let total = bounces + breaks;
+            if total >= MIN_TOUCHES {
+                total_strength += bounces as f64 / total as f64;
+                scored_zones += 1;
+            }
+        }
+
+        if scored_zones == 0 {
+            return Ok(0.5);
+        }
+
+        Ok((total_strength / scored_zones as f64).max(0.0).min(1.0))
+    }
     /// Calculate beta using simplified market sensitivity (assuming SPY-like behavior)
     fn calculate_beta(&self, history: &[HistoricalDay]) -> Result<f64, Box<dyn Error>> {
         const LOOKBACK_DAYS: usize = 252; // 1 year for beta calculation
@@ -665,8 +773,118 @@ impl AdvancedStockClassifier {
         
         Ok(stability.max(0.0).min(1.0))
     }
-    fn calculate_sector_relative_vol(&self, _symbol: &str, _sector: &str, _history: &[HistoricalDay]) -> Result<f64, Box<dyn Error>> { Ok(1.0) }
-    fn calculate_sector_relative_momentum(&self, _symbol: &str, _sector: &str, _history: &[HistoricalDay]) -> Result<f64, Box<dyn Error>> { Ok(1.0) }
+    fn calculate_sector_relative_vol(&self, symbol: &str, sector: &str, history: &[HistoricalDay]) -> Result<f64, Box<dyn Error>> {
+        let own_vol = Self::current_hv21(history);
+        if own_vol == 0.0 {
+            return Ok(1.0);
+        }
+
+        let symbol_lower = symbol.to_ascii_lowercase();
+        let mut peer_vols: Vec<f64> = Vec::new();
+
+        for &peer in Self::sector_peers(sector) {
+            if peer == symbol_lower.as_str() {
+                continue; // skip self
+            }
+            let path = format!("data/{}_five_year.csv", peer);
+            if let Ok(peer_hist) = load_csv_closes(&path) {
+                let v = Self::current_hv21(&peer_hist);
+                if v > 0.0 {
+                    peer_vols.push(v);
+                }
+            }
+        }
+
+        if peer_vols.is_empty() {
+            return Ok(1.0);
+        }
+
+        // Use median of peer vols as the sector reference
+        peer_vols.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let mid = peer_vols.len() / 2;
+        let sector_median = if peer_vols.len() % 2 == 0 {
+            (peer_vols[mid - 1] + peer_vols[mid]) / 2.0
+        } else {
+            peer_vols[mid]
+        };
+
+        if sector_median == 0.0 {
+            return Ok(1.0);
+        }
+
+        Ok((own_vol / sector_median).clamp(0.2, 5.0))
+    }
+
+    fn calculate_sector_relative_momentum(&self, symbol: &str, sector: &str, history: &[HistoricalDay]) -> Result<f64, Box<dyn Error>> {
+        const WINDOW: usize = 21;
+        if history.len() <= WINDOW {
+            return Ok(0.0);
+        }
+
+        let n = history.len();
+        let own_ret = (history[n - 1].close / history[n - 1 - WINDOW].close).ln();
+
+        let symbol_lower = symbol.to_ascii_lowercase();
+        let mut peer_rets: Vec<f64> = Vec::new();
+
+        for &peer in Self::sector_peers(sector) {
+            if peer == symbol_lower.as_str() {
+                continue;
+            }
+            let path = format!("data/{}_five_year.csv", peer);
+            if let Ok(peer_hist) = load_csv_closes(&path) {
+                let pn = peer_hist.len();
+                if pn > WINDOW {
+                    let r = (peer_hist[pn - 1].close / peer_hist[pn - 1 - WINDOW].close).ln();
+                    peer_rets.push(r);
+                }
+            }
+        }
+
+        if peer_rets.is_empty() {
+            return Ok(0.0);
+        }
+
+        let mean = peer_rets.iter().sum::<f64>() / peer_rets.len() as f64;
+        let variance = peer_rets.iter().map(|r| (r - mean).powi(2)).sum::<f64>()
+            / peer_rets.len() as f64;
+        let std_dev = variance.sqrt().max(1e-6); // avoid div-by-zero on flat sector
+
+        // Z-score: how many σ above/below sector is this symbol's momentum
+        Ok(((own_ret - mean) / std_dev).clamp(-1.0, 1.0))
+    }
+
+    /// 21-day annualised historical volatility from the most-recent 22 prices.
+    /// Returns 0.0 when the series is too short.
+    fn current_hv21(history: &[HistoricalDay]) -> f64 {
+        const WINDOW: usize = 22; // 22 prices → 21 log-returns
+        if history.len() < WINDOW {
+            return 0.0;
+        }
+        let tail = &history[history.len() - WINDOW..];
+        let log_returns: Vec<f64> = tail.windows(2)
+            .map(|w| (w[1].close / w[0].close).ln())
+            .collect();
+        let n = log_returns.len() as f64;
+        let mean = log_returns.iter().sum::<f64>() / n;
+        let variance = log_returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / (n - 1.0);
+        (variance * 252.0_f64).sqrt()
+    }
+
+    /// Well-known sector peers that have bundled `data/{symbol}_five_year.csv` files.
+    fn sector_peers(sector: &str) -> &'static [&'static str] {
+        match sector.to_ascii_lowercase().trim() {
+            "tech" | "technology" | "semiconductor" | "software" | "semiconductors" => {
+                &["aapl", "msft", "googl", "nvda", "meta", "amd", "qcom", "pltr"]
+            }
+            "ev" | "electric vehicle" | "automotive" => &["tsla", "nvda", "amzn"],
+            "crypto" | "digital assets" | "blockchain" => &["coin", "tsla", "nvda"],
+            "macro" | "fixed income" | "bonds" | "rates" | "treasuries" => &["tlt", "gld", "spy"],
+            "commodities" | "gold" | "precious metals" => &["gld", "tlt", "spy"],
+            "retail" | "e-commerce" | "consumer" => &["amzn", "aapl", "msft"],
+            _ => &["spy", "qqq", "iwm"], // broad-market fallback
+        }
+    }
 
     /// Optimized return calculation with caching
     fn calculate_returns_cached(&mut self, symbol: &str, history: &[HistoricalDay]) -> Vec<f64> {
