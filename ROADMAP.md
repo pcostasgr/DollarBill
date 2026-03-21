@@ -594,6 +594,166 @@ Both are 10-line additions using the existing `simulate_path` infrastructure.
 
 ---
 
+## Phase V4: Live Paper + Statistical Rigor
+
+> Origin: Phase 4 audit, March 22, 2026.  
+> Three of five originally-proposed items are valid and buildable.  
+> Two items (OOS Sharpe > 2.0, max DD < 15%) had unrealistic thresholds —  
+> corrected below based on actual TSLA 2025 data (-46% underlying crash).
+
+---
+
+### V4.1 — Bootstrap Sharpe Confidence Interval  
+**Effort:** ~2 hours. No new crates required.
+
+Add to `src/backtesting/metrics.rs`:
+
+```rust
+/// Bootstraps the Sharpe ratio CI at `confidence` level (e.g. 0.95).
+/// Uses n_bootstrap resamples. Returns (lower, upper) percentile bounds.
+pub fn bootstrap_sharpe_ci(
+    returns: &[f64],
+    n_bootstrap: usize,
+    confidence: f64,
+    seed: u64,
+) -> (f64, f64) {
+    let n = returns.len();
+    let mut bootstrap_sharpes: Vec<f64> = Vec::with_capacity(n_bootstrap);
+    let mut rng = SplitMix64::new(seed);
+    for _ in 0..n_bootstrap {
+        let sample: Vec<f64> = (0..n)
+            .map(|_| returns[rng.next_u64() as usize % n])
+            .collect();
+        bootstrap_sharpes.push(compute_sharpe(&sample));
+    }
+    bootstrap_sharpes.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let alpha = 1.0 - confidence;
+    let lo = bootstrap_sharpes[(alpha / 2.0 * n_bootstrap as f64) as usize];
+    let hi = bootstrap_sharpes[((1.0 - alpha / 2.0) * n_bootstrap as f64) as usize];
+    (lo, hi)
+}
+```
+
+**Usage in tests:** CI straddling zero is a *warning* (insufficient data), not a
+hard failure. For a 30-day paper period the CI will be wide by design.
+
+**Test to add:**
+```rust
+#[test]
+fn bootstrap_ci_positive_returns_above_zero() {
+    let returns: Vec<f64> = vec![0.002; 250]; // flat +0.2% per day
+    let (lo, _hi) = bootstrap_sharpe_ci(&returns, 1000, 0.95, 42);
+    assert!(lo > 0.0, "CI lower bound should be positive for strongly positive returns");
+}
+```
+
+---
+
+### V4.2 — Walk-Forward Optimization  
+**Effort:** 1–2 days. Requires V2b `run_date_range()` first.
+
+The originally proposed "auto-kill if params drift >10%" is **wrong as written**.
+Parameter magnitudes naturally shift with market regime — a 10% drift in a
+`min_confidence` param from 0.60 → 0.54 is expected and healthy.
+
+**Correct gate:** Walk-forward *out-of-sample Sharpe < 0.0* for two consecutive
+30-day windows → pause live bot and emit alert. This tests whether the model
+is still predictive, not whether params changed arbitrarily.
+
+Add to `src/backtesting/`:
+
+```rust
+pub struct WalkForwardConfig {
+    pub in_sample_days: usize,   // e.g. 180
+    pub oos_days: usize,         // e.g. 30
+    pub param_grid: Vec<BotParams>,
+    pub kill_threshold_sharpe: f64,  // e.g. 0.0
+}
+
+pub struct WalkForwardResult {
+    pub windows: Vec<WalkForwardWindow>,
+    pub mean_oos_sharpe: f64,
+    pub degraded_windows: usize,
+}
+
+pub fn walk_forward_test(
+    engine: &mut BacktestEngine,
+    symbol: &str,
+    history: Vec<HistoricalDay>,
+    config: WalkForwardConfig,
+) -> WalkForwardResult
+```
+
+**Integration with live bot:** On each 30-day boundary, re-run walk-forward
+on the preceding 6-month window. If `mean_oos_sharpe < kill_threshold_sharpe`,
+log a critical alert and optionally halt new position-opening.
+
+---
+
+### V4.3 — Diebold-Mariano vs Benchmark   ⚠️ Deprioritised
+
+**Why deprioritised:** DM tests forecast accuracy, not risk-adjusted returns.
+It's well-suited for prediction models; less meaningful for a short-vol strategy
+with no directional forecast. The correct benchmark test is the bootstrap
+Sharpe CI above (does the CI exclude zero?).
+
+**If you want it anyway:** Implement in Python against the 30-day equity curve.
+```python
+# py/dm_test.py
+from scipy.stats import norm
+import numpy as np
+
+def dm_test(e1, e2, h=1):
+    """Diebold-Mariano test. e1=strategy errors, e2=benchmark errors."""
+    d = e1**2 - e2**2
+    n = len(d)
+    dm_stat = np.mean(d) / (np.std(d, ddof=1) / np.sqrt(n))
+    p_value = 2 * norm.cdf(-abs(dm_stat))
+    return dm_stat, p_value
+```
+Use daily `equity_curve_pct_change - benchmark_pct_change` as the loss series.
+
+**No Rust implementation needed.** Do not add `statrs` crate for this.
+
+---
+
+### V4.4 — Prometheus Metrics (optional, operational quality)  
+**Effort:** 1 day. Requires adding a new crate.
+
+Add to `Cargo.toml`:
+```toml
+prometheus-client = "0.22"
+```
+
+Expose a `/metrics` HTTP endpoint in `src/metrics/mod.rs` with:
+- `dollarbill_trades_total{symbol, side}` — counter
+- `dollarbill_position_pnl_pct{symbol}` — gauge
+- `dollarbill_circuit_breaker_trips_total` — counter
+- `dollarbill_daily_loss_pct` — gauge
+
+**Honest assessment:** This is a quality-of-life feature for production
+monitoring. It is **not an acceptance gate** for the bot's validity.
+SQLite already provides a full audit log via `TradeRecord` and `PositionRecord`.
+Add Prometheus *after* Phase 2 (close logic) and Phase V validation are done.
+
+---
+
+### V4 Corrected Final Acceptance Thresholds
+
+The originally proposed thresholds have been corrected against TSLA 2025 reality:
+
+| Criterion | Proposed | **Corrected** | Rationale |
+|-----------|----------|---------------|-----------|
+| OOS Sharpe (2025-H2) | > 2.0 | **> 0.5** | Sharpe 2.0 is top-decile hedge-fund; TSLA vol-selling in crash year. Sharpe 1.0 is excellent. |
+| Max drawdown (paper 30d) | < 15% | **< 30%** | TSLA had -46% underlying in Feb-Mar; 15% is impossible without multi-leg hedging |
+| Live profit factor (30d) | > 1.8 | **> 1.5** | Realistic for short-vol in cooperative regime; 1.8 is achievable but weather-dependent |
+| Bootstrap Sharpe CI | — | **CI lower > -0.5** | Not overlapping deeply negative is the gate; zero-crossing in 30d is expected |
+| Walk-forward OOS Sharpe | — | **> 0.0 each window** | Two consecutive negative windows → pause bot |
+| Audit trail | SQLite | **SQLite sufficient** | `TradeRecord`/`PositionRecord` already cover this; Prometheus is optional |
+| All Phase V validations | — | **must pass** | V0–V3b thresholds as specified in Phase V above |
+
+---
+
 ## Updated Success Metrics (all phases)
 
 - [ ] `py/validate_data.py` passes with TSLA ann_vol in [50%, 150%]
@@ -601,10 +761,14 @@ Both are 10-line additions using the existing `simulate_path` infrastructure.
 - [ ] Heston surface bench: 500 prices in < 1.5 ms
 - [ ] Greeks relative error: Δ and ν both < 0.5% vs QuantLib reference
 - [ ] `calmar_ratio` computed and > 1.0 on in-sample 2025-H1
-- [ ] Out-of-sample backtest (2025-H2) Sharpe > -1.0
+- [ ] Out-of-sample backtest (2025-H2) Sharpe > -1.0 (hard pass), > 0.5 (target)
 - [ ] Feb-Mar 2025 stress: max drawdown < 35% (realistic, not fantasy)
 - [ ] Apr-9 2025 stress: max drawdown < 15% (IV crush is recoverable)
 - [ ] Per-regime metrics visible in backtest output
 - [ ] 1-day 99% CVaR < 8% of equity (Heston TSLA-like params)
 - [ ] 1-year 99% CVaR < 18% (Heston standard params)
+- [ ] Bootstrap Sharpe CI lower bound > -0.5 after 30-day paper run
+- [ ] Walk-forward OOS Sharpe > 0.0 for at least 2 of 3 windows
+- [ ] Live profit factor > 1.5 over first 500 trades
+- [ ] No uncharted crash: max daily loss < 5% for any single session
 - [ ] Total tests: 660+ after all new validation tests
