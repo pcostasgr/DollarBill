@@ -17,6 +17,7 @@ mod streaming;
 mod persistence;
 
 use clap::{Parser, Subcommand};
+use log::info;
 use market_data::csv_loader::{load_csv_closes, HistoricalDay};
 use models::bs_mod::{compute_historical_vol, black_scholes_call};
 use models::heston::{heston_start, MonteCarloConfig, HestonParams, HestonMonteCarlo};
@@ -106,6 +107,10 @@ enum Commands {
 
 #[tokio::main]
 async fn main() {
+    env_logger::Builder::new()
+        .filter_level(log::LevelFilter::Info)
+        .format_timestamp_secs()
+        .init();
     let cli = Cli::parse();
     match cli.command {
         Commands::Demo { symbol } => cmd_demo(&symbol),
@@ -380,8 +385,19 @@ async fn cmd_signals_live(symbol: Option<&str>) {
     const MAX_PRICE_BUF:        usize = 50;
     const MIN_CONFIDENCE:       f64   = 0.60;
 
+    // Graceful Ctrl-C shutdown
+    let mut ctrl_c_sig = std::pin::pin!(tokio::signal::ctrl_c());
     loop {
-        match stream.next_event().await {
+        let event = tokio::select! {
+            biased;
+            res = &mut ctrl_c_sig => {
+                let _ = res;
+                println!("[STOP] Signal stream shutting down gracefully.");
+                break;
+            }
+            ev = stream.next_event() => ev,
+        };
+        match event {
             Some(streaming::MarketEvent::Trade(t)) => {
                 let sym = t.symbol.clone();
                 let buf = price_buf.entry(sym.clone())
@@ -558,6 +574,16 @@ async fn cmd_trade(dry_run: bool, live: bool) {
             Err(e) => eprintln!("⚠️  Position reconciliation skipped: {}", e),
         }
 
+        // In-memory open-position guard (rebuilt from reconciled SQLite state).
+        // Prevents the bot from opening a second position in a symbol it already holds.
+        let reconciled = store.get_open_positions().await.unwrap_or_default();
+        let mut open_syms: std::collections::HashSet<String> =
+            reconciled.iter().map(|p| p.symbol.clone()).collect();
+        if !open_syms.is_empty() {
+            println!("  [LOCK] {} open position(s) -- skipping duplicate entries",
+                open_syms.len());
+        }
+
         // ── Strategy registry ─────────────────────────────────────────────
         let mut registry = StrategyRegistry::new();
         registry.register(Box::new(MomentumStrategy::new()));
@@ -586,10 +612,21 @@ async fn cmd_trade(dry_run: bool, live: bool) {
             Ok(s) => s,
             Err(e) => { eprintln!("WebSocket connect failed: {}", e); return; }
         };
-        println!("✅ Stream connected — press Ctrl-C to stop\n");
+        println!("Stream connected -- press Ctrl-C to stop\n");
 
+        // Graceful Ctrl-C shutdown
+        let mut ctrl_c_trade = std::pin::pin!(tokio::signal::ctrl_c());
         loop {
-            match stream.next_event().await {
+            let event = tokio::select! {
+                biased;
+                res = &mut ctrl_c_trade => {
+                    let _ = res;
+                    info!("Ctrl-C received -- shutting down trading bot gracefully.");
+                    break;
+                }
+                ev = stream.next_event() => ev,
+            };
+            match event {
                 Some(streaming::MarketEvent::Trade(t)) => {
                     let sym   = t.symbol.clone();
                     let price = t.price;
@@ -670,10 +707,15 @@ async fn cmd_trade(dry_run: bool, live: bool) {
                             sig.confidence * 100.0, sig.edge);
 
                         if dry_run {
-                            println!("    [DRY RUN] Would submit {} × {}", qty, sym);
+                            println!("    [DRY RUN] Would submit {} x {}", qty, sym);
                             continue;
                         }
                         if !decision.can_trade { continue; }
+                        // Deduplication guard -- skip if we already hold an open position
+                        if open_syms.contains(&sym) {
+                            println!("    [SKIP] {} -- open position already tracked", sym);
+                            continue;
+                        }
 
                         match AlpacaClient::signal_to_options_order(&sig.action, &sym, qty, None) {
                             Ok(order) => {
@@ -696,6 +738,8 @@ async fn cmd_trade(dry_run: bool, live: bool) {
                                         };
                                         if let Err(e) = store.upsert_position(&pos).await {
                                             eprintln!("DB position error: {}", e);
+                                        } else {
+                                            open_syms.insert(sym.clone());
                                         }
                                     }
                                     Err(e) => eprintln!("    ❌ Order failed: {}", e),

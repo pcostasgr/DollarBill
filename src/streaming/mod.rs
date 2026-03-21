@@ -86,10 +86,12 @@ type WsStream = tokio_tungstenite::WebSocketStream<
 pub struct AlpacaStream {
     write:      futures_util::stream::SplitSink<WsStream, Message>,
     read:       futures_util::stream::SplitStream<WsStream>,
-    /// Stored credentials and subscription list used for automatic reconnection.
+    /// Stored credentials, URL, and subscription list used for automatic reconnection.
     api_key:    String,
     api_secret: String,
     symbols:    Vec<String>,
+    /// The WebSocket endpoint URL — enables switching between IEX (free) and SIP (paid) feeds.
+    url:        String,
 }
 
 impl AlpacaStream {
@@ -104,14 +106,19 @@ impl AlpacaStream {
 
     /// Connect using `ALPACA_API_KEY` / `ALPACA_API_SECRET` environment
     /// variables (mirrors the pattern used by [`AlpacaClient::from_env`]).
+    ///
+    /// Set `ALPACA_DATA_FEED=sip` to use the consolidated tape (paid tier).
+    /// Defaults to `iex` (free tier).
     pub async fn connect_from_env(
         symbols: &[String],
     ) -> Result<Self, Box<dyn Error>> {
-        let key = std::env::var("ALPACA_API_KEY")
+        let key    = std::env::var("ALPACA_API_KEY")
             .map_err(|_| "ALPACA_API_KEY env var not set")?;
         let secret = std::env::var("ALPACA_API_SECRET")
             .map_err(|_| "ALPACA_API_SECRET env var not set")?;
-        Self::connect(&key, &secret, symbols).await
+        let feed   = std::env::var("ALPACA_DATA_FEED").unwrap_or_else(|_| "iex".to_string());
+        let url    = format!("wss://stream.data.alpaca.markets/v2/{}", feed);
+        Self::connect_to(&url, &key, &secret, symbols).await
     }
 
     async fn connect_to(
@@ -166,6 +173,7 @@ impl AlpacaStream {
             api_key:    api_key.to_string(),
             api_secret: api_secret.to_string(),
             symbols:    symbols.to_vec(),
+            url:        url.to_string(),
         })
     }
 
@@ -233,13 +241,14 @@ impl AlpacaStream {
         let key     = self.api_key.clone();
         let secret  = self.api_secret.clone();
         let symbols = self.symbols.clone();
+        let url     = self.url.clone();
 
         let mut delay_ms = BASE_DELAY_MS;
         for attempt in 1..=MAX_ATTEMPTS {
-            eprintln!("   Reconnect attempt {}/{} (delay {}ms)…",
+            eprintln!("   Reconnect attempt {}/{} (delay {}ms)\u{2026}",
                 attempt, MAX_ATTEMPTS, delay_ms);
             tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-            match Self::connect_to(STREAM_URL, &key, &secret, &symbols).await {
+            match Self::connect_to(&url, &key, &secret, &symbols).await {
                 Ok(new_stream) => {
                     let AlpacaStream { write, read, .. } = new_stream;
                     self.write = write;

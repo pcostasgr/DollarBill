@@ -18,6 +18,7 @@ rayon = "1.8"                                       # Data parallelism for Hesto
 num-complex = "0.4"                                 # Complex numbers for Carr-Madan formula
 rust_decimal = { version = "1.36", features = ["serde"] }  # Exact decimal arithmetic for accounting ledger
 log = "0.4"                                                 # Structured logging facade for library code
+env_logger = "0.11"                                        # Backend for log — writes to stderr, filter via RUST_LOG
 clap = { version = "4", features = ["derive"] }            # CLI argument parsing with subcommands
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "macros"] }  # SQLite persistence
 tokio-tungstenite = { version = "0.24", features = ["native-tls"] }           # WebSocket for Alpaca stream
