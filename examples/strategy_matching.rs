@@ -12,20 +12,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create a stock classifier
     let mut classifier = StockClassifier::new();
 
-    // Analyze some stocks with different characteristics
+    // Analyze some stocks using the enhanced classifier (loads CSV data, real IV/HV analysis)
     println!("\n📊 Analyzing Stock Personalities...");
 
-    // NVDA: High momentum, high volatility
-    let nvda_profile = classifier.classify_stock("NVDA", 0.8, 0.9, 0.2, 0.9);
-    println!("NVDA: {:?} - {:?}", nvda_profile.personality, nvda_profile.best_strategies);
-
-    // TSLA: High volatility, mean-reverting tendencies
-    let tsla_profile = classifier.classify_stock("TSLA", 0.6, 0.3, 0.7, 0.8);
-    println!("TSLA: {:?} - {:?}", tsla_profile.personality, tsla_profile.best_strategies);
-
-    // AAPL: Stable, trend-following
-    let aapl_profile = classifier.classify_stock("AAPL", 0.4, 0.6, 0.3, 0.4);
-    println!("AAPL: {:?} - {:?}", aapl_profile.personality, aapl_profile.best_strategies);
+    for (symbol, sector) in &[("NVDA", "semiconductors"), ("TSLA", "ev"), ("AAPL", "tech")] {
+        match classifier.classify_stock_enhanced(symbol, sector) {
+            Ok(profile) => println!("{}: {:?} - {:?}", symbol, profile.personality, profile.best_strategies),
+            Err(e) => println!("{}: classification failed ({}), continuing", symbol, e),
+        }
+    }
 
     // Create performance matrix
     let mut performance_matrix = PerformanceMatrix::new();

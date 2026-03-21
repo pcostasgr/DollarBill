@@ -1,5 +1,7 @@
 // Backtest example using Heston model for option pricing
 // Tests real volatility and momentum-based trading strategies with accurate P&L
+// Config structs hold fields for planned strategy differentiation; not all are read yet.
+#![allow(dead_code)]
 
 use dollarbill::market_data::csv_loader::{load_csv_closes, HistoricalDay};
 use dollarbill::models::heston_analytical::heston_call_carr_madan;

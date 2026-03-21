@@ -78,7 +78,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("===============================================");
     
     for (symbol, enhanced_profile) in &results {
-        // Run legacy classification for comparison
+        // Run legacy classification for comparison (intentional: demonstrates old vs new)
+        #[allow(deprecated)]
         let legacy_profile = classifier.classify_stock(
             symbol,
             enhanced_profile.avg_volatility,

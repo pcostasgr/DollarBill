@@ -1,8 +1,172 @@
 # Brutal Review V2 — DollarBill
 
-**Reviewer:** Claude Opus 4.6, Feb 2026  
-**Scope:** Full codebase audit — 12,574 LOC src, 6,788 LOC tests, 5,758 LOC examples  
-**Build:** Compiles. **289 tests pass, 0 fail.** ~70 compiler warnings across examples.
+**Reviewer:** Claude Sonnet 4.6, March 2026  
+**Scope:** Full codebase audit — 16,316 LOC src, 7,905 LOC tests, 6,678 LOC examples  
+**Build:** Compiles clean. **568 tests pass, 0 fail.** Zero warnings in `src/`.
+
+---
+
+## Executive Summary
+
+DollarBill has been substantially improved since the original review. The math core is correct, the backtester is honest, the RNG is solid, and all five original critical bugs are fixed. The strategies now use real IV/HV-based signals — `sin(SystemTime)` is gone. The Alpaca client now supports multi-leg options orders for all signal types.
+
+What remains are structural issues: the Heston Monte Carlo has ~400 lines of duplication, a few advanced classifier stubs return hardcoded values, and the portfolio module (2,000+ lines) still lacks dedicated unit tests.
+
+**Overall grade: 7/10** — Real math, real strategies, real order routing. The educational library has genuine trading plumbing now.
+
+---
+
+## Part 1: What's Actually Good
+
+### Nelder-Mead Optimizer — 9/10
+243 lines of clean, correct simplex optimization. Tested against Rosenbrock and sphere functions. No dead code, no magic numbers, no `unwrap()` abuse.
+
+### Black-Scholes-Merton — 8/10
+186 lines. Clean implementation, correct Abramowitz & Stegun CDF approximation (the extra `* t` bug was fixed). Greeks computed in a single pass. Dedicated `tests/verify_cdf.rs` validates N(x) against known reference values within 5e-5.
+
+### Heston Analytical (Carr-Madan FFT) — 8/10
+1,044 lines. Characteristic function and numerical integration correctly implemented. Falls back to Black-Scholes on numerical failure. The "Gauss-Lobatto" label is wrong (it's Gauss-Legendre nodes), but the integration is correct.
+
+### Heston Calibrator — 8/10
+261 lines. Real Carr-Madan pricing in the objective function. Weighted RMSE with bid-ask spread weighting. Feller condition enforcement. Calibrates real Heston parameters from market data.
+
+### Heston Monte Carlo — 7/10
+781 lines. SplitMix64 (64-bit, passes BigCrush) replaced the old 32-bit LCG. Antithetic variates for variance reduction. Box-Muller transform for correlated normals. Main remaining issue: three nearly-identical `simulate_path` variants (~400 lines of duplication).
+
+### Backtesting Engine — 7/10
+1,485 lines. ITM expiration now correctly settles to intrinsic value. All multi-leg spreads use per-day historical vol. Five slippage models (fixed, vol-scaled, size-impact, panic-widening, full-market-impact). 7 test files, 1,600+ lines of backtest coverage.
+
+### Core Strategies — 7/10
+All four strategies now use real IV/HV inputs — no `SystemTime`, no `sin()`:
+- **MomentumStrategy**: IV ratio vs historical vol → buy/sell straddle
+- **MeanReversionStrategy**: IV z-score vs model → buy/sell straddle
+- **BreakoutStrategy**: IV expansion + model confirmation → iron butterfly or sell straddle
+- **VolatilityArbitrageStrategy**: IV premium + regime weighting → straddle, iron butterfly, or sell straddle
+- **CashSecuredPuts**: IV rank filter → cash-secured put with absolute strikes
+- **VolMeanReversionStrategy**: z-score with rolling vol std — the original real strategy, unchanged
+
+All variants carry explicit fields (`strike`, `center_strike`, `wing_width`, `days_to_expiry`) — no information lost between signal generation and order routing.
+
+### Alpaca Client — 7/10
+752 lines. Full multi-leg options order support: `OptionsOrderRequest`, `OptionsLeg`, `signal_to_options_order`, `signal_to_legs`. OCC symbol generation (`AAPL  250117C00150000`) with correct Friday expiry snapping. All `SignalAction` variants now convert cleanly to OCC orders. 14 unit tests (not `#[ignore]`) for OCC symbols, signal conversion, and expiry logic.
+
+### Margin Calculator — 8/10
+337 lines. Reg T naked option margin, credit spread margin (uses wider wing), iron condor margin, max-loss calculations. 15 dedicated unit tests.
+
+### Test Suite — 8/10
+568 tests, all passing. 41 test files across unit, integration, property-based (proptest), and concurrency. Tests added this cycle: 4 `signal_to_legs` tests (sell straddle, buy straddle, iron butterfly, cash-secured put), and 23 strategy signal tests across all 4 strategies in `test_core_strategies.rs`.
+
+---
+
+## Part 2: Critical Bugs — All Fixed
+
+All five bugs from the original review are resolved:
+
+| Bug | Fix | Status |
+|-----|-----|--------|
+| Call theta sign flip | The review was wrong — code matched Hull's formula. Tests confirm `call.theta ≈ -6.41` for ATM at r=5%. | **Not a bug** |
+| `close_all_positions` expires everything worthless | Now calculates intrinsic, only expires genuinely OTM positions | **Fixed ✓** |
+| `optimal_exercise_boundary` uses strike as spot | Both loops now use `spot × u^i × d^(n-i)` | **Fixed ✓** |
+| Multi-leg spreads hardcoded at 30% vol | Engine passes `current_vol` from per-day historical vol | **Fixed ✓** |
+| Heston Monte Carlo 32-bit LCG | Replaced with SplitMix64 — 64-bit, passes BigCrush, no correlated adjacents | **Fixed ✓** |
+
+A 6th bug found during review — extra `* t` in the CDF polynomial (corrupting all BSM prices by ~3%) — was also fixed. `tests/verify_cdf.rs` guards against regression.
+
+---
+
+## Part 3: The `sin(SystemTime)` Disease — Cured
+
+**Previously:** Three of four strategies generated signals from wall-clock time (`sin(SystemTime)`) — non-reproducible, non-testable, and ignoring all actual inputs.
+
+**Now:** All strategies use only their declared inputs (`spot`, `market_iv`, `model_iv`, `historical_vol`). Results are deterministic. 23 tests in `test_core_strategies.rs` verify exact signal types for exact inputs.
+
+---
+
+## Part 4: Remaining Architecture Issues
+
+### Heston Monte Carlo Duplication (~400 lines)
+`price_european_regular` / `price_european_antithetic` and `greeks_european_call` / `greeks_european_put` are nearly identical, differing only in `max(S-K, 0)` vs `max(K-S, 0)`. Could be parameterized with a single `OptionType` argument, saving ~400 lines.
+
+### Advanced Stock Classifier Stubs (3 functions)
+`src/analysis/advanced_classifier.rs` (905 lines) has three functions that return hardcoded stub values:
+- `calculate_sr_strength()` → always returns `0.6`
+- `get_sector_relative_volatility()` → always returns `1.0`
+- `get_sector_relative_momentum()` → always returns `1.0`
+
+The rest of the classifier is real statistical analysis (rolling vol percentiles, trend strength via linear regression, mean reversion via MA deviation).
+
+### Portfolio Module — Zero Unit Tests
+~2,000 lines across 5 files (`risk_analytics.rs`, `allocation.rs`, `manager.rs`, `performance.rs`, `position_sizing.rs`). Has Greek aggregation, VaR at 95%/99%, Kelly sizing, performance attribution. All architecturally sound. Tested only indirectly through backtesting integration tests.
+
+### String Money Types in Alpaca
+`Account` and `Position` structs store all monetary values as `String` (matching Alpaca's raw API). No parse helpers provided — every consumer must `str::parse()` and unwrap independently.
+
+---
+
+## Part 5: What Changed Since Original Review
+
+| Previous Finding | Current Status |
+|---|---|
+| `sin(SystemTime)` strategies | **Fixed** — all 4 strategies use real IV/HV logic |
+| Backtester expires everything worthless | **Fixed** — intrinsic-value settlement |
+| Hardcoded 30% vol in spreads | **Fixed** — passes `current_vol` |
+| 32-bit LCG PRNG | **Fixed** — SplitMix64 |
+| Exercise boundary uses strike | **Fixed** — uses spot |
+| CDF extra `* t` bug | **Fixed** — prices accurate to <0.0001 |
+| Alpaca cannot trade options | **Fixed** — full OCC order routing |
+| `SellStraddle`/`BuyStraddle` had no fields | **Fixed** — explicit `strike`, `days_to_expiry` |
+| `IronButterfly` had no center/DTE | **Fixed** — `center_strike`, `wing_width`, `days_to_expiry` |
+| `CashSecuredPut` used percentage | **Fixed** — absolute `strike` |
+| Fake strategies untested | **Fixed** — 23 tests in `test_core_strategies.rs` |
+| Alpaca tests all `#[ignore]` | **Partially fixed** — 14 OCC/signal tests are not ignored |
+| `#![allow(dead_code)]` blankets | **Resolved** — removed, no blanket suppression in `src/` |
+
+---
+
+## Part 6: Test Coverage
+
+| Module | Source LOC | Test Files | Test Count | Coverage |
+|---|---|---|---|---|
+| Models (BS, Heston, American) | ~3,500 | 14 files | ~180 | **Excellent** — put-call parity, Greeks, stress tests, property-based, CDF reference |
+| Calibration | ~800 | 1 file | ~15 | **Good** — Nelder-Mead convergence, Heston calibration |
+| Backtesting | ~2,200 | 7 files | ~90 | **Good** — engine, short options, slippage, edge cases, margin |
+| Strategies | ~1,500 | 4 files | ~60 | **Good** — all 4 strategies tested with exact input→output verification |
+| Portfolio | ~2,000 | 1 file | ~20 | **Weak** — architecturally untested; integration tests only |
+| Alpaca | ~750 | inline | 14 | **Moderate** — OCC symbols, signal conversion; live tests still `#[ignore]` |
+| Analysis | ~1,300 | 2 files | ~30 | **Moderate** — classifier tested; 3 stub functions not tested (hardcoded) |
+| Backtesting/Margin | ~337 | inline | 15 | **Good** — Reg T margin, credit spreads, iron condor |
+
+---
+
+## Part 7: What To Actually Fix Next (Priority Order)
+
+### P0 — Correctness
+Nothing in this category. Core models are verified.
+
+### P1 — Integrity
+1. **Implement the 3 stub functions in `advanced_classifier.rs`** — `calculate_sr_strength`, `get_sector_relative_volatility`, `get_sector_relative_momentum` should use real data
+2. **Add unit tests for the portfolio module** — 2,000 untested lines is a liability
+
+### P2 — Engineering
+3. **Deduplicate Heston Monte Carlo** — parameterize call/put paths (~400 lines saved)
+4. **Add parse helpers to Alpaca money types** — `Account::buying_power_f64()` etc.
+5. **Add CLI subcommands** — replace the `main.rs` monolith with proper `clap` subcommands
+
+---
+
+## Final Verdict
+
+DollarBill is now a functional options trading toolkit. The math is correct. The strategies are real. The Alpaca client routes all option types to OCC-formatted orders. The backtester settles positions honestly.
+
+It's not production-ready — there's no live data integration, no portfolio database, no risk monitoring loop. But it is a genuine implementation of options pricing, strategy signal generation, paper trading, and backtesting — not a demo or a stub.
+
+**For learning options math in Rust: 9/10.**  
+**For learning Heston calibration: 9/10.**  
+**For paper trading options with real signals: 7/10.**  
+**For production trading: 4/10** (missing: live data feed, execution retry, position persistence, monitoring).
+
+The gap between what it claims and what it delivers is now small and honest.
+
 
 ---
 

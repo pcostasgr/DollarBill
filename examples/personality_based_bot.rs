@@ -799,9 +799,6 @@ async fn try_submit_options(
     action: &SignalAction,
     confidence: f64,
 ) -> Result<bool, Box<dyn std::error::Error>> {
-    /// Default DTE for signals that do not carry expiry info.
-    const DEFAULT_DTE: usize = 30;
-
     /// Build a single-leg market order using the given OCC symbol.
     fn single_leg(occ: String, side: OrderSide) -> OrderRequest {
         OrderRequest {

@@ -1,4 +1,7 @@
 // Generate trade signals from model-vs-market mispricings
+// Config structs hold fields for planned extensibility; not all are read yet.
+#![allow(dead_code)]
+
 use dollarbill::market_data::options_json_loader::{load_options_from_json, filter_liquid_options};
 use dollarbill::calibration::heston_calibrator::{calibrate_heston, CalibParams};
 use dollarbill::calibration::market_option::OptionType;

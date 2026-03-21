@@ -47,7 +47,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Err(e) => {
                 println!("  ❌ Error analyzing {}: {}", symbol, e);
-                // Fallback to legacy for this stock
+                // Fallback to legacy for this stock (intentional: enhanced requires CSV data)
+                #[allow(deprecated)]
                 let profile = classifier.classify_stock(symbol, 0.5, 0.5, 0.5, 0.5);
                 stock_profiles.insert(symbol.clone(), profile.clone());
                 println!("  {} (fallback): {:?} - Recommended: {:?}",

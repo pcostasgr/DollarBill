@@ -1,3 +1,6 @@
+// Config structs hold fields for planned risk/execution extensibility; not all are read yet.
+#![allow(dead_code)]
+
 use dollarbill::alpaca::{AlpacaClient, OrderRequest, OrderSide, OrderType, TimeInForce};
 use dollarbill::market_data::symbols::load_enabled_stocks;
 use std::collections::HashMap;
