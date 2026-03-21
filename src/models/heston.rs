@@ -491,158 +491,73 @@ impl HestonMonteCarlo {
 
     /// Calculate Greeks for a European call option using finite differences
     pub fn greeks_european_call(&self, strike: f64) -> HestonGreeks {
-        // Larger bumps needed for Monte Carlo (vs analytical methods)
-        // Even larger for short-dated options to overcome noise
-        let bump_s = 0.01;      // 1% bump for spot
-        let bump_v = 0.01;      // 25% bump for variance (critical for short-dated)
-        let bump_t = 1.0 / 365.0; // 1 day
-        let bump_r = 0.0001;    // 1 basis point
-        
-        // Base price
-        let price = self.price_european_call(strike);
-        
-        // Delta: ∂V/∂S
-        let mut params_up = self.params.clone();
-        params_up.s0 = self.params.s0 * (1.0 + bump_s);
-        let mc_up = HestonMonteCarlo::new(params_up, self.config.clone())
-            .unwrap_or_else(|_| panic!("Invalid Heston parameters for delta calculation"));
-        let price_up = mc_up.price_european_call(strike);
-        
-        let mut params_down = self.params.clone();
-        params_down.s0 = self.params.s0 * (1.0 - bump_s);
-        let mc_down = HestonMonteCarlo::new(params_down, self.config.clone())
-            .unwrap_or_else(|_| panic!("Invalid Heston parameters for delta calculation"));
-        let price_down = mc_down.price_european_call(strike);
-        
-        let delta = (price_up - price_down) / (2.0 * self.params.s0 * bump_s);
-        
-        // Gamma: ∂²V/∂S²
-        let gamma = (price_up - 2.0 * price + price_down) / ((self.params.s0 * bump_s).powi(2));
-        
-        // Vega: ∂V/∂v0 (sensitivity to initial variance)
-        let mut params_vega_up = self.params.clone();
-        params_vega_up.v0 = self.params.v0 + bump_v;
-        let mc_vega = HestonMonteCarlo::new(params_vega_up, self.config.clone())
-            .unwrap_or_else(|_| panic!("Invalid Heston parameters for vega calculation"));
-        let price_vega_up = mc_vega.price_european_call(strike);
-        
-        // Convert to volatility units (multiply by 2*sqrt(v0) since ∂v/∂σ = 2σ)
-        let vega = (price_vega_up - price) / bump_v * 2.0 * self.params.v0.sqrt();
-        
-        // Theta: -∂V/∂t (negative time decay, per day)
-        if self.params.t > bump_t {
-            let mut params_theta = self.params.clone();
-            params_theta.t = self.params.t - bump_t;
-            let mc_theta = HestonMonteCarlo::new(params_theta, self.config.clone())
-                .unwrap_or_else(|_| panic!("Invalid Heston parameters for theta calculation"));
-            let price_theta = mc_theta.price_european_call(strike);
-            
-            let theta = (price_theta - price) / bump_t;
-            
-            // Rho: ∂V/∂r
-            let mut params_rho = self.params.clone();
-            params_rho.r = self.params.r + bump_r;
-            let mc_rho = HestonMonteCarlo::new(params_rho, self.config.clone())
-                .unwrap_or_else(|_| panic!("Invalid Heston parameters for rho calculation"));
-            let price_rho = mc_rho.price_european_call(strike);
-            
-            let rho = (price_rho - price) / bump_r;
-            
-            HestonGreeks {
-                price,
-                delta,
-                gamma,
-                vega,
-                theta,
-                rho,
-            }
-        } else {
-            // Near expiry, theta calculation may be unstable
-            HestonGreeks {
-                price,
-                delta,
-                gamma,
-                vega,
-                theta: 0.0,
-                rho: 0.0,
-            }
-        }
+        self.greeks_european(strike, true)
     }
 
     /// Calculate Greeks for a European put option using finite differences
     pub fn greeks_european_put(&self, strike: f64) -> HestonGreeks {
-        // Larger bumps needed for Monte Carlo (vs analytical methods)
-        // Even larger for short-dated options to overcome noise
-        let bump_s = 0.01;
-        let bump_v = 0.01;      // 25% bump for variance
-        let bump_t = 1.0 / 365.0;
-        let bump_r = 0.0001;
-        
-        let price = self.price_european_put(strike);
-        
-        // Delta
+        self.greeks_european(strike, false)
+    }
+
+    /// Shared finite-difference Greeks implementation for European options.
+    /// `is_call = true` uses call pricing; `false` uses put pricing.
+    fn greeks_european(&self, strike: f64, is_call: bool) -> HestonGreeks {
+        let price_fn = |mc: &HestonMonteCarlo| {
+            if is_call { mc.price_european_call(strike) } else { mc.price_european_put(strike) }
+        };
+        let option_label = if is_call { "call" } else { "put" };
+
+        let bump_s = 0.01;           // 1% spot bump
+        let bump_v = 0.01;           // variance bump
+        let bump_t = 1.0 / 365.0;   // 1 day
+        let bump_r = 0.0001;         // 1 basis point
+
+        // Base price
+        let price = price_fn(self);
+
+        // Delta & Gamma: central difference in spot
         let mut params_up = self.params.clone();
         params_up.s0 = self.params.s0 * (1.0 + bump_s);
         let mc_up = HestonMonteCarlo::new(params_up, self.config.clone())
-            .unwrap_or_else(|_| panic!("Invalid Heston parameters for put delta calculation"));
-        let price_up = mc_up.price_european_put(strike);
-        
+            .unwrap_or_else(|_| panic!("Invalid Heston parameters for {} delta", option_label));
+        let price_up = price_fn(&mc_up);
+
         let mut params_down = self.params.clone();
         params_down.s0 = self.params.s0 * (1.0 - bump_s);
         let mc_down = HestonMonteCarlo::new(params_down, self.config.clone())
-            .unwrap_or_else(|_| panic!("Invalid Heston parameters for put delta calculation"));
-        let price_down = mc_down.price_european_put(strike);
-        
+            .unwrap_or_else(|_| panic!("Invalid Heston parameters for {} delta", option_label));
+        let price_down = price_fn(&mc_down);
+
         let delta = (price_up - price_down) / (2.0 * self.params.s0 * bump_s);
-        
-        // Gamma
         let gamma = (price_up - 2.0 * price + price_down) / ((self.params.s0 * bump_s).powi(2));
-        
-        // Vega
+
+        // Vega: forward difference in initial variance
         let mut params_vega_up = self.params.clone();
         params_vega_up.v0 = self.params.v0 + bump_v;
         let mc_vega = HestonMonteCarlo::new(params_vega_up, self.config.clone())
-            .unwrap_or_else(|_| panic!("Invalid Heston parameters for put vega calculation"));
-        let price_vega_up = mc_vega.price_european_put(strike);
-        
+            .unwrap_or_else(|_| panic!("Invalid Heston parameters for {} vega", option_label));
+        let price_vega_up = price_fn(&mc_vega);
+        // Convert to volatility units: ∂V/∂σ = (∂V/∂v₀) × 2σ
         let vega = (price_vega_up - price) / bump_v * 2.0 * self.params.v0.sqrt();
-        
-        // Theta
+
+        // Theta & Rho: only computable when enough time remains
         if self.params.t > bump_t {
             let mut params_theta = self.params.clone();
             params_theta.t = self.params.t - bump_t;
             let mc_theta = HestonMonteCarlo::new(params_theta, self.config.clone())
-                .unwrap_or_else(|_| panic!("Invalid Heston parameters for put theta calculation"));
-            let price_theta = mc_theta.price_european_put(strike);
-            
-            let theta = (price_theta - price) / bump_t;
-            
-            // Rho
+                .unwrap_or_else(|_| panic!("Invalid Heston parameters for {} theta", option_label));
+            let theta = (price_fn(&mc_theta) - price) / bump_t;
+
             let mut params_rho = self.params.clone();
             params_rho.r = self.params.r + bump_r;
             let mc_rho = HestonMonteCarlo::new(params_rho, self.config.clone())
-                .unwrap_or_else(|_| panic!("Invalid Heston parameters for put rho calculation"));
-            let price_rho = mc_rho.price_european_put(strike);
-            
-            let rho = (price_rho - price) / bump_r;
-            
-            HestonGreeks {
-                price,
-                delta,
-                gamma,
-                vega,
-                theta,
-                rho,
-            }
+                .unwrap_or_else(|_| panic!("Invalid Heston parameters for {} rho", option_label));
+            let rho = (price_fn(&mc_rho) - price) / bump_r;
+
+            HestonGreeks { price, delta, gamma, vega, theta, rho }
         } else {
-            HestonGreeks {
-                price,
-                delta,
-                gamma,
-                vega,
-                theta: 0.0,
-                rho: 0.0,
-            }
+            // Near expiry: theta/rho are numerically unstable
+            HestonGreeks { price, delta, gamma, vega, theta: 0.0, rho: 0.0 }
         }
     }
 
