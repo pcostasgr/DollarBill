@@ -150,7 +150,7 @@ cargo run --release --example personality_driven_pipeline
 # Generate trading signals with enhanced system
 cargo run --release --example multi_symbol_signals
 
-# This creates/updates the trained models for live trading
+# Run one-off analysis to populate the models/ directory
 ```
 
 ### Enhanced Output Example (Current Portfolio)
@@ -291,7 +291,7 @@ cargo run --example personality_based_bot -- --continuous 5
 2. **StockClassifier** (Enhanced): Sector-aware personality classification with confidence scoring  
 3. **PerformanceMatrix**: Tracks strategy performance by stock/personality combinations
 4. **StrategyMatcher**: Combines enhanced classifier and performance data for optimal selection
-5. **PersonalityBasedBot**: Live trading implementation using enhanced trained models
+5. **PersonalityBasedBot**: Live trading implementation powered by the personality classifier and performance matrix
 
 ### Enhanced Data Flow
 
@@ -482,9 +482,6 @@ cargo run --example personality_driven_pipeline
 
 ### Custom Strategy Integration
 Add new strategies to the matching system by implementing the `TradingStrategy` trait and updating the performance matrix.
-
-### ML Enhancement
-Combine personality analysis with machine learning models for signal enhancement and confidence scoring.
 
 ### Multi-Timeframe Analysis
 Extend personality analysis to work across different timeframes (intraday, daily, weekly) for more nuanced classifications.

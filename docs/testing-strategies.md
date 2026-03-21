@@ -308,13 +308,6 @@ See [test-implementation-summary.md](test-implementation-summary.md) for detaile
 - **test_confidence_thresholds()** - Minimum confidence
 - **test_strategy_mapping()** - Personality → Strategy
 
-### `tests/unit/config/test_ml_config.rs`
-- **test_load_ml_config()** - Parse ML settings
-- **test_model_paths()** - Verify model file locations
-- **test_feature_engineering()** - Define features
-- **test_training_parameters()** - Epochs, batch size, etc.
-- **test_evaluation_metrics()** - Accuracy, precision, recall
-
 ## 9. Utility Tests
 
 ### `tests/unit/utils/test_vol_surface.rs`
@@ -413,23 +406,7 @@ See [test-implementation-summary.md](test-implementation-summary.md) for detaile
 - **test_very_small_numbers()** - No underflow
 - **test_extreme_greeks()** - Handle edge cases
 
-## 14. ML Integration Tests (if implementing ML features)
-
-### `tests/unit/ml/test_volatility_prediction.rs`
-- **test_lstm_model_loading()** - Load trained model
-- **test_feature_preparation()** - Prepare input features
-- **test_prediction_generation()** - Generate forecasts
-- **test_prediction_accuracy()** - Compare to actual
-- **test_model_confidence()** - Output confidence scores
-- **test_model_retraining()** - Update with new data
-
-### `tests/unit/ml/test_signal_classification.rs`
-- **test_signal_quality_scoring()** - ML score quality
-- **test_classification_accuracy()** - Win/loss prediction
-- **test_feature_importance()** - Identify key features
-- **test_model_calibration()** - Probability calibration
-
-## Test Infrastructure
+## 14. Test Infrastructure
 
 ### `tests/helpers/mod.rs`
 - **generate_synthetic_stock_data()** - Create test price series

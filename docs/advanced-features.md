@@ -541,13 +541,13 @@ cargo run --example personality_driven_pipeline
 │ • Volume        │    │ • Mean reversion │    │ • Performance   │
 └─────────────────┘    └──────────────────┘    └─────────────────┘
                                                        │
-┌─────────────────┐    ┌──────────────────┐           │
-│  Heston         │ <- │ ML Enhancement   │ <─────────┘
-│  Calibration    │    │ (Optional)       │
-│                 │    │                  │
-│ • Model params  │    │ • Signal quality │
-│ • Risk metrics  │    │ • Confidence     │
-└─────────────────┘    └──────────────────┘
+┌─────────────────┐                                   │
+│  Heston         │ <─────────────────────────────────┘
+│  Calibration    │
+│                 │
+│ • Model params  │
+│ • Risk metrics  │
+└─────────────────┘
 ```
 
 **Example Results:**
@@ -596,14 +596,7 @@ pub fn generate_personality_signals(&self, symbol: &str) -> Vec<TradeSignal> {
     // 3. Generate signals using personality-matched strategy
     let signals = strategy.generate_signals(&self.market_data)?;
     
-    // 4. Optional ML enhancement
-    let enhanced = if self.ml_enabled {
-        self.ml_service.enhance_signals(signals)?
-    } else {
-        signals
-    };
-    
-    Ok(enhanced)
+    Ok(signals)
 }
 ```
 
