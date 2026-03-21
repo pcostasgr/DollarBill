@@ -35,7 +35,6 @@ No traditional programming sessions. Just prompts, iterations, and Rust. 🚀
 
 ### ❌ **What It's NOT**
 - Institutional-grade platform  
-- Machine learning enhanced (despite config files suggesting it)
 - Competitor to professional platforms
 - Enterprise solution
 - Real options API support (live options *orders* via Alpaca require a separate approval tier; the bot trades underlying equities only)
@@ -732,7 +731,6 @@ python py/bench_quantlib_heston.py             # QuantLib comparison
 - [ ] Database persistence (PostgreSQL/SQLite)
 
 **Ambitious:**
-- [ ] Actual machine learning integration (not just config files)
 - [ ] Real-time portfolio optimization
 - [ ] Advanced volatility forecasting models
 - [ ] Regime-based allocation and factor models
