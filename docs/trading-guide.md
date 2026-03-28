@@ -198,6 +198,47 @@ A separate `ratatui` terminal UI that monitors the bot in real time.
 
 **Keybindings:** `q` / `Esc` quit · `r` force-refresh
 
+---
+
+### 6. **Email Alerts (`lettre` SMTP)** ⭐ NEW
+
+The bot sends email notifications for critical events — no polling required.
+
+**Enable in `config/trading_bot_config.json`:**
+```json
+"alerts": {
+  "enabled": true,
+  "smtp_host": "smtp.gmail.com",
+  "smtp_port": 587,
+  "smtp_user": "you@gmail.com",
+  "smtp_password": "",
+  "from": "DollarBill Bot <you@gmail.com>",
+  "to": "you@gmail.com",
+  "use_smtps": false,
+  "on_circuit_breaker": true,
+  "on_fill": false,
+  "on_daily_loss": true,
+  "on_disconnect": true,
+  "daily_loss_alert_pct": 0.80
+}
+```
+
+**Supply the password via env var (never hard-code it):**
+```powershell
+$env:DOLLARBILL_SMTP_PASSWORD = "your-gmail-app-password"
+```
+
+> **Gmail**: Google Account → Security → 2-Step Verification → App passwords.
+
+| Event | Default | Triggered when |
+|---|---|---|
+| `on_circuit_breaker` | **on** | Daily spend hits 100% of `max_daily_loss_pct` |
+| `on_daily_loss` | **on** | Daily spend hits 80% of limit (`daily_loss_alert_pct`) |
+| `on_disconnect` | **on** | Alpaca WebSocket permanently disconnects |
+| `on_fill` | off | Every filled order (disable to avoid noise) |
+
+All alerts fire via `tokio::spawn` (non-blocking) except disconnect, which awaits before the bot exits. The alerter logs a `warn!` on SMTP failure and never panics.
+
 ## 🎯 Strategy Details
 
 ### From Your Backtesting Results:
@@ -302,8 +343,9 @@ limit_price: Some(current_price * 0.99),  // Buy 1% below market
 ### 2. Run live bot during market hours (Week 1-2)
 ```powershell
 # 9:30 AM - 4:00 PM ET
-$env:ALPACA_API_KEY   = "your-key"
-$env:ALPACA_API_SECRET = "your-secret"
+$env:ALPACA_API_KEY            = "your-key"
+$env:ALPACA_API_SECRET         = "your-secret"
+$env:DOLLARBILL_SMTP_PASSWORD  = "your-app-password"   # omit if alerts disabled
 .\target\release\dollarbill.exe trade --live
 ```
 - Let it trade for a week
@@ -327,6 +369,7 @@ $env:ALPACA_API_SECRET = "your-secret"
 ## 💡 Next Steps
 
 - [ ] Get Alpaca API keys and test paper_trading
+- [ ] Configure email alerts in `config/trading_bot_config.json` (set `enabled: true`, add Gmail App Password)
 - [ ] Run trading_bot for 1-2 weeks
 - [ ] Compare paper P&L to backtest expectations
 - [ ] Fine-tune strategies based on live results
