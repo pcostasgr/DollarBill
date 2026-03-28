@@ -366,6 +366,60 @@ $env:DOLLARBILL_SMTP_PASSWORD  = "your-app-password"   # omit if alerts disabled
 - Add stop-loss orders
 - Implement take-profit levels
 
+### 5. Run unattended (Week 3+)
+
+Once the bot is stable, move to automated deployment so it survives reboots and restarts on crash.
+
+**Windows — `start_bot.ps1` (simplest):**
+```powershell
+# Copy credentials template
+Copy-Item .env.example .env   # then edit with real keys
+
+# Dry-run to confirm everything loads
+.\scripts\start_bot.ps1 -DryRun
+
+# Live mode — logs written to data\logs\
+.\scripts\start_bot.ps1
+```
+
+**Windows — Task Scheduler (auto-start on logon):**
+```powershell
+# Edit deploy\dollarbill-task.xml: set your username in <UserId>
+# Then import:
+schtasks /Create /XML deploy\dollarbill-task.xml /TN "DollarBill\TradingBot"
+
+# Verify
+schtasks /Query /TN "DollarBill\TradingBot"
+```
+
+**Linux — Docker (recommended for servers):**
+```bash
+cp .env.example .env    # fill in keys
+docker compose up -d bot
+docker compose logs -f bot
+docker compose down     # stop; data persists in ./data
+```
+
+**Linux — systemd:**
+```bash
+sudo cp target/release/dollarbill /usr/local/bin/
+sudo cp deploy/dollarbill.service /etc/systemd/system/
+
+# Create secrets file (chmod 600 — never world-readable)
+sudo mkdir -p /etc/dollarbill
+sudo tee /etc/dollarbill/secrets.env <<'EOF'
+ALPACA_API_KEY=your-key
+ALPACA_API_SECRET=your-secret
+DOLLARBILL_SMTP_PASSWORD=your-app-password
+EOF
+sudo chmod 600 /etc/dollarbill/secrets.env
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now dollarbill
+journalctl -u dollarbill -f
+```
+The service restarts automatically on crash (up to 5 times per 5-minute window) and sends SIGTERM on stop, which triggers the bot’s graceful-shutdown handler (cancels open orders).  
+
 ## 💡 Next Steps
 
 - [ ] Get Alpaca API keys and test paper_trading
@@ -373,7 +427,7 @@ $env:DOLLARBILL_SMTP_PASSWORD  = "your-app-password"   # omit if alerts disabled
 - [ ] Run trading_bot for 1-2 weeks
 - [ ] Compare paper P&L to backtest expectations
 - [ ] Fine-tune strategies based on live results
-- [ ] Consider adding stop-loss/take-profit orders
+- [ ] Deploy unattended: `scripts/start_bot.ps1` (Windows) or Docker / systemd (Linux)
 - [ ] Explore options trading (original goal!)
 
 **Options Trading**: Once stock strategies are proven, apply same logic to options using Alpaca's options API (similar to fetch_options.py but with live trading).

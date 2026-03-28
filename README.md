@@ -30,6 +30,7 @@ No traditional programming sessions. Just prompts, iterations, and Rust. 🚀
 - **Greeks Hedging Alerts**: After every fill the bot logs portfolio Δ/Γ/Vega/Θ and emits `⚠️ DELTA HEDGE ALERT` when `|total_delta| > equity × 0.30%`
 - **Live TUI Dashboard**: `dashboard.exe` — a separate `ratatui` terminal UI that reads `data/bot_status.json` + `data/trades.db` and displays live P&L, circuit-breaker state, open positions, last signals per symbol, aggregate Greeks, and recent orders; auto-refreshes every second
 - **Email Alerts**: `lettre`-powered SMTP alerts — circuit-breaker trips, daily-loss warnings (configurable threshold, default 80%), order fills, and stream disconnects; STARTTLS/SMTPS support; password via `DOLLARBILL_SMTP_PASSWORD` env var
+- **Containerised Deployment**: multi-stage `Dockerfile` + `docker-compose.yml` for unattended server operation; `deploy/dollarbill.service` systemd unit (Linux) and `deploy/dollarbill-task.xml` Windows Task Scheduler definition; `scripts/start_bot.ps1` helper loads `.env`, validates credentials, tees output to `data/logs/`
 - **Backtesting**: Historical strategy evaluation with P&L tracking and annualised Sharpe and Sortino ratios
 - **QuantLib Validator**: `py/validate_pricing.py` cross-validates BSM, Heston GL-64/128, and American binomial pricing against QuantLib v1.41; `--speed` flag benchmarks Rust vs Python timings
 - **Stock Classification**: Basic personality-driven strategy selection (3 types)
@@ -367,14 +368,65 @@ Trades: 2 | Wins: 2 (100%) | Avg Win: $23,203 | Profit Factor: inf
 | **Crash recovery** | `bot_state.json` written atomically after every confirmed fill |
 
 ### Running in Live Mode
+
+**Option A — PowerShell wrapper (Windows, simplest):**
+```powershell
+# 1. Copy template and fill in your keys
+Copy-Item .env.example .env
+
+# 2. Dry-run first
+.\scripts\start_bot.ps1 -DryRun
+
+# 3. Go live
+.\scripts\start_bot.ps1
+```
+`start_bot.ps1` loads `.env`, validates credentials, launches the bot, and tees output to `data/logs/`.
+
+**Option B — Docker (any OS, unattended):**
 ```bash
-# 1. Paper trading (default — uses paper-api.alpaca.markets)
+# Build image and start bot in background
+docker compose up -d bot
+
+# Follow logs
+docker compose logs -f bot
+
+# Stop (data persists in ./data)
+docker compose down
+```
+
+**Option C — systemd (Linux server):**
+```bash
+# Install binary and service
+sudo cp target/release/dollarbill /usr/local/bin/
+sudo cp deploy/dollarbill.service /etc/systemd/system/
+
+# Create secrets file (chmod 600)
+sudo mkdir -p /etc/dollarbill
+sudo tee /etc/dollarbill/secrets.env <<'EOF'
+ALPACA_API_KEY=your-key
+ALPACA_API_SECRET=your-secret
+DOLLARBILL_SMTP_PASSWORD=your-app-password
+EOF
+sudo chmod 600 /etc/dollarbill/secrets.env
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now dollarbill
+journalctl -u dollarbill -f
+```
+
+**Option D — Task Scheduler (Windows, unattended):**
+```powershell
+# Edit deploy\dollarbill-task.xml to set your username, then import:
+schtasks /Create /XML deploy\dollarbill-task.xml /TN "DollarBill\TradingBot"
+```
+
+**Manual (original):**
+```bash
+# Paper trading
 cargo run --release --example personality_based_bot -- --continuous
 
-# 2. Live trading (CAUTION: real money)
-APCA_LIVE=1 \
-  ALPACA_API_KEY=<your_live_key> \
-  ALPACA_API_SECRET=<your_live_secret> \
+# Live trading (CAUTION: real money)
+APCA_LIVE=1 ALPACA_API_KEY=<key> ALPACA_API_SECRET=<secret> \
   cargo run --release --example personality_based_bot -- --continuous
 ```
 
@@ -539,6 +591,7 @@ DollarBill/
 │   ├── fetch_options.py                # Single symbol options fetcher
 │   └── get_tesla_stock_csv.py          # Tesla CSV downloader
 ├── scripts/
+│   ├── start_bot.ps1               # Load .env + launch bot (used by Task Scheduler)
 │   ├── build_release.ps1               # Build all release binaries
 │   ├── run_release_pipeline.ps1        # Fast pipeline (pre-built binaries)
 │   ├── run_full_pipeline.ps1           # Full pipeline with compilation
@@ -547,11 +600,17 @@ DollarBill/
 │   ├── setup_python.bat                # Python environment setup
 │   ├── test_python.bat                 # Python environment testing
 │   └── collect_data_fixed.bat          # Data collection pipeline
+├── deploy/
+│   ├── dollarbill.service          # systemd unit (Linux server)
+│   └── dollarbill-task.xml         # Windows Task Scheduler definition
 ├── tests/                              # Integration + unit test suite
 ├── benches/                            # Criterion.rs benchmarks
 ├── data/                               # Market data storage (CSV + JSON)
 ├── docs/                               # Guides and documentation
 ├── images/                             # Generated charts and visualizations
+Dockerfile                              # Multi-stage container build
+docker-compose.yml                      # Bot + dashboard services
+.env.example                            # Credential template (copy to .env)
 bot_state.json                          # Runtime: daily trade counter (crash recovery)
 trade_audit.csv                         # Runtime: append-only audit log
 └── Cargo.toml                          # Rust dependencies
@@ -587,6 +646,8 @@ trade_audit.csv                         # Runtime: append-only audit log
 | Serialization | Serde, Serde JSON |
 | CSV Parsing | CSV crate |
 | Email | lettre 0.11 (tokio1-native-tls) |
+| Containerisation | Docker (multi-stage), docker-compose |
+| Process management | systemd (Linux), Windows Task Scheduler |
 | Market Data | yahoo_finance_api |
 | Parallelism | Rayon |
 | Complex Math | num-complex |
@@ -614,6 +675,7 @@ trade_audit.csv                         # Runtime: append-only audit log
 
 - **[README.md](README.md)** — This file: overview and quick start
 - **[Getting Started Guide](docs/getting-started.md)** — Setup for personality-driven trading
+- **[Trading Guide](docs/trading-guide.md)** — Live bot strategies, dashboard, alerts, deployment
 - **[Options Strategies Guide](docs/strategies-guide.md)** — Multi-leg strategies, credit spreads, iron condors
 - **[Advanced Features](docs/advanced-features.md)** — Detailed feature guides and examples
 - **[Alpaca Integration](docs/alpaca-guide.md)** — Paper trading setup and API usage
