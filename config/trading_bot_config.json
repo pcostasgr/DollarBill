@@ -1,14 +1,15 @@
 {
+  "_run_notes": "Week-1 paper-trading proof run. Symbols: TSLA, NVDA, SPY. Conservative thresholds — observe first, optimise after.",
   "bot_runtime": {
-    "min_confidence":       0.60,
-    "max_daily_loss_pct":   0.05,
-    "signal_cooldown_secs": 300,
+    "min_confidence":       0.65,
+    "max_daily_loss_pct":   0.02,
+    "signal_cooldown_secs": 600,
     "max_price_buf":        50,
     "min_prices_for_hv":    22,
     "profit_target_pct":    0.50,
     "stop_loss_pct":        2.00,
-    "max_position_days":    21,
-    "min_vol_percentile":   0.40
+    "max_position_days":    7,
+    "min_vol_percentile":   0.50
   },
   "alerts": {
     "enabled":               false,
@@ -26,12 +27,12 @@
     "daily_loss_alert_pct":  0.80
   },
   "trading": {
-    "position_size_shares": 100,
-    "max_positions": 3,
+    "position_size_shares": 1,
+    "max_positions": 2,
     "risk_management": {
       "stop_loss_pct": 20.0,
       "take_profit_pct": 50.0,
-      "max_daily_trades": 5
+      "max_daily_trades": 3
     }
   },
   "signals": {
