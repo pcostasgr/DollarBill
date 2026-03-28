@@ -1,0 +1,58 @@
+[Unit]
+Description=DollarBill Options Trading Bot
+Documentation=https://github.com/yourusername/DollarBill
+After=network-online.target
+Wants=network-online.target
+# If you run the bot inside Docker, replace the [Service] block with a
+# simple `ExecStart=docker compose -f /opt/dollarbill/docker-compose.yml up`
+# and set Type=simple.
+
+[Service]
+Type=simple
+User=dollarbill
+Group=dollarbill
+WorkingDirectory=/opt/dollarbill
+
+# ── Credentials ───────────────────────────────────────────────────────────────
+# Store secrets in /etc/dollarbill/secrets.env (chmod 600, owned by root).
+# Format:  KEY=value  (one per line, no export prefix needed).
+EnvironmentFile=/etc/dollarbill/secrets.env
+
+# ── Runtime settings ──────────────────────────────────────────────────────────
+Environment=RUST_LOG=info
+
+# ── Binary ────────────────────────────────────────────────────────────────────
+ExecStart=/usr/local/bin/dollarbill trade --live
+
+# ── Process lifecycle ─────────────────────────────────────────────────────────
+# Graceful stop: send SIGTERM, wait 30 s, then SIGKILL.
+# SIGTERM triggers the bot's Ctrl+C handler which cancels open orders.
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Restart automatically on crash, but not on clean exit (ExitCode=0).
+Restart=on-failure
+RestartSec=15s
+# Give up after 5 consecutive rapid failures (prevents runaway restart loops).
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+# Logs go to journald.  View with: journalctl -u dollarbill -f
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dollarbill
+
+# ── Hardening ─────────────────────────────────────────────────────────────────
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/dollarbill/data
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

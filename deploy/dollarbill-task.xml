@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-16"?>
+<!--
+  Windows Task Scheduler definition for DollarBill trading bot.
+
+  Import via:
+    schtasks /Create /XML deploy\dollarbill-task.xml /TN "DollarBill\TradingBot"
+
+  Or through Task Scheduler GUI:
+    Action → Import Task → browse to this file.
+
+  Credentials are read from a .env file by the wrapper script
+  scripts\start_bot.ps1 — never stored in this XML.
+-->
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+
+  <RegistrationInfo>
+    <Description>DollarBill live trading bot — starts at logon, restarts on failure.</Description>
+    <Author>DollarBill</Author>
+    <Version>1.0</Version>
+  </RegistrationInfo>
+
+  <Triggers>
+    <!-- Start when any user logs on -->
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+    </LogonTrigger>
+  </Triggers>
+
+  <Principals>
+    <Principal id="Author">
+      <!-- Replace with your Windows username -->
+      <UserId>YOURDOMAIN\YourUsername</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>true</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>  <!-- No time limit -->
+    <Priority>7</Priority>
+
+    <!-- Restart up to 3 times with a 1-minute gap on failure -->
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <Count>3</Count>
+    </RestartOnFailure>
+  </Settings>
+
+  <Actions Context="Author">
+    <Exec>
+      <Command>powershell.exe</Command>
+      <!-- start_bot.ps1 loads .env, sets env vars, then launches the bot -->
+      <Arguments>-NonInteractive -ExecutionPolicy Bypass -File "C:\DollarBill\scripts\start_bot.ps1"</Arguments>
+      <WorkingDirectory>C:\DollarBill</WorkingDirectory>
+    </Exec>
+  </Actions>
+
+</Task>

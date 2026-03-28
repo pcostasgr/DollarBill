@@ -1,5 +1,13 @@
 /target
 
-# API keys (do not commit!)
+# API keys / secrets (do not commit!)
 run_paper_trading.sh
 run_paper_trading.ps1
+.env
+
+# Bot runtime artefacts (generated, not source)
+data/logs/
+data/bot_status.json
+data/trades.db
+bot_state.json
+trade_audit.csv

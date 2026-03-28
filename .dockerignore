@@ -1,0 +1,45 @@
+# Rust build artefacts — largest exclusion, saves minutes on docker build
+target/
+
+# Git
+.git/
+.gitignore
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python virtual environment and cache
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+py/__pycache__/
+
+# Generated docs / review files
+BRUTAL_REVIEW*.md
+VAPORWARE_AUDIT.md
+REEVALUATION.md
+30_DAY_PLAN.md
+build_*.txt
+errors*.txt
+test_run.txt
+
+# Images (not needed at runtime)
+images/
+DollarBill.png
+
+# proptest regression corpus (test artefact)
+proptest-regressions/
+
+# Windows-specific
+Thumbs.db
+desktop.ini
+
+# macOS
+.DS_Store
+
+# Node (just in case)
+node_modules/

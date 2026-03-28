@@ -1,0 +1,68 @@
+# docker-compose.yml — DollarBill trading bot
+#
+# Usage:
+#   1. Copy .env.example to .env and fill in your credentials.
+#   2. docker compose up -d bot
+#   3. docker compose logs -f bot
+#   4. docker compose down          (stop; data persists in ./data)
+#
+# The `dashboard` service is optional — it requires a TTY so run it with:
+#   docker compose run --rm dashboard
+
+services:
+
+  # ── Live trading bot ─────────────────────────────────────────────────────────
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: dollarbill:latest
+    container_name: dollarbill_bot
+    restart: unless-stopped
+
+    # Credentials — never hard-code; supply via .env file or environment
+    environment:
+      ALPACA_API_KEY:            ${ALPACA_API_KEY}
+      ALPACA_API_SECRET:         ${ALPACA_API_SECRET}
+      DOLLARBILL_SMTP_PASSWORD:  ${DOLLARBILL_SMTP_PASSWORD:-}
+      RUST_LOG:                  ${RUST_LOG:-info}
+
+    volumes:
+      # Persist market data, SQLite DB, heston params, bot_status.json
+      - ./data:/app/data
+      # Mount live config so you can edit it without rebuilding the image
+      - ./config:/app/config:ro
+
+    # Limit memory to avoid runaway allocations on small VMs
+    mem_limit: 512m
+    cpus: "1.0"
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+    command: ["dollarbill", "trade", "--live"]
+
+    # Health: check that the process is still alive every 30 s
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep dollarbill > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── TUI dashboard (interactive — requires TTY) ────────────────────────────────
+  dashboard:
+    image: dollarbill:latest
+    container_name: dollarbill_dashboard
+    depends_on:
+      - bot
+    volumes:
+      - ./data:/app/data:ro
+    stdin_open: true
+    tty: true
+    command: ["dashboard"]
+    profiles:
+      - dashboard   # only starts with: docker compose --profile dashboard up
