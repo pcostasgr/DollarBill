@@ -284,8 +284,43 @@ Keybindings: **q** quit · **r** force-refresh now · dashboard auto-refreshes e
 ✅ **Live Testing**: Dry-run confirmed advanced signal generation works
 ✅ **Live Trading**: Automated execution with confidence-based risk management, Greeks logging, and delta hedge alerts
 ✅ **Dashboard**: `dashboard.exe` TUI monitors the bot in real time — open positions, Greeks, signals, circuit-breaker state, recent orders
+✅ **Email Alerts**: `lettre`-powered SMTP alerts for circuit-breaker trips, daily-loss warnings, fills, and stream disconnects
 
 ## 🎛️ Quick Configuration
+
+### Email Alerts (P4.2)
+Edit the `"alerts"` block in `config/trading_bot_config.json`:
+```json
+"alerts": {
+  "enabled": true,
+  "smtp_host": "smtp.gmail.com",
+  "smtp_port": 587,
+  "smtp_user": "you@gmail.com",
+  "smtp_password": "",
+  "from": "DollarBill Bot <you@gmail.com>",
+  "to": "you@gmail.com",
+  "use_smtps": false,
+  "on_circuit_breaker": true,
+  "on_fill": false,
+  "on_daily_loss": true,
+  "on_disconnect": true,
+  "daily_loss_alert_pct": 0.80
+}
+```
+Then supply your password via environment variable — **never put it in the JSON file**:
+```powershell
+$env:DOLLARBILL_SMTP_PASSWORD = "your-gmail-app-password"
+```
+> **Gmail users**: create an App Password at Google Account → Security → 2-Step Verification → App passwords.
+
+| Field | What it does |
+|---|---|
+| `enabled` | Master on/off switch |
+| `smtp_user` / `from` / `to` | Your Gmail address (all three) |
+| `on_circuit_breaker` | Alert when daily loss limit is hit |
+| `on_daily_loss` | Warning at 80% of daily limit (`daily_loss_alert_pct`) |
+| `on_disconnect` | Alert when the WebSocket stream drops permanently |
+| `on_fill` | Alert on every order fill (off by default — noisy) |
 
 ### Bot Settings
 Edit `config/trading_bot_config.json`:
@@ -363,9 +398,10 @@ This builds accurate performance data. **Skipping this step means trading with p
 
 ### Morning (5 minutes)
 ```powershell
-# Terminal 1 — start the live bot
-$env:ALPACA_API_KEY   = "your-paper-api-key"
-$env:ALPACA_API_SECRET = "your-paper-api-secret"
+# Terminal 1 — start the live bot (include alert password if alerts are enabled)
+$env:ALPACA_API_KEY            = "your-paper-api-key"
+$env:ALPACA_API_SECRET         = "your-paper-api-secret"
+$env:DOLLARBILL_SMTP_PASSWORD  = "your-gmail-app-password"   # omit if alerts disabled
 .\target\release\dollarbill.exe trade --live
 
 # Terminal 2 — open the live dashboard alongside it
@@ -402,7 +438,7 @@ cargo run --example personality_driven_pipeline
 5. **Add Stop Losses**: Implement additional risk management in Alpaca
 
 ### Advanced Features
-- **Real-time Alerts**: Monitor bot performance
+- **Email Alerts**: Receive circuit-breaker, daily-loss, fill, and disconnect alerts — configure in `config/trading_bot_config.json` under `"alerts"`
 - **Performance Analytics**: Track detailed metrics
 - **Strategy Optimization**: Fine-tune personality models
 - **Portfolio Rebalancing**: Adjust allocations automatically
@@ -411,6 +447,7 @@ cargo run --example personality_driven_pipeline
 
 ### Common Issues
 - **"No Alpaca credentials"**: Set environment variables correctly
+- **No alert emails arriving**: Check `enabled: true`, verify `smtp_user`/`from`/`to` are set, and confirm `DOLLARBILL_SMTP_PASSWORD` env var is exported; for Gmail use an App Password, not your account password
 - **"No historical data"**: Run data fetching scripts first
 - **"Strategy not found"**: Re-run personality pipeline to train models
 - **"No latest trade available"**: Normal during market closures or low-volume periods - bot uses backup price sources (quotes, daily bars)
