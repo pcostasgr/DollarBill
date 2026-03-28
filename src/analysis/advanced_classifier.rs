@@ -114,7 +114,7 @@ impl AdvancedStockClassifier {
             volatility_percentile: self.calculate_volatility_percentile(symbol, &history)?,
             vol_regime: self.determine_vol_regime(&history)?,
             vol_persistence: self.calculate_vol_persistence(&history)?,
-            realized_vs_implied: 1.0, // Placeholder - would need options data
+            realized_vs_implied: Self::compute_realized_vs_implied(symbol, &history),
             
             trend_strength: self.calculate_trend_strength(&history)?,
             momentum_acceleration: self.calculate_momentum_acceleration(&history)?,
@@ -125,7 +125,7 @@ impl AdvancedStockClassifier {
             mean_reversion_strength: self.calculate_reversion_strength(&history)?,
             support_resistance_strength: self.calculate_sr_strength(&history)?,
             
-            sector_correlation: 0.7, // Placeholder - would need sector index data
+            sector_correlation: Self::compute_sector_correlation(sector, &history),
             market_beta: self.calculate_beta(&history)?,
             beta_stability: self.calculate_beta_stability(&history)?,
             
@@ -852,6 +852,93 @@ impl AdvancedStockClassifier {
 
         // Z-score: how many σ above/below sector is this symbol's momentum
         Ok(((own_ret - mean) / std_dev).clamp(-1.0, 1.0))
+    }
+
+    /// Compute RV/IV ratio from Heston v0 (implied vol proxy) vs 21-day realised vol.
+    /// Falls back to 1.0 when the calibration JSON is absent or unreadable.
+    fn compute_realized_vs_implied(symbol: &str, history: &[HistoricalDay]) -> f64 {
+        let hv = Self::current_hv21(history);
+        if hv < 1e-8 {
+            return 1.0;
+        }
+
+        let path = format!("data/{}_heston_params.json", symbol.to_ascii_lowercase());
+        let contents = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => return 1.0,
+        };
+
+        #[derive(serde::Deserialize)]
+        struct HestonV0 { v0: f64 }
+        #[derive(serde::Deserialize)]
+        struct CalibResult { heston_params: HestonV0 }
+
+        let calib: CalibResult = match serde_json::from_str(&contents) {
+            Ok(c) => c,
+            Err(_) => return 1.0,
+        };
+
+        let iv = calib.heston_params.v0.sqrt();
+        if iv < 1e-8 {
+            return 1.0;
+        }
+
+        (hv / iv).clamp(0.1, 5.0)
+    }
+
+    /// Pearson correlation of the stock's daily log-returns against a sector
+    /// benchmark ETF over the last 252 trading days.
+    /// Returns a value in [-1.0, 1.0]; falls back to 0.0 when data is missing.
+    fn compute_sector_correlation(sector: &str, history: &[HistoricalDay]) -> f64 {
+        const LOOKBACK: usize = 252;
+
+        let benchmark = match sector.to_ascii_lowercase().trim() {
+            "tech" | "technology" | "semiconductor" | "software" | "semiconductors" => "qqq",
+            "macro" | "fixed income" | "bonds" | "rates" | "treasuries" => "tlt",
+            "commodities" | "gold" | "precious metals" => "gld",
+            _ => "spy",
+        };
+
+        let bench_path = format!("data/{}_five_year.csv", benchmark);
+        let bench_hist = match load_csv_closes(&bench_path) {
+            Ok(h) if h.len() > LOOKBACK => h,
+            _ => return 0.0,
+        };
+        if history.len() <= LOOKBACK {
+            return 0.0;
+        }
+
+        let stock_tail = &history[history.len() - LOOKBACK..];
+        let bench_tail  = &bench_hist[bench_hist.len() - LOOKBACK..];
+
+        let stock_rets: Vec<f64> = stock_tail.windows(2)
+            .map(|w| (w[1].close / w[0].close).ln())
+            .collect();
+        let bench_rets: Vec<f64> = bench_tail.windows(2)
+            .map(|w| (w[1].close / w[0].close).ln())
+            .collect();
+
+        let n = stock_rets.len().min(bench_rets.len());
+        if n < 20 {
+            return 0.0;
+        }
+
+        let s_mean = stock_rets[..n].iter().sum::<f64>() / n as f64;
+        let b_mean = bench_rets[..n].iter().sum::<f64>() / n as f64;
+
+        let cov = stock_rets[..n].iter().zip(bench_rets[..n].iter())
+            .map(|(s, b)| (s - s_mean) * (b - b_mean))
+            .sum::<f64>() / (n - 1) as f64;
+        let s_std = (stock_rets[..n].iter()
+            .map(|r| (r - s_mean).powi(2)).sum::<f64>() / (n - 1) as f64).sqrt();
+        let b_std = (bench_rets[..n].iter()
+            .map(|r| (r - b_mean).powi(2)).sum::<f64>() / (n - 1) as f64).sqrt();
+
+        if s_std < 1e-10 || b_std < 1e-10 {
+            return 0.0;
+        }
+
+        (cov / (s_std * b_std)).clamp(-1.0, 1.0)
     }
 
     /// 21-day annualised historical volatility from the most-recent 22 prices.
