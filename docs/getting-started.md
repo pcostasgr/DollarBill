@@ -33,10 +33,10 @@ pip install pandas plotly yfinance
 
 ## 🖥️ CLI Reference
 
-After `cargo build --release`, all functionality is available through the main binary.
+After `cargo build --release`, two binaries are available.
 
-> **Windows (PowerShell):** use `.\target\release\dollarbill.exe`  
-> **Linux / macOS:** use `./target/release/dollarbill`
+> **Windows (PowerShell):** `dollarbill.exe` (trading) · `dashboard.exe` (TUI monitor)  
+> **Linux / macOS:** `dollarbill` · `dashboard`
 
 ```
 Usage: dollarbill <COMMAND>
@@ -94,6 +94,24 @@ Run any subcommand with `--help` for its full option list:
 ```powershell
 .\target\release\dollarbill.exe trade --help
 ```
+
+### `dashboard.exe` — Live TUI Monitor
+
+Run in a second terminal while `dollarbill.exe trade --live` is active:
+```powershell
+# Default — reads data/trades.db
+.\target\release\dashboard.exe
+
+# Custom DB path (if you changed the default)
+.\target\release\dashboard.exe path\to\trades.db
+```
+
+| Key | Action |
+|-----|--------|
+| `q` / `Esc` | Quit dashboard |
+| `r` | Force-refresh immediately |
+
+The dashboard auto-refreshes every 1 second. It shows nothing useful until the bot has started and written at least one `data/bot_status.json`.
 
 ---
 
@@ -230,6 +248,29 @@ $env:ALPACA_API_SECRET = "your-paper-api-secret"
 .\target\release\dollarbill.exe trade --live
 ```
 
+#### Step 7: Monitor with the Live Dashboard (optional)
+Open a **second terminal** while the bot is running:
+```powershell
+.\target\release\dashboard.exe
+```
+
+The dashboard reads `data/bot_status.json` (written by the bot after every tick) and `data/trades.db` (SQLite) and auto-refreshes every second.
+
+```
+┌─ DollarBill Dashboard ──────────────────────────────────────────────────┐
+│  Mode: LIVE  CB: ✅ OK  Daily Loss: $12/$500 (2%)  Equity: $98,000      │
+├─ Open Positions (2) ───────────────┬─ Last Signals ────────────────────┤
+│ TSLA  1  245.50  ShortStrangle     │ TSLA  ShortStrangle @ $245 09:31  │
+│ NVDA  1  875.00  IronCondor        │ NVDA  IronCondor    @ $875 09:33  │
+├─ Greeks ─────────────────────────────────────────────────────────────── ┤
+│  Δ +2.340  |  Γ 0.0412  |  Vega $512  |  Θ $-91/day                   │
+├─ Recent Orders (last 20) ─────────────────────────────────────────────  ┤
+│  09:31  TSLA  buy  1  245.50  filled   ShortStrangle                   │
+└─ [q] quit  [r] refresh  ↻ 1s  last bot write: 09:33:10 ───────────────┘
+```
+
+Keybindings: **q** quit · **r** force-refresh now · dashboard auto-refreshes every 1 s
+
 ## 📊 What Just Happened
 
 ✅ **Market Data**: Historical prices and live options fetched
@@ -242,6 +283,7 @@ $env:ALPACA_API_SECRET = "your-paper-api-secret"
 ✅ **Backtesting**: Strategies validated with realistic Heston pricing
 ✅ **Live Testing**: Dry-run confirmed advanced signal generation works
 ✅ **Live Trading**: Automated execution with confidence-based risk management, Greeks logging, and delta hedge alerts
+✅ **Dashboard**: `dashboard.exe` TUI monitors the bot in real time — open positions, Greeks, signals, circuit-breaker state, recent orders
 
 ## 🎛️ Quick Configuration
 
@@ -321,13 +363,13 @@ This builds accurate performance data. **Skipping this step means trading with p
 
 ### Morning (5 minutes)
 ```powershell
-# Check account status (dry-run)
-.\target\release\dollarbill.exe trade --dry-run
-
-# Start trading with live Alpaca stream
+# Terminal 1 — start the live bot
 $env:ALPACA_API_KEY   = "your-paper-api-key"
 $env:ALPACA_API_SECRET = "your-paper-api-secret"
 .\target\release\dollarbill.exe trade --live
+
+# Terminal 2 — open the live dashboard alongside it
+.\target\release\dashboard.exe
 ```
 
 ### Evening (2 minutes)

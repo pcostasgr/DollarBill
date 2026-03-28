@@ -28,6 +28,7 @@ No traditional programming sessions. Just prompts, iterations, and Rust. 🚀
 - **Live IV Feed**: `LiveIvCache` (15-min TTL) fetches ATM implied vol from Yahoo options via Newton-Raphson solve; wired into trade bot as the primary IV source with graceful fallback to background-calibrated params
 - **Background Heston Recalibration**: Trade bot spawns a 30-min async recalibration loop; updated `CalibParams` shared via `Arc<RwLock<>>` and seeded from `data/{symbol}_heston_params.json` at boot
 - **Greeks Hedging Alerts**: After every fill the bot logs portfolio Δ/Γ/Vega/Θ and emits `⚠️ DELTA HEDGE ALERT` when `|total_delta| > equity × 0.30%`
+- **Live TUI Dashboard**: `dashboard.exe` — a separate `ratatui` terminal UI that reads `data/bot_status.json` + `data/trades.db` and displays live P&L, circuit-breaker state, open positions, last signals per symbol, aggregate Greeks, and recent orders; auto-refreshes every second
 - **Backtesting**: Historical strategy evaluation with P&L tracking and annualised Sharpe and Sortino ratios
 - **QuantLib Validator**: `py/validate_pricing.py` cross-validates BSM, Heston GL-64/128, and American binomial pricing against QuantLib v1.41; `--speed` flag benchmarks Rust vs Python timings
 - **Stock Classification**: Basic personality-driven strategy selection (3 types)
@@ -117,6 +118,9 @@ After `cargo build --release`, the `dollarbill` binary exposes six subcommands:
 
 # Paper-trade bot with live Alpaca streaming + SQLite persistence
 .\target\release\dollarbill.exe trade --live
+
+# Live dashboard (run in a second terminal while the bot is running)
+.\target\release\dashboard.exe
 
 # Full help
 .\target\release\dollarbill.exe --help

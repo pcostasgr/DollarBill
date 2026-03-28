@@ -169,6 +169,35 @@ No extra CLI flags are needed — all three features activate automatically when
 .\target\release\dollarbill.exe trade --live
 ```
 
+---
+
+### 5. **Live Dashboard (`dashboard.exe`)** ⭐ NEW
+
+A separate `ratatui` terminal UI that monitors the bot in real time.
+
+**Start in a second terminal:**
+```powershell
+.\target\release\dashboard.exe
+```
+
+**Panel layout:**
+
+| Panel | Content |
+|---|---|
+| Header | Mode (LIVE/DRY-RUN), circuit-breaker state, daily loss vs limit, equity, order count |
+| Open Positions | Symbol, qty, entry price, strategy, expiry |
+| Last Signals | Per-symbol last strategy name + action + time |
+| Greeks | Portfolio Δ / Γ / Vega / Θ (colour-coded: yellow when delta is large) |
+| Recent Orders | Last 20 non-tick trades from SQLite with fill status |
+| Footer | Keybindings + age of last bot write |
+
+**How it works:**
+- `dollarbill.exe trade --live` writes `data/bot_status.json` atomically (tmp→rename) after every price tick
+- `dashboard.exe` reads that file + `data/trades.db` every second
+- No network, no shared memory — just files
+
+**Keybindings:** `q` / `Esc` quit · `r` force-refresh
+
 ## 🎯 Strategy Details
 
 ### From Your Backtesting Results:
