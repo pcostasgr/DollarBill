@@ -125,23 +125,17 @@ $env:ALPACA_API_SECRET = "your-secret"
 💤 Sleeping for 5 minutes...
 ```
 
-### 3. **Heston-Based Options Trading** ⭐ NEW
+### 3. **Heston-Based Options Trading** ⭐
+
 Advanced options strategies using stochastic volatility pricing.
 
 **Backtesting First:**
 ```powershell
 # Calibrate Heston parameters to live market
-cargo run --example calibrate_live_options
+.\target\release\dollarbill.exe calibrate TSLA
 
-# Backtest Heston strategies
-cargo run --example backtest_heston
-```
-
-**Live Options Trading:**
-```powershell
-# Options trading with Heston pricing (coming soon)
-# Will use calibrated parameters for realistic option pricing
-cargo run --example options_trading_bot
+# Backtest Heston strategies and save the performance matrix
+.\target\release\dollarbill.exe backtest --save
 ```
 
 **What makes Heston special:**
@@ -149,6 +143,31 @@ cargo run --example options_trading_bot
 - **Better edge detection**: Finds true mispricings vs Black-Scholes
 - **Professional-grade**: Used by hedge funds and market makers
 - **NVDA Results**: +270% backtested returns vs +150% Black-Scholes
+
+---
+
+### 4. **Live IV Feed, Background Recalibration & Greeks Alerts** ⭐ NEW
+
+Three Phase 3 enhancements baked into `.\target\release\dollarbill.exe trade`:
+
+**Live ATM IV Feed (`LiveIvCache` — 15-min TTL)**
+The bot maintains a TTL-cached ATM implied-vol feed sourced from live Yahoo options chains. Newton-Raphson IV solves are done on near-ATM strikes (|K/S − 1| ≤ 5%); the median IV is stored and returned for subsequent ticks without extra network calls. Falls back to the 30-min recalibration value, then to the boot-time Heston JSON if cache is empty.
+
+**Background 30-Min Heston Recalibration**
+At startup, the bot seeds a shared `Arc<RwLock<HashMap<String, CalibParams>>>` from `data/{symbol}_heston_params.json`, then spawns an async background task that re-runs full Nelder-Mead Heston calibration (fetch price + liquid options → optimise) for every configured symbol every 30 minutes. The tick loop always reads the freshest available parameters.
+
+**Greeks Logging & Delta Hedge Alert**
+After every filled order the bot logs aggregate portfolio Greeks and fires a `⚠️ DELTA HEDGE ALERT` when net delta exceeds the 30%-of-equity threshold:
+
+```
+📊 Portfolio Greeks — Δ: 4.82 | Γ: 0.0412 | Vega: $512.40 | Θ: -$91.30/day
+⚠️  DELTA HEDGE ALERT: |Δ| = 4.82 exceeds 30% threshold — consider hedging
+```
+
+No extra CLI flags are needed — all three features activate automatically when you run:
+```powershell
+.\target\release\dollarbill.exe trade --live
+```
 
 ## 🎯 Strategy Details
 

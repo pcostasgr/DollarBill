@@ -707,6 +707,75 @@ python py/plot_vol_surface.py
 .\scripts\run_vol_surface.ps1      # Full vol surface pipeline
 ```
 
+## ⚡ Phase 3: Live IV Feed, Background Recalibration & Greeks Alerts
+
+### P3.1 — Live ATM Implied-Vol Feed (`LiveIvCache`)
+
+**What it does:** Provides a TTL-cached, near-real-time ATM implied-vol feed for the live trading bot. Each tick in the trade loop reads from this cache rather than performing an expensive network call every time.
+
+**How it works:**
+1. Fetches live options chains from Yahoo Finance (same source as calibration)
+2. Filters to near-ATM options (|K/S − 1| ≤ 5%)
+3. Solves for IV on each filtered option using the Newton-Raphson method
+4. Returns the **median IV** to reduce noise from illiquid strikes
+5. Caches the result for `ttl_secs` (default: 900 s = 15 min)
+
+**Source:** `src/market_data/options_feed.rs`
+
+```rust
+// Create a cache with 15-min TTL at bot startup
+let iv_cache = LiveIvCache::new(900);
+
+// Inside the tick loop — returns cached IV if fresh, None if stale/empty
+if let Some(iv) = iv_cache.get_cached_iv("TSLA") {
+    // iv is the ATM implied vol for TSLA, e.g. 0.65 (65%)
+}
+```
+
+**IV Source Priority in live_bot (highest → lowest):**
+1. `iv_cache.get_cached_iv(sym)` — 15-min TTL feed from Yahoo options
+2. `live_params.read()[sym].v0.sqrt()` — σ from last 30-min background recalibration
+3. `heston_start.v0.sqrt()` — σ from `data/{symbol}_heston_params.json` at boot
+
+---
+
+### P3.2 — Background 30-Minute Heston Recalibration
+
+**What it does:** The trade bot spawns a `tokio::spawn` task at startup that recalibrates Heston parameters for every configured symbol every 30 minutes. Updated parameters are written into a shared `Arc<RwLock<HashMap<String, CalibParams>>>` that the main tick loop reads for IV and volatility state.
+
+**Boot sequence:**
+1. Load `data/{symbol}_heston_params.json` → seed `live_params` map
+2. Spawn background task:
+   - Wait 30 min
+   - For each symbol: fetch price + liquid options → run Nelder-Mead calibration
+   - Acquire write lock → update `live_params[symbol]`
+   - Repeat indefinitely
+
+**Why 30 minutes?** Heston calibration (Nelder-Mead over 15-symbol yahoo data) takes ~2–8 s per symbol. A 30-min cadence keeps model parameters market-fresh without saturating the data feed.
+
+---
+
+### P3.3 — Greeks Logging & Delta Hedge Alerts
+
+**What it does:** After every successful order and position upsert, the bot calls `portfolio_manager.get_portfolio_risk()`, logs the aggregate Greeks, and emits a conspicuous warning if the portfolio's net delta breaches 30% of equity-normalised exposure.
+
+**Live-bot output (after a fill):**
+```
+📊 Portfolio Greeks — Δ: 4.82 | Γ: 0.0412 | Vega: $512.40 | Θ: -$91.30/day
+⚠️  DELTA HEDGE ALERT: |Δ| = 4.82 exceeds 30% threshold — consider hedging
+```
+
+**Alert threshold:** `|total_delta| > equity_per_contract × 0.30 / 100.0`
+
+**Interpretation:**
+- **Δ < ±3** for typical $100 k account → delta-neutral, no action
+- **|Δ| ≥ 3** → consider buying/selling underlying shares to flatten delta
+- **Gamma (Γ)** — convexity; large Γ means delta changes rapidly near ATM
+- **Vega** — 1% IV move changes portfolio value by this dollar amount
+- **Theta** — daily time-decay cost of holding the portfolio
+
+---
+
 ## 🔬 Technical Details
 
 ### Greeks Calculation

@@ -213,7 +213,7 @@ This analyzes stock behaviors using advanced multi-dimensional features, detects
 #### Step 5: Test Live Trading (2 minutes)
 ```powershell
 # Test without real trades — prints orders but submits nothing
-.\.target\release\dollarbill.exe trade --dry-run
+.\target\release\dollarbill.exe trade --dry-run
 ```
 
 #### Step 6: Go Live (2 minutes)
@@ -233,14 +233,15 @@ $env:ALPACA_API_SECRET = "your-paper-api-secret"
 ## 📊 What Just Happened
 
 ✅ **Market Data**: Historical prices and live options fetched
-✅ **Heston Calibration**: Parameters fitted to current market conditions
+✅ **Heston Calibration**: Parameters fitted to current market conditions; background 30-min recalibration keeps them fresh during live trading
+✅ **Live IV Feed**: ATM implied vol cached (15-min TTL) from Yahoo options via Newton-Raphson solver
 ✅ **Multi-Leg Strategies**: Tested iron condors, credit spreads, and customizable templates (optional)
 ✅ **Enhanced Personality Analysis**: Stocks classified using 15+ features: volatility percentiles, market regime detection, trend persistence
 ✅ **Intelligent Strategy Matching**: Each stock got optimal strategy with 20-70% confidence scoring
 ✅ **Market Regime Awareness**: LowVol/HighVol/Trending/MeanReverting classification for context-aware trading
 ✅ **Backtesting**: Strategies validated with realistic Heston pricing
 ✅ **Live Testing**: Dry-run confirmed advanced signal generation works
-✅ **Live Trading**: Automated execution with confidence-based risk management
+✅ **Live Trading**: Automated execution with confidence-based risk management, Greeks logging, and delta hedge alerts
 
 ## 🎛️ Quick Configuration
 
