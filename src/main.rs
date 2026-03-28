@@ -15,6 +15,7 @@ mod analysis;
 mod portfolio;
 mod streaming;
 mod persistence;
+mod alerting;
 
 use clap::{Parser, Subcommand};
 use market_data::csv_loader::load_csv_closes;

@@ -25,6 +25,7 @@ tokio-tungstenite = { version = "0.24", features = ["native-tls"] }           # 
 futures-util = "0.3"                                        # Stream combinators for WebSocket
 ratatui = "0.29"                                            # Terminal UI framework for dashboard
 crossterm = "0.28"                                          # Cross-platform terminal control
+lettre = { version = "0.11", features = ["tokio1-native-tls"] }  # SMTP email alerting
 
 [dev-dependencies]
 proptest = "1"   # Property-based testing: 1000-case fuzzing for numerical stability

@@ -13,3 +13,4 @@ pub mod analysis;
 pub mod portfolio;
 pub mod streaming;
 pub mod persistence;
+pub mod alerting;

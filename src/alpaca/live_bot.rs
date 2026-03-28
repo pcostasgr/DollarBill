@@ -1,6 +1,7 @@
 // Live trading WebSocket event loop extracted from main::cmd_trade.
 // Called when `dollarbill trade --live` (or `--dry-run`) is invoked.
 
+use crate::alerting::Alerter;
 use crate::alpaca::AlpacaClient;
 use crate::analysis::regime_detector::RegimeDetector;
 use crate::calibration::heston_calibrator::{calibrate_heston, CalibParams};
@@ -127,6 +128,14 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
     let max_daily_loss        = equity * bot_cfg.max_daily_loss_pct;
     let mut estimated_daily_loss = 0.0_f64;
     let mut circuit_broken       = false;
+
+    // ── Email alerting (P4.2) ─────────────────────────────────────────────
+    let alert_cfg = config::TradingBotConfigFile::load_alerts();
+    let alerter = Alerter::new(alert_cfg.clone());
+    if alerter.is_active() {
+        info!("Email alerting enabled → {}", alert_cfg.to);
+    }
+    let mut daily_loss_warned = false;
     // ── Dashboard status state ────────────────────────────────────────────
     let mut last_signal_desc: HashMap<String, String> = HashMap::new();
     let mut session_orders:   usize = 0;
@@ -483,10 +492,24 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                         filled.id, sym, filled.status, sig.strategy_name);
                                     println!("    Submitted: {} ({})", filled.id, filled.status);
                                     estimated_daily_loss += rough_premium * qty as f64 * 100.0;
+
+                                    // Daily-loss warning at configurable threshold (default 80%)
+                                    if !daily_loss_warned
+                                        && estimated_daily_loss >= alert_cfg.daily_loss_alert_pct * max_daily_loss
+                                    {
+                                        daily_loss_warned = true;
+                                        let a = alerter.clone();
+                                        let (edl, mdl) = (estimated_daily_loss, max_daily_loss);
+                                        tokio::spawn(async move { a.daily_loss_warning(edl, mdl).await; });
+                                    }
+
                                     if estimated_daily_loss >= max_daily_loss && !circuit_broken {
                                         circuit_broken = true;
                                         error!("CIRCUIT BREAKER: daily spend ${:.2} >= limit ${:.2} -- halting new orders",
                                             estimated_daily_loss, max_daily_loss);
+                                        let a = alerter.clone();
+                                        let (edl, mdl) = (estimated_daily_loss, max_daily_loss);
+                                        tokio::spawn(async move { a.circuit_breaker(edl, mdl).await; });
                                     }
                                     // dashboard tracking
                                     session_orders += 1;
@@ -511,6 +534,12 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                     } else {
                                         open_syms.insert(sym.clone());
                                         open_positions.insert(sym.clone(), pos);
+                                        // Fill alert
+                                        let a = alerter.clone();
+                                        let sym_c  = sym.clone();
+                                        let strat_c = sig.strategy_name.clone();
+                                        let (qty_c, price_c) = (qty, price);
+                                        tokio::spawn(async move { a.fill(&sym_c, &strat_c, qty_c, price_c).await; });
                                     }
 
                                     // ── P3.3 Greeks / portfolio-risk alert ────────────
@@ -586,6 +615,7 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
             Some(streaming::MarketEvent::Disconnected) | None => {
                 error!("Stream permanently disconnected -- stopping bot.");
                 println!("Stream permanently disconnected -- stopping bot.");
+                alerter.disconnect().await;
                 break;
             }
         }

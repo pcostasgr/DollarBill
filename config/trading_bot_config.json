@@ -10,6 +10,21 @@
     "max_position_days":    21,
     "min_vol_percentile":   0.40
   },
+  "alerts": {
+    "enabled":               false,
+    "smtp_host":             "smtp.gmail.com",
+    "smtp_port":             587,
+    "smtp_user":             "you@gmail.com",
+    "smtp_password":         "",
+    "from":                  "DollarBill Bot <you@gmail.com>",
+    "to":                    "you@gmail.com",
+    "use_smtps":             false,
+    "on_circuit_breaker":    true,
+    "on_fill":               false,
+    "on_daily_loss":         true,
+    "on_disconnect":         true,
+    "daily_loss_alert_pct":  0.80
+  },
   "trading": {
     "position_size_shares": 100,
     "max_positions": 3,

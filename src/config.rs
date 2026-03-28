@@ -223,6 +223,9 @@ pub struct TradingBotConfigFile {
     /// Runtime parameters used by the live-trading bot.
     #[serde(default)]
     pub bot_runtime: BotRuntimeConfig,
+    /// Email alert settings.
+    #[serde(default)]
+    pub alerts: AlertConfig,
 }
 
 impl TradingBotConfigFile {
@@ -243,6 +246,101 @@ impl TradingBotConfigFile {
                 log::warn!("config/trading_bot_config.json not found -- using defaults");
                 BotRuntimeConfig::default()
             }
+        }
+    }
+
+    /// Load alert config from `config/trading_bot_config.json`.
+    /// Returns `AlertConfig::default()` (disabled) on any error.
+    pub fn load_alerts() -> AlertConfig {
+        let path = "config/trading_bot_config.json";
+        match fs::read_to_string(path) {
+            Ok(content) => serde_json::from_str::<TradingBotConfigFile>(&content)
+                .map(|f| f.alerts)
+                .unwrap_or_default(),
+            Err(_) => AlertConfig::default(),
+        }
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Email alert config  (config/trading_bot_config.json → "alerts")
+// ═════════════════════════════════════════════════════════════════════════
+
+/// Email alerting settings.  Set `enabled = true` and fill in the SMTP
+/// fields to receive emails on circuit-breaker trips, fills, and
+/// stream disconnects.
+///
+/// **Password:** leave `smtp_password` empty and set the
+/// `DOLLARBILL_SMTP_PASSWORD` environment variable instead — keeps
+/// credentials out of the config file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlertConfig {
+    /// Master switch — no emails are sent when false (default).
+    #[serde(default)]
+    pub enabled: bool,
+    /// SMTP server hostname.  Default: `"smtp.gmail.com"`.
+    #[serde(default = "AlertConfig::default_smtp_host")]
+    pub smtp_host: String,
+    /// SMTP port.  587 → STARTTLS (default).  465 → implicit TLS (SMTPS).
+    #[serde(default = "AlertConfig::default_smtp_port")]
+    pub smtp_port: u16,
+    /// SMTP login username (usually your email address).
+    #[serde(default)]
+    pub smtp_user: String,
+    /// SMTP password — prefer leaving this empty and using the
+    /// `DOLLARBILL_SMTP_PASSWORD` env var instead.
+    #[serde(default)]
+    pub smtp_password: String,
+    /// `From:` address, e.g. `"DollarBill Bot <you@gmail.com>"`.
+    #[serde(default)]
+    pub from: String,
+    /// `To:` address that receives the alerts.
+    #[serde(default)]
+    pub to: String,
+    /// Use implicit TLS (SMTPS, port 465) instead of STARTTLS (port 587).
+    #[serde(default)]
+    pub use_smtps: bool,
+    /// Send email when circuit breaker trips.
+    #[serde(default = "AlertConfig::default_true")]
+    pub on_circuit_breaker: bool,
+    /// Send email on every confirmed fill (can be noisy — disabled by default).
+    #[serde(default)]
+    pub on_fill: bool,
+    /// Send a warning email when daily spend approaches the limit.
+    #[serde(default = "AlertConfig::default_true")]
+    pub on_daily_loss: bool,
+    /// Send email when the Alpaca stream permanently disconnects.
+    #[serde(default = "AlertConfig::default_true")]
+    pub on_disconnect: bool,
+    /// Fraction of daily-loss limit at which the warning email is triggered
+    /// (e.g. `0.80` = alert at 80% consumed).
+    #[serde(default = "AlertConfig::default_daily_loss_alert_pct")]
+    pub daily_loss_alert_pct: f64,
+}
+
+impl AlertConfig {
+    fn default_smtp_host()           -> String { "smtp.gmail.com".into() }
+    fn default_smtp_port()           -> u16   { 587 }
+    fn default_true()                -> bool   { true }
+    fn default_daily_loss_alert_pct() -> f64  { 0.80 }
+}
+
+impl Default for AlertConfig {
+    fn default() -> Self {
+        Self {
+            enabled:                false,
+            smtp_host:              Self::default_smtp_host(),
+            smtp_port:              Self::default_smtp_port(),
+            smtp_user:              String::new(),
+            smtp_password:          String::new(),
+            from:                   String::new(),
+            to:                     String::new(),
+            use_smtps:              false,
+            on_circuit_breaker:     true,
+            on_fill:                false,
+            on_daily_loss:          true,
+            on_disconnect:          true,
+            daily_loss_alert_pct:   0.80,
         }
     }
 }
