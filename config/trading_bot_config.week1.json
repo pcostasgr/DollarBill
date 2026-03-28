@@ -1,0 +1,62 @@
+{
+  "_notes": "Week-1 proof run: TSLA / NVDA / SPY only. Conservative thresholds — observe first, optimise after. To use: copy over trading_bot_config.json.",
+  "bot_runtime": {
+    "min_confidence":       0.65,
+    "max_daily_loss_pct":   0.02,
+    "signal_cooldown_secs": 600,
+    "max_price_buf":        50,
+    "min_prices_for_hv":    22,
+    "profit_target_pct":    0.50,
+    "stop_loss_pct":        2.00,
+    "max_position_days":    7,
+    "min_vol_percentile":   0.50
+  },
+  "alerts": {
+    "enabled":               false,
+    "smtp_host":             "smtp.gmail.com",
+    "smtp_port":             587,
+    "smtp_user":             "you@gmail.com",
+    "smtp_password":         "",
+    "from":                  "DollarBill Bot <you@gmail.com>",
+    "to":                    "you@gmail.com",
+    "use_smtps":             false,
+    "on_circuit_breaker":    true,
+    "on_fill":               true,
+    "on_daily_loss":         true,
+    "on_disconnect":         true,
+    "daily_loss_alert_pct":  0.80
+  },
+  "trading": {
+    "position_size_shares": 1,
+    "max_positions": 2,
+    "risk_management": {
+      "stop_loss_pct": 20.0,
+      "take_profit_pct": 50.0,
+      "max_daily_trades": 3
+    }
+  },
+  "signals": {
+    "rsi_period": 14,
+    "momentum_period": 5,
+    "volatility_thresholds": {
+      "high_vol_threshold": 0.50,
+      "medium_vol_threshold": 0.35
+    },
+    "thresholds": {
+      "high_vol": {
+        "rsi_oversold": 40.0,
+        "rsi_overbought": 60.0,
+        "momentum_threshold": 0.03
+      },
+      "medium_vol": {
+        "rsi_oversold": 35.0,
+        "rsi_overbought": 65.0,
+        "momentum_threshold": 0.02
+      }
+    }
+  },
+  "execution": {
+    "continuous_mode_interval_minutes": 5,
+    "data_lookback_days": 60
+  }
+}
