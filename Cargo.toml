@@ -23,6 +23,8 @@ clap = { version = "4", features = ["derive"] }            # CLI argument parsin
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "macros"] }  # SQLite persistence
 tokio-tungstenite = { version = "0.24", features = ["native-tls"] }           # WebSocket for Alpaca stream
 futures-util = "0.3"                                        # Stream combinators for WebSocket
+ratatui = "0.29"                                            # Terminal UI framework for dashboard
+crossterm = "0.28"                                          # Cross-platform terminal control
 
 [dev-dependencies]
 proptest = "1"   # Property-based testing: 1000-case fuzzing for numerical stability

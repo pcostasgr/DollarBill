@@ -5,6 +5,51 @@
 // schema manually.
 
 use sqlx::{Row, SqlitePool};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+// ─── BotStatus ────────────────────────────────────────────────────────────
+
+/// In-session state blob written by `live_bot` to `data/bot_status.json`
+/// after every tick.  The dashboard binary reads this file.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BotStatus {
+    pub updated_at:           String,
+    pub dry_run:              bool,
+    pub circuit_broken:       bool,
+    pub estimated_daily_loss: f64,
+    pub max_daily_loss:       f64,
+    pub equity:               f64,
+    pub open_position_count:  usize,
+    pub session_orders:       usize,
+    /// sym → "StrategyName action @ $price  HH:MM:SS"
+    pub last_signals:         HashMap<String, String>,
+    pub portfolio_delta:      f64,
+    pub portfolio_gamma:      f64,
+    pub portfolio_vega:       f64,
+    pub portfolio_theta:      f64,
+}
+
+impl BotStatus {
+    /// Atomically write `data/bot_status.json` (best-effort; logs on failure).
+    pub fn write(&self) {
+        match serde_json::to_string_pretty(self) {
+            Ok(json) => {
+                let tmp = "data/bot_status.json.tmp";
+                if std::fs::write(tmp, &json).is_ok() {
+                    let _ = std::fs::rename(tmp, "data/bot_status.json");
+                }
+            }
+            Err(e) => eprintln!("BotStatus serialize error: {}", e),
+        }
+    }
+
+    /// Load from `data/bot_status.json`, returning `None` if missing/corrupt.
+    pub fn read() -> Option<Self> {
+        let raw = std::fs::read_to_string("data/bot_status.json").ok()?;
+        serde_json::from_str(&raw).ok()
+    }
+}
 
 // ─── Public record types ──────────────────────────────────────────────────
 

@@ -127,6 +127,13 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
     let max_daily_loss        = equity * bot_cfg.max_daily_loss_pct;
     let mut estimated_daily_loss = 0.0_f64;
     let mut circuit_broken       = false;
+    // ── Dashboard status state ────────────────────────────────────────────
+    let mut last_signal_desc: HashMap<String, String> = HashMap::new();
+    let mut session_orders:   usize = 0;
+    let mut port_delta:       f64   = 0.0;
+    let mut port_gamma:       f64   = 0.0;
+    let mut port_vega:        f64   = 0.0;
+    let mut port_theta:       f64   = 0.0;
 
     // ── Load per-symbol vol history for HV-rank gate (P2.2) ──────────────
     // For each symbol, compute the 40th-percentile of rolling-22-day HV from
@@ -481,6 +488,12 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                         error!("CIRCUIT BREAKER: daily spend ${:.2} >= limit ${:.2} -- halting new orders",
                                             estimated_daily_loss, max_daily_loss);
                                     }
+                                    // dashboard tracking
+                                    session_orders += 1;
+                                    let desc = format!("{} {:?} @ ${:.2}  {}",
+                                        sig.strategy_name, sig.action, price,
+                                        chrono::Utc::now().format("%H:%M:%S"));
+                                    last_signal_desc.insert(sym.clone(), desc);
                                     let expiry_date = Utc::now().date_naive()
                                         + Duration::days(sig.expiry_days as i64);
                                     let pos = persistence::PositionRecord {
@@ -502,6 +515,10 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
 
                                     // ── P3.3 Greeks / portfolio-risk alert ────────────
                                     let risk = pm.get_portfolio_risk();
+                                    port_delta = risk.total_delta;
+                                    port_gamma = risk.total_gamma;
+                                    port_vega  = risk.total_vega;
+                                    port_theta = risk.total_theta;
                                     info!("Portfolio risk after order: Δ={:.3} Γ={:.4} Vega={:.2} Theta={:.2}",
                                         risk.total_delta, risk.total_gamma,
                                         risk.total_vega, risk.total_theta);
@@ -542,6 +559,22 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                         }
                     }
                 }
+                // ── Write dashboard status file ───────────────────────────
+                persistence::BotStatus {
+                    updated_at:           chrono::Utc::now().to_rfc3339(),
+                    dry_run,
+                    circuit_broken,
+                    estimated_daily_loss,
+                    max_daily_loss,
+                    equity,
+                    open_position_count:  open_syms.len(),
+                    session_orders,
+                    last_signals:         last_signal_desc.clone(),
+                    portfolio_delta:      port_delta,
+                    portfolio_gamma:      port_gamma,
+                    portfolio_vega:       port_vega,
+                    portfolio_theta:      port_theta,
+                }.write();
             }
             Some(streaming::MarketEvent::Quote(q)) => {
                 println!("[QUOTE] {}  bid=${:.4} ask=${:.4}", q.symbol, q.bid_price, q.ask_price);
