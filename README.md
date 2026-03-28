@@ -83,7 +83,43 @@ python py/fetch_multi_stocks.py    # historical stock data
 python py/fetch_multi_options.py   # live options chains
 ```
 
-**3. Run Analysis**:
+**3. Use the CLI**:
+
+After `cargo build --release`, the `dollarbill` binary exposes six subcommands:
+
+```powershell
+# Interactive pricing demo (default symbol: TSLA)
+.\target\release\dollarbill.exe demo --symbol TSLA
+
+# Price a single option: AAPL $200 strike, 3-month expiry, 5% rate
+.\target\release\dollarbill.exe price AAPL 200 --dte 0.25 --rate 0.05
+
+# Backtest all configured symbols and save performance matrix
+.\target\release\dollarbill.exe backtest --save
+
+# Backtest a single symbol
+.\target\release\dollarbill.exe backtest --symbol NVDA
+
+# Print trading signals for all configured symbols
+.\target\release\dollarbill.exe signals
+
+# Print signals and stream live prices via Alpaca WebSocket
+.\target\release\dollarbill.exe signals --live
+
+# Calibrate Heston model parameters for a symbol
+.\target\release\dollarbill.exe calibrate TSLA
+
+# Paper-trade bot (dry-run: print orders, don't submit)
+.\target\release\dollarbill.exe trade --dry-run
+
+# Paper-trade bot with live Alpaca streaming + SQLite persistence
+.\target\release\dollarbill.exe trade --live
+
+# Full help
+.\target\release\dollarbill.exe --help
+```
+
+**4. Run Examples**:
 ```bash
 # Generate trading signals with Greeks
 cargo run --example multi_symbol_signals

@@ -196,15 +196,14 @@ The PersonalityBasedBot loads pre-trained personality models and uses them for l
 
 ### Usage
 
-```bash
+```powershell
 # Test strategy matching without trading
-cargo run --example personality_based_bot -- --dry-run
+.\target\release\dollarbill.exe trade --dry-run
 
-# Single trading iteration
-cargo run --example personality_based_bot
-
-# Continuous trading every 5 minutes
-cargo run --example personality_based_bot -- --continuous 5
+# Live paper-trading bot with Alpaca WebSocket stream
+$env:ALPACA_API_KEY   = "your-paper-api-key"
+$env:ALPACA_API_SECRET = "your-paper-api-secret"
+.\target\release\dollarbill.exe trade --live
 ```
 
 ### Configuration
@@ -373,17 +372,13 @@ cargo run --example calibrate_live_options
 - **When**: Run periodically to ensure model freshness
 
 #### 5. 🤖 Live Trading Dry Run
-```bash
-cargo run --example personality_based_bot -- --dry-run
+```powershell
+.\target\release\dollarbill.exe trade --dry-run
 ```
 - **Purpose**: Test live bot logic without real trades
 - **Validates**: Signal generation, risk management, position sizing
 - **Results**: Simulated trades, P&L projections, risk alerts
 - **Prerequisite**: Valid performance matrix from Heston backtesting
-```
-- **Purpose**: Test live bot logic without real trades
-- **Validates**: Signal generation, risk management, position sizing
-- **Results**: Simulated trades, P&L projections, risk alerts
 
 ### Key Testing Metrics
 
@@ -432,15 +427,14 @@ Monitor these metrics during backtesting:
 4. Set up `config/personality_bot_config.json`
 
 ### Quick Start
-```bash
+```powershell
 # 1. Test the models (no trading)
-cargo run --example personality_based_bot -- --dry-run
+.\target\release\dollarbill.exe trade --dry-run
 
-# 2. Run a single live iteration
-cargo run --example personality_based_bot
-
-# 3. Start continuous trading
-cargo run --example personality_based_bot -- --continuous 5
+# 2. Start live paper-trading bot with Alpaca stream
+$env:ALPACA_API_KEY   = "your-paper-api-key"
+$env:ALPACA_API_SECRET = "your-paper-api-secret"
+.\target\release\dollarbill.exe trade --live
 ```
 
 ### Monitoring

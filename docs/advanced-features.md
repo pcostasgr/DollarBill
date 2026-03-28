@@ -149,9 +149,8 @@ Confidence-based position sizing with market regime awareness
 cargo run --example personality_driven_pipeline
 
 # Personality-based live trading bot
-cargo run --example personality_based_bot -- --dry-run  # Test without trading
-cargo run --example personality_based_bot               # Single live iteration
-cargo run --example personality_based_bot -- --continuous 5  # Continuous trading
+.\target\release\dollarbill.exe trade --dry-run   # Test without trading
+.\target\release\dollarbill.exe trade --live       # Live stream + continuous trading
 
 # Full pipeline with personality optimization
 .\scripts\run_full_pipeline.ps1

@@ -211,9 +211,9 @@ cargo run --example personality_driven_pipeline
 This analyzes stock behaviors using advanced multi-dimensional features, detects market regimes, and matches optimal strategies with confidence scoring.
 
 #### Step 5: Test Live Trading (2 minutes)
-```bash
-# Test without real trades
-cargo run --example personality_based_bot -- --dry-run
+```powershell
+# Test without real trades — prints orders but submits nothing
+.\.target\release\dollarbill.exe trade --dry-run
 ```
 
 #### Step 6: Go Live (2 minutes)
@@ -319,12 +319,14 @@ This builds accurate performance data. **Skipping this step means trading with p
 ## 🔄 Daily Workflow
 
 ### Morning (5 minutes)
-```bash
-# Check account status
-cargo run --example personality_based_bot -- --dry-run
+```powershell
+# Check account status (dry-run)
+.\target\release\dollarbill.exe trade --dry-run
 
-# Start trading
-cargo run --example personality_based_bot -- --continuous 15
+# Start trading with live Alpaca stream
+$env:ALPACA_API_KEY   = "your-paper-api-key"
+$env:ALPACA_API_SECRET = "your-paper-api-secret"
+.\target\release\dollarbill.exe trade --live
 ```
 
 ### Evening (2 minutes)
@@ -344,7 +346,7 @@ cargo run --example personality_driven_pipeline
 .\scripts\run_heston_backtest.ps1
 
 # Test updated strategies with confidence scoring
-cargo run --example personality_based_bot -- --dry-run
+.\target\release\dollarbill.exe trade --dry-run
 ```
 
 ## 🎯 Next Steps

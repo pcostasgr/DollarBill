@@ -39,11 +39,11 @@ Run once to check signals and execute trades.
 
 ```powershell
 # Set your Alpaca API keys
-$env:ALPACA_API_KEY="your-key"
-$env:ALPACA_API_SECRET="your-secret"
+$env:ALPACA_API_KEY   = "your-key"
+$env:ALPACA_API_SECRET = "your-secret"
 
-# Run single scan
-cargo run --example paper_trading
+# Dry-run: prints orders but submits nothing
+.\target\release\dollarbill.exe trade --dry-run
 ```
 
 **What it does:**
@@ -89,14 +89,13 @@ Signals Generated: 1
 Runs continuously, scanning every N minutes.
 
 ```powershell
-# Single iteration (test it first)
-cargo run --example trading_bot
+# Dry-run first — prints orders, submits nothing
+.\target\release\dollarbill.exe trade --dry-run
 
-# Continuous mode - scan every 5 minutes
-cargo run --example trading_bot -- --continuous 5
-
-# Scan every 15 minutes
-cargo run --example trading_bot -- --continuous 15
+# Live mode — Alpaca WebSocket stream + continuous trading
+$env:ALPACA_API_KEY   = "your-key"
+$env:ALPACA_API_SECRET = "your-secret"
+.\target\release\dollarbill.exe trade --live
 ```
 
 **What it does:**
@@ -243,19 +242,21 @@ limit_price: Some(current_price * 0.99),  // Buy 1% below market
 
 ## 🚀 Recommended Workflow
 
-### 1. Test with paper_trading (Day 1-3)
+### 1. Test with dry-run (Day 1-3)
 ```powershell
 # Run a few times during market hours
-cargo run --example paper_trading
+.\target\release\dollarbill.exe trade --dry-run
 ```
 - Verify signals make sense
 - Check order execution
 - Monitor fills on Alpaca dashboard
 
-### 2. Run trading_bot during market hours (Week 1-2)
+### 2. Run live bot during market hours (Week 1-2)
 ```powershell
-# 9:30 AM - 4:00 PM ET, check every 15 min
-cargo run --example trading_bot -- --continuous 15
+# 9:30 AM - 4:00 PM ET
+$env:ALPACA_API_KEY   = "your-key"
+$env:ALPACA_API_SECRET = "your-secret"
+.\target\release\dollarbill.exe trade --live
 ```
 - Let it trade for a week
 - Track performance daily
