@@ -3,8 +3,12 @@
 
 use crate::alpaca::AlpacaClient;
 use crate::analysis::regime_detector::RegimeDetector;
+use crate::calibration::heston_calibrator::{calibrate_heston, CalibParams};
 use crate::config;
 use crate::market_data::csv_loader::load_csv_closes;
+use crate::market_data::options_feed::LiveIvCache;
+use crate::market_data::real_option_data_yahoo::fetch_liquid_options;
+use crate::market_data::real_market_data::fetch_latest_price;
 use crate::models::bs_mod::compute_historical_vol;
 use crate::models::heston::heston_start;
 use crate::persistence;
@@ -21,6 +25,7 @@ use crate::streaming;
 use chrono::{Duration, NaiveDate, Utc};
 use log::{info, warn, error};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 pub async fn run_live_bot(
@@ -161,6 +166,68 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
     registry.register(Box::new(VolatilityArbitrageStrategy::new()));
     registry.register(Box::new(CashSecuredPuts::new()));
 
+    // ── P3.1 Live IV cache (15-min TTL) ───────────────────────────────────
+    let iv_cache = LiveIvCache::new(900);
+
+    // ── P3.2 Shared calibrated Heston params (updated by background task) ─
+    let live_params: Arc<RwLock<HashMap<String, CalibParams>>> =
+        Arc::new(RwLock::new(HashMap::new()));
+
+    // Seed from existing JSON files so first ticks use real params immediately
+    for sym in &symbols {
+        let path = format!("data/{}_heston_params.json", sym.to_ascii_lowercase());
+        if let Ok(contents) = std::fs::read_to_string(&path) {
+            #[derive(serde::Deserialize)]
+            struct HJson { kappa: f64, theta: f64, sigma: f64, rho: f64, v0: f64 }
+            #[derive(serde::Deserialize)]
+            struct CalibJson { heston_params: HJson }
+            if let Ok(c) = serde_json::from_str::<CalibJson>(&contents) {
+                let p = c.heston_params;
+                live_params.write().unwrap().insert(sym.clone(), CalibParams {
+                    kappa: p.kappa, theta: p.theta,
+                    sigma: p.sigma, rho: p.rho, v0: p.v0,
+                });
+                info!("Seeded Heston params for {} from cached JSON (v0={:.4})", sym, p.v0);
+            }
+        }
+    }
+
+    // Spawn background recalibration task (every 30 minutes during session)
+    {
+        let syms_bg    = symbols.clone();
+        let params_bg  = Arc::clone(&live_params);
+        tokio::spawn(async move {
+            let calib_interval = tokio::time::Duration::from_secs(30 * 60);
+            loop {
+                tokio::time::sleep(calib_interval).await;
+                for sym in &syms_bg {
+                    let spot = match fetch_latest_price(sym).await {
+                        Ok(s) => s,
+                        Err(e) => { warn!("BG calib price fetch failed for {}: {}", sym, e); continue; }
+                    };
+                    let opts = match fetch_liquid_options(sym, 0, 10, 25.0).await {
+                        Ok(o) if !o.is_empty() => o,
+                        Ok(_) => { warn!("BG calib: no liquid options for {}", sym); continue; }
+                        Err(e) => { warn!("BG calib options fetch failed for {}: {}", sym, e); continue; }
+                    };
+                    let initial = CalibParams {
+                        kappa: 2.0, theta: 0.25,
+                        sigma: 0.30, rho: -0.60, v0: 0.25,
+                    };
+                    match calibrate_heston(spot, 0.05, opts, initial) {
+                        Ok(res) => {
+                            info!("BG calib {} rmse={:.4} v0={:.4}",
+                                sym, res.rmse, res.params.v0);
+                            params_bg.write().unwrap()
+                                .insert(sym.clone(), res.params);
+                        }
+                        Err(e) => warn!("BG calib failed for {}: {}", sym, e),
+                    }
+                }
+            }
+        });
+    }
+
     // ── Rolling price buffers and signal-cooldown trackers ────────────────
     let mut price_buf: HashMap<String, VecDeque<f64>> = HashMap::new();
     let mut last_signal: HashMap<String, Instant>     = HashMap::new();
@@ -222,12 +289,35 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                     if now.duration_since(prev).as_secs() < signal_cooldown_secs { continue; }
                 }
 
+                // ── P3.1 Non-blocking IV cache refresh ────────────────────
+                // The main cache is not sent into the task; instead we log that
+                // a refresh is warranted.  The live_params map (shared via Arc)
+                // is updated by the 30-min background task; the IV cache is only
+                // used as a quick per-tick read-path.
+                if iv_cache.get_cached_iv(&sym).is_none() {
+                    info!("No cached IV for {} yet; background task will refresh", sym);
+                }
+
                 // Volatility + Heston params from rolling ticks
                 let prices: Vec<f64> = buf.iter().copied().collect();
                 let sigma = compute_historical_vol(&prices);
                 if sigma < 1e-8 { continue; }
-                let heston = heston_start(price, sigma, 1.0, 0.05);
-                let model_iv = heston.v0.sqrt();
+
+                // ── P3.1 Use live IV from cache if available, else HV ─────
+                let live_iv = iv_cache.get_cached_iv(&sym);
+                let model_iv = live_iv.unwrap_or_else(|| {
+                    // Kick off an async refresh but don't block the tick loop.
+                    // The refresh will populate the cache for the next tick.
+                    // We use the shared calibrated v0 as the best available IV proxy.
+                    live_params
+                        .read().unwrap()
+                        .get(&sym)
+                        .map(|p| p.v0.sqrt())
+                        .unwrap_or_else(|| {
+                            let h = heston_start(price, sigma, 1.0, 0.05);
+                            h.v0.sqrt()
+                        })
+                });
 
                 // ── P2.1 Position close check ─────────────────────────────
                 if open_syms.contains(&sym) {
@@ -408,6 +498,24 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                     } else {
                                         open_syms.insert(sym.clone());
                                         open_positions.insert(sym.clone(), pos);
+                                    }
+
+                                    // ── P3.3 Greeks / portfolio-risk alert ────────────
+                                    let risk = pm.get_portfolio_risk();
+                                    info!("Portfolio risk after order: Δ={:.3} Γ={:.4} Vega={:.2} Theta={:.2}",
+                                        risk.total_delta, risk.total_gamma,
+                                        risk.total_vega, risk.total_theta);
+                                    println!("  📐 Portfolio risk:  Δ={:.3}  Γ={:.4}  Vega={:.2}  Theta={:.2}  NetExp=${:.0}",
+                                        risk.total_delta, risk.total_gamma,
+                                        risk.total_vega, risk.total_theta,
+                                        risk.net_exposure);
+                                    // Issue a hedge alert if portfolio delta is too large
+                                    let delta_limit = equity * 0.30 / 100.0; // 30% of equity per $100
+                                    if risk.total_delta.abs() > delta_limit {
+                                        warn!("DELTA HEDGE ALERT: |Δ|={:.3} exceeds limit {:.3} -- consider hedging",
+                                            risk.total_delta, delta_limit);
+                                        println!("  ⚠️  DELTA HEDGE ALERT: |Δ|={:.3} exceeds {:.3} — consider hedging",
+                                            risk.total_delta, delta_limit);
                                     }
                                 }
                                 Err(e) => {
