@@ -223,14 +223,26 @@ pub struct OptionsLeg {
     pub position_intent: String,
 }
 
-/// Request body for a multi-leg options order (iron condor, vertical spread, straddle, etc.).
+/// Request body for a single-leg or multi-leg options order.
+///
+/// Single-leg: populate `symbol`, `qty`, `side`; leave `order_class` / `legs` absent.
+/// Multi-leg:  populate `order_class = "mleg"` and `legs`; leave `symbol`/`qty`/`side` absent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptionsOrderRequest {
     pub r#type: OrderType,
     pub time_in_force: TimeInForce,
-    /// Must be "mleg" for multi-leg orders.
-    pub order_class: String,
-    pub legs: Vec<OptionsLeg>,
+    // ── Single-leg fields ──────────────────────────────────────────────────
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub qty: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub side: Option<OrderSide>,
+    // ── Multi-leg fields ───────────────────────────────────────────────────
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub order_class: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub legs: Option<Vec<OptionsLeg>>,
     /// Net debit (positive) or credit (negative) limit price; None for market orders.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit_price: Option<f64>,

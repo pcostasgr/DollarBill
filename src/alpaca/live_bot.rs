@@ -24,7 +24,7 @@ use crate::strategies::{
 };
 use crate::streaming;
 use chrono::{Duration, NaiveDate, Utc};
-use log::{info, warn, error};
+use log::{debug, info, warn, error};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
@@ -267,13 +267,13 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
             }
             ev = stream.next_event() => ev,
         };
-        match event {
+        // Normalize Trade and Quote events into a shared (sym, price, ts)
+        let (sym, price, ts) = match event {
             Some(streaming::MarketEvent::Trade(t)) => {
                 let sym   = t.symbol.clone();
                 let price = t.price;
                 let ts    = t.timestamp.clone();
-
-                // Persist raw tick
+                // Persist raw tick (trades only)
                 let rec = persistence::TradeRecord {
                     symbol:        sym.clone(),
                     action:        "tick".to_string(),
@@ -288,7 +288,25 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                 if let Err(e) = store.insert_trade(&rec).await {
                     eprintln!("DB write error: {}", e);
                 }
-
+                (sym, price, ts)
+            }
+            Some(streaming::MarketEvent::Quote(q)) => {
+                let mid = (q.bid_price + q.ask_price) / 2.0;
+                (q.symbol.clone(), mid, q.timestamp.clone())
+            }
+            Some(streaming::MarketEvent::Reconnected) => {
+                info!("Stream reconnected.");
+                println!("Stream reconnected -- resuming trading loop.");
+                continue;
+            }
+            Some(streaming::MarketEvent::Disconnected) | None => {
+                error!("Stream permanently disconnected -- stopping bot.");
+                println!("Stream permanently disconnected -- stopping bot.");
+                alerter.disconnect().await;
+                break;
+            }
+        };
+        {
                 // Update rolling price buffer
                 let buf = price_buf.entry(sym.clone())
                     .or_insert_with(VecDeque::new);
@@ -311,7 +329,7 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                 // is updated by the 30-min background task; the IV cache is only
                 // used as a quick per-tick read-path.
                 if iv_cache.get_cached_iv(&sym).is_none() {
-                    info!("No cached IV for {} yet; background task will refresh", sym);
+                    debug!("No cached IV for {} yet; background task will refresh", sym);
                 }
 
                 // Volatility + Heston params from rolling ticks
@@ -334,6 +352,14 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                             h.v0.sqrt()
                         })
                 });
+
+                // ── IV sanity guard: stale after-hours quotes produce absurd IV ──
+                // >200% IV is physically implausible for equities during live hours;
+                // skip this tick rather than fire garbage signals.
+                if model_iv > 2.0 {
+                    debug!("Skipping {} — IV {:.1}% looks like stale/after-hours data", sym, model_iv * 100.0);
+                    continue;
+                }
 
                 // ── P2.1 Position close check ─────────────────────────────
                 if open_syms.contains(&sym) {
@@ -478,14 +504,13 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                         continue;
                     }
                     if !decision.can_trade { continue; }
-                    // Deduplication guard
-                    if open_syms.contains(&sym) {
-                        println!("    [SKIP] {} -- open position already tracked", sym);
-                        continue;
-                    }
 
                     match AlpacaClient::signal_to_options_order(&sig.action, &sym, qty, None) {
-                        Ok(order) => {
+                        Ok(mut order) => {
+                            // Resolve the generated OCC symbol to the nearest actually-listed contract
+                            if let Some(ref raw_sym) = order.symbol.clone() {
+                                order.symbol = Some(client.resolve_single_leg_occ(raw_sym).await);
+                            }
                             match client.submit_options_order(&order).await {
                                 Ok(filled) => {
                                     info!("Order submitted: id={} sym={} status={} strategy={}",
@@ -604,20 +629,6 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                     portfolio_vega:       port_vega,
                     portfolio_theta:      port_theta,
                 }.write();
-            }
-            Some(streaming::MarketEvent::Quote(q)) => {
-                println!("[QUOTE] {}  bid=${:.4} ask=${:.4}", q.symbol, q.bid_price, q.ask_price);
-            }
-            Some(streaming::MarketEvent::Reconnected) => {
-                info!("Stream reconnected.");
-                println!("Stream reconnected -- resuming trading loop.");
-            }
-            Some(streaming::MarketEvent::Disconnected) | None => {
-                error!("Stream permanently disconnected -- stopping bot.");
-                println!("Stream permanently disconnected -- stopping bot.");
-                alerter.disconnect().await;
-                break;
-            }
         }
     }
 

@@ -2,6 +2,7 @@
 
 use std::error::Error;
 use std::time::Duration;
+use log::{debug, warn, error};
 use reqwest::{Client, header, StatusCode};
 use serde::{Deserialize, de::DeserializeOwned};
 use super::types::*;
@@ -383,6 +384,102 @@ impl AlpacaClient {
         self.post("/v2/orders", order).await
     }
 
+    /// Parse an OCC symbol, then query Alpaca's live options chain to find the nearest
+    /// actually-listed contract (by expiry closeness then strike distance).
+    /// Returns the original symbol unchanged if parsing fails or the API is unavailable.
+    pub async fn resolve_single_leg_occ(&self, occ: &str) -> String {
+        // OCC format: ROOT__(6) YYMMDD(6) C|P(1) SSSSSSSS(8) = 21 chars
+        if occ.len() < 21 {
+            return occ.to_string();
+        }
+        let underlying = occ[..6].trim();
+        let yy: u32 = match occ[6..8].parse() { Ok(v) => v, Err(_) => return occ.to_string() };
+        let mm: u32 = match occ[8..10].parse() { Ok(v) => v, Err(_) => return occ.to_string() };
+        let dd: u32 = match occ[10..12].parse() { Ok(v) => v, Err(_) => return occ.to_string() };
+        let is_put = occ.chars().nth(12) == Some('P');
+        let strike_raw: f64 = match occ[13..21].parse() { Ok(v) => v, Err(_) => return occ.to_string() };
+        let target_strike = strike_raw / 1000.0;
+
+        use chrono::{Duration, NaiveDate};
+        #[derive(Deserialize)]
+        struct Contract {
+            symbol: String,
+            strike_price: String,
+            expiration_date: String,
+        }
+        #[derive(Deserialize)]
+        struct ContractsResponse {
+            option_contracts: Vec<Contract>,
+        }
+
+        let expiry = match NaiveDate::from_ymd_opt(2000 + yy as i32, mm, dd) {
+            Some(d) => d,
+            None => return occ.to_string(),
+        };
+        let from = expiry - Duration::days(7);
+        let to   = expiry + Duration::days(7);
+        let opt_type = if is_put { "put" } else { "call" };
+        let strike_lo = (target_strike * 0.9).max(0.5);
+        let strike_hi = target_strike * 1.1 + 5.0;
+
+        let endpoint = format!(
+            "/v2/options/contracts?underlying_symbols={}&type={}&expiration_date_gte={}&expiration_date_lte={}&strike_price_gte={:.2}&strike_price_lte={:.2}&limit=20&status=active",
+            underlying, opt_type, from, to, strike_lo, strike_hi
+        );
+
+        match self.get::<ContractsResponse>(&endpoint).await {
+            Ok(resp) if !resp.option_contracts.is_empty() => {
+                let best = resp.option_contracts
+                    .into_iter()
+                    .min_by(|a, b| {
+                        let sa: f64 = a.strike_price.parse().unwrap_or(f64::MAX);
+                        let sb: f64 = b.strike_price.parse().unwrap_or(f64::MAX);
+                        let da_exp = NaiveDate::parse_from_str(&a.expiration_date, "%Y-%m-%d")
+                            .map(|d| (d - expiry).num_days().unsigned_abs())
+                            .unwrap_or(999);
+                        let db_exp = NaiveDate::parse_from_str(&b.expiration_date, "%Y-%m-%d")
+                            .map(|d| (d - expiry).num_days().unsigned_abs())
+                            .unwrap_or(999);
+                        // Primary: closest expiry; secondary: closest strike
+                        let score_a = da_exp * 1000 + ((sa - target_strike).abs() * 10.0) as u64;
+                        let score_b = db_exp * 1000 + ((sb - target_strike).abs() * 10.0) as u64;
+                        score_a.cmp(&score_b)
+                    })
+                    .map(|c| c.symbol)
+                    .unwrap_or_else(|| occ.to_string());
+                if best != occ {
+                    debug!("Resolved OCC {} → {} (nearest listed contract)", occ, best);
+                }
+                best
+            }
+            Ok(_) => {
+                error!("resolve_occ: no contracts returned for {} {} {} strike={} — using generated symbol {}",
+                    underlying, expiry, opt_type, target_strike, occ);
+                occ.to_string()
+            }
+            Err(e) => {
+                error!("resolve_occ: API call failed for {} ({}): {} — using generated symbol {}", underlying, endpoint, e, occ);
+                occ.to_string()
+            }
+        }
+    }
+
+    /// Round a strike price to the nearest standard listed option increment.
+    /// Equity options list at $0.50 increments below $5, $1 below $25,
+    /// $2.50 below $200, and $5 above $200.
+    pub fn round_to_standard_strike(strike: f64) -> f64 {
+        let increment = if strike < 5.0 {
+            0.50
+        } else if strike < 25.0 {
+            1.0
+        } else if strike <= 500.0 {
+            5.0   // Most equity monthly options use $5 strike increments
+        } else {
+            10.0  // High-price stocks/ETFs (SPY >$500, etc.)
+        };
+        (strike / increment).round() * increment
+    }
+
     /// Build an OCC option symbol from its components.
     ///
     /// # Arguments
@@ -398,6 +495,7 @@ impl AlpacaClient {
         is_call: bool,
         strike: f64,
     ) -> String {
+        let strike = Self::round_to_standard_strike(strike);
         format!(
             "{:<6}{:02}{:02}{:02}{}{:08.0}",
             underlying,
@@ -450,19 +548,40 @@ impl AlpacaClient {
         limit_price: Option<f64>,
     ) -> Result<OptionsOrderRequest, Box<dyn Error>> {
         let legs = Self::signal_to_legs(signal, underlying)?;
-        Ok(OptionsOrderRequest {
-            r#type: if limit_price.is_some() { OrderType::Limit } else { OrderType::Market },
-            time_in_force: TimeInForce::Day,
-            order_class: if legs.len() > 1 { "mleg".to_string() } else { "simple".to_string() },
-            legs: legs.into_iter().map(|(sym, side, intent)| OptionsLeg {
-                symbol: sym,
-                ratio_qty: contracts,
-                side,
-                position_intent: intent.to_string(),
-            }).collect(),
-            limit_price,
-            client_order_id: None,
-        })
+        let order_type = if limit_price.is_some() { OrderType::Limit } else { OrderType::Market };
+        if legs.len() == 1 {
+            // Single-leg: Alpaca requires order_class="simple" for options
+            let (sym, side, _intent) = legs.into_iter().next().unwrap();
+            Ok(OptionsOrderRequest {
+                r#type: order_type,
+                time_in_force: TimeInForce::Day,
+                symbol: Some(sym),
+                qty: Some(contracts.to_string()),
+                side: Some(side),
+                order_class: Some("simple".to_string()),
+                legs: None,
+                limit_price,
+                client_order_id: None,
+            })
+        } else {
+            // Multi-leg: use order_class=mleg with legs array
+            Ok(OptionsOrderRequest {
+                r#type: order_type,
+                time_in_force: TimeInForce::Day,
+                symbol: None,
+                qty: None,
+                side: None,
+                order_class: Some("mleg".to_string()),
+                legs: Some(legs.into_iter().map(|(sym, side, intent)| OptionsLeg {
+                    symbol: sym,
+                    ratio_qty: contracts,
+                    side,
+                    position_intent: intent.to_string(),
+                }).collect()),
+                limit_price,
+                client_order_id: None,
+            })
+        }
     }
 
     /// Internal: build (occ_symbol, side, position_intent) tuples for each leg.
@@ -665,11 +784,11 @@ mod tests {
         let sig = SignalAction::BuyCall { strike: 150.0, days_to_expiry: 30, volatility: 0.3 };
         let req = AlpacaClient::signal_to_options_order(&sig, "AAPL", 1, Some(2.50))
             .expect("should succeed");
-        assert_eq!(req.legs.len(), 1);
-        let leg = &req.legs[0];
-        assert_eq!(leg.side, OrderSide::Buy);
-        assert_eq!(leg.position_intent, "buy_to_open");
-        assert!(leg.symbol.contains('C'), "call OCC symbol must contain 'C'");
+        // single-leg: top-level symbol/qty/side
+        assert_eq!(req.side, Some(OrderSide::Buy));
+        let sym = req.symbol.as_deref().unwrap();
+        assert!(sym.contains('C'), "call OCC symbol must contain 'C'");
+        assert_eq!(req.qty.as_deref(), Some("1"));
         assert_eq!(req.limit_price, Some(2.50));
     }
 
@@ -679,12 +798,11 @@ mod tests {
         let sig = SignalAction::SellPut { strike: 140.0, days_to_expiry: 45, volatility: 0.25 };
         let req = AlpacaClient::signal_to_options_order(&sig, "AAPL", 2, None)
             .expect("should succeed");
-        assert_eq!(req.legs.len(), 1);
-        let leg = &req.legs[0];
-        assert_eq!(leg.side, OrderSide::Sell);
-        assert_eq!(leg.position_intent, "sell_to_open");
-        assert!(leg.symbol.contains('P'), "put OCC symbol must contain 'P'");
-        assert_eq!(leg.ratio_qty, 2);
+        // single-leg: top-level symbol/qty/side
+        assert_eq!(req.side, Some(OrderSide::Sell));
+        let sym = req.symbol.as_deref().unwrap();
+        assert!(sym.contains('P'), "put OCC symbol must contain 'P'");
+        assert_eq!(req.qty.as_deref(), Some("2"));
     }
 
     #[test]
@@ -697,10 +815,11 @@ mod tests {
         };
         let req = AlpacaClient::signal_to_options_order(&sig, "AAPL", 1, Some(-1.50))
             .expect("should succeed");
-        assert_eq!(req.legs.len(), 2);
-        assert_eq!(req.legs[0].side, OrderSide::Sell);
-        assert_eq!(req.legs[1].side, OrderSide::Buy);
-        assert_eq!(req.order_class, "mleg");
+        let legs = req.legs.as_ref().unwrap();
+        assert_eq!(legs.len(), 2);
+        assert_eq!(legs[0].side, OrderSide::Sell);
+        assert_eq!(legs[1].side, OrderSide::Buy);
+        assert_eq!(req.order_class.as_deref(), Some("mleg"));
     }
 
     #[test]
@@ -715,13 +834,14 @@ mod tests {
         };
         let req = AlpacaClient::signal_to_options_order(&sig, "SPY", 1, Some(-2.00))
             .expect("should succeed");
-        assert_eq!(req.legs.len(), 4, "iron condor needs exactly 4 legs");
-        assert_eq!(req.order_class, "mleg");
+        let legs = req.legs.as_ref().unwrap();
+        assert_eq!(legs.len(), 4, "iron condor needs exactly 4 legs");
+        assert_eq!(req.order_class.as_deref(), Some("mleg"));
         // Leg order: sell call, buy call, sell put, buy put
-        assert_eq!(req.legs[0].side, OrderSide::Sell);
-        assert_eq!(req.legs[1].side, OrderSide::Buy);
-        assert_eq!(req.legs[2].side, OrderSide::Sell);
-        assert_eq!(req.legs[3].side, OrderSide::Buy);
+        assert_eq!(legs[0].side, OrderSide::Sell);
+        assert_eq!(legs[1].side, OrderSide::Buy);
+        assert_eq!(legs[2].side, OrderSide::Sell);
+        assert_eq!(legs[3].side, OrderSide::Buy);
     }
 
     #[test]
@@ -739,9 +859,9 @@ mod tests {
         let sig = SignalAction::CoveredCall { sell_strike: 155.0, days_to_expiry: 14 };
         let req = AlpacaClient::signal_to_options_order(&sig, "AAPL", 1, Some(1.00))
             .expect("should succeed");
-        assert_eq!(req.legs.len(), 1);
-        assert_eq!(req.legs[0].side, OrderSide::Sell);
-        assert_eq!(req.legs[0].position_intent, "sell_to_open");
+        // single-leg: top-level symbol/qty/side
+        assert_eq!(req.side, Some(OrderSide::Sell));
+        assert_eq!(req.qty.as_deref(), Some("1"));
     }
 
     // ── New multi-leg variants ─────────────────────────────────────────────────
@@ -752,16 +872,17 @@ mod tests {
         let sig = SignalAction::SellStraddle { strike: 200.0, days_to_expiry: 30 };
         let req = AlpacaClient::signal_to_options_order(&sig, "TSLA", 1, None)
             .expect("SellStraddle should produce a valid order");
-        assert_eq!(req.legs.len(), 2, "sell straddle needs exactly 2 legs");
-        assert_eq!(req.order_class, "mleg");
+        let legs = req.legs.as_ref().unwrap();
+        assert_eq!(legs.len(), 2, "sell straddle needs exactly 2 legs");
+        assert_eq!(req.order_class.as_deref(), Some("mleg"));
         // Both legs sell-to-open
-        assert!(req.legs.iter().all(|l| l.side == OrderSide::Sell));
-        assert!(req.legs.iter().all(|l| l.position_intent == "sell_to_open"));
+        assert!(legs.iter().all(|l| l.side == OrderSide::Sell));
+        assert!(legs.iter().all(|l| l.position_intent == "sell_to_open"));
         // One call leg, one put leg
-        assert!(req.legs.iter().any(|l| l.symbol.contains('C')), "must have a call leg");
-        assert!(req.legs.iter().any(|l| l.symbol.contains('P')), "must have a put leg");
+        assert!(legs.iter().any(|l| l.symbol.contains('C')), "must have a call leg");
+        assert!(legs.iter().any(|l| l.symbol.contains('P')), "must have a put leg");
         // Both legs reference the same strike (00200000)
-        assert!(req.legs.iter().all(|l| l.symbol.contains("00200000")));
+        assert!(legs.iter().all(|l| l.symbol.contains("00200000")));
     }
 
     #[test]
@@ -770,16 +891,18 @@ mod tests {
         let sig = SignalAction::BuyStraddle { strike: 150.0, days_to_expiry: 21 };
         let req = AlpacaClient::signal_to_options_order(&sig, "AAPL", 1, None)
             .expect("BuyStraddle should produce a valid order");
-        assert_eq!(req.legs.len(), 2, "buy straddle needs exactly 2 legs");
-        assert_eq!(req.order_class, "mleg");
+        let legs = req.legs.as_ref().unwrap();
+        assert_eq!(legs.len(), 2, "buy straddle needs exactly 2 legs");
+        assert_eq!(req.order_class.as_deref(), Some("mleg"));
         // Both legs buy-to-open
-        assert!(req.legs.iter().all(|l| l.side == OrderSide::Buy));
-        assert!(req.legs.iter().all(|l| l.position_intent == "buy_to_open"));
+        assert!(legs.iter().all(|l| l.side == OrderSide::Buy));
+        assert!(legs.iter().all(|l| l.position_intent == "buy_to_open"));
         // One call, one put
-        assert!(req.legs.iter().any(|l| l.symbol.contains('C')));
-        assert!(req.legs.iter().any(|l| l.symbol.contains('P')));
+        assert!(legs.iter().any(|l| l.symbol.contains('C')));
+        let legs2 = req.legs.as_ref().unwrap();
+        assert!(legs2.iter().any(|l| l.symbol.contains('P')));
         // Both at the same strike (00150000)
-        assert!(req.legs.iter().all(|l| l.symbol.contains("00150000")));
+        assert!(legs2.iter().all(|l| l.symbol.contains("00150000")));
     }
 
     #[test]
@@ -792,24 +915,25 @@ mod tests {
         };
         let req = AlpacaClient::signal_to_options_order(&sig, "SPY", 1, Some(-2.00))
             .expect("IronButterfly should produce a valid order");
-        assert_eq!(req.legs.len(), 4, "iron butterfly needs exactly 4 legs");
-        assert_eq!(req.order_class, "mleg");
+        let legs = req.legs.as_ref().unwrap();
+        assert_eq!(legs.len(), 4, "iron butterfly needs exactly 4 legs");
+        assert_eq!(req.order_class.as_deref(), Some("mleg"));
         // Leg order: sell ATM call, buy OTM call, sell ATM put, buy OTM put
-        assert_eq!(req.legs[0].side, OrderSide::Sell); // sell call (ATM)
-        assert_eq!(req.legs[1].side, OrderSide::Buy);  // buy  call (OTM)
-        assert_eq!(req.legs[2].side, OrderSide::Sell); // sell put  (ATM)
-        assert_eq!(req.legs[3].side, OrderSide::Buy);  // buy  put  (OTM)
+        assert_eq!(legs[0].side, OrderSide::Sell); // sell call (ATM)
+        assert_eq!(legs[1].side, OrderSide::Buy);  // buy  call (OTM)
+        assert_eq!(legs[2].side, OrderSide::Sell); // sell put  (ATM)
+        assert_eq!(legs[3].side, OrderSide::Buy);  // buy  put  (OTM)
         // ATM body strikes → 00400000
-        assert!(req.legs[0].symbol.contains("00400000"), "sell-call must be ATM");
-        assert!(req.legs[2].symbol.contains("00400000"), "sell-put must be ATM");
+        assert!(legs[0].symbol.contains("00400000"), "sell-call must be ATM");
+        assert!(legs[2].symbol.contains("00400000"), "sell-put must be ATM");
         // OTM wing strikes → 00410000 and 00390000
-        assert!(req.legs[1].symbol.contains("00410000"), "buy-call wing should be center+width");
-        assert!(req.legs[3].symbol.contains("00390000"), "buy-put wing should be center-width");
+        assert!(legs[1].symbol.contains("00410000"), "buy-call wing should be center+width");
+        assert!(legs[3].symbol.contains("00390000"), "buy-put wing should be center-width");
         // Correct option types
-        assert!(req.legs[0].symbol.contains('C'));
-        assert!(req.legs[1].symbol.contains('C'));
-        assert!(req.legs[2].symbol.contains('P'));
-        assert!(req.legs[3].symbol.contains('P'));
+        assert!(legs[0].symbol.contains('C'));
+        assert!(legs[1].symbol.contains('C'));
+        assert!(legs[2].symbol.contains('P'));
+        assert!(legs[3].symbol.contains('P'));
     }
 
     #[test]
@@ -819,11 +943,10 @@ mod tests {
         let sig = SignalAction::CashSecuredPut { strike: 161.5, days_to_expiry: 30 };
         let req = AlpacaClient::signal_to_options_order(&sig, "COIN", 1, Some(3.00))
             .expect("CashSecuredPut should produce a valid order");
-        assert_eq!(req.legs.len(), 1, "cash-secured put is a single leg");
-        let leg = &req.legs[0];
-        assert_eq!(leg.side, OrderSide::Sell);
-        assert_eq!(leg.position_intent, "sell_to_open");
-        assert!(leg.symbol.contains('P'), "must be a put");
+        // single-leg: top-level symbol/qty/side
+        assert_eq!(req.side, Some(OrderSide::Sell));
+        let sym = req.symbol.as_deref().unwrap();
+        assert!(sym.contains('P'), "must be a put");
         // Strike 161.5 → 00161500
         assert!(leg.symbol.contains("00161500"), "OCC strike encoding mismatch");
         assert_eq!(req.limit_price, Some(3.00));

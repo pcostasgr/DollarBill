@@ -13,7 +13,7 @@ impl CashSecuredPuts {
         Self {
             premium_threshold: 0.02, // 2% minimum premium
             strike_otm_pct: 0.05,     // 5% OTM strikes
-            min_iv_edge: 0.03,        // 3% minimum IV edge
+            min_iv_edge: 0.01,        // 1% minimum IV edge
         }
     }
 

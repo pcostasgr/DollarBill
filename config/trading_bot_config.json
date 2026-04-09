@@ -1,14 +1,14 @@
 {
   "bot_runtime": {
-    "min_confidence":       0.60,
+    "min_confidence":       0.30,
     "max_daily_loss_pct":   0.05,
-    "signal_cooldown_secs": 300,
+    "signal_cooldown_secs": 30,
     "max_price_buf":        50,
     "min_prices_for_hv":    22,
     "profit_target_pct":    0.50,
     "stop_loss_pct":        2.00,
     "max_position_days":    21,
-    "min_vol_percentile":   0.40
+    "min_vol_percentile":   0.10
   },
   "alerts": {
     "enabled":               false,

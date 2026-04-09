@@ -251,7 +251,8 @@ impl PortfolioAllocator {
             let current_capital = (allocation.current_pct / 100.0) * self.total_capital;
             current_capital + additional_capital <= allocation.capacity
         } else {
-            false
+            // Strategy not yet registered — allow trade (no explicit limit set)
+            true
         }
     }
 
