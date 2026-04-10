@@ -246,6 +246,35 @@ impl AlpacaClient {
         self.delete(&format!("/v2/positions/{}", symbol)).await
     }
 
+    /// Close every open position (equity or options) whose Alpaca symbol root
+    /// matches `underlying`.  Useful for multi-leg strategies where the
+    /// individual OCC symbols are not tracked — queries live positions and
+    /// closes each matching leg individually.
+    ///
+    /// Returns one `Result<Order>` per closed leg.
+    pub async fn close_positions_for_underlying(
+        &self,
+        underlying: &str,
+    ) -> Vec<Result<Order, Box<dyn Error>>> {
+        let positions = match self.get_positions().await {
+            Ok(p) => p,
+            Err(e) => return vec![Err(e)],
+        };
+        let mut results = Vec::new();
+        for pos in positions {
+            // Match equity symbol exactly, or options OCC root (first ≤6 chars trimmed).
+            let root = if pos.symbol.len() >= 6 {
+                pos.symbol[..6].trim().to_string()
+            } else {
+                pos.symbol.clone()
+            };
+            if pos.symbol == underlying || root == underlying {
+                results.push(self.close_position(&pos.symbol).await);
+            }
+        }
+        results
+    }
+
     // ============ Order Methods ============
 
     /// Submit a new order
@@ -550,27 +579,29 @@ impl AlpacaClient {
         let legs = Self::signal_to_legs(signal, underlying)?;
         let order_type = if limit_price.is_some() { OrderType::Limit } else { OrderType::Market };
         if legs.len() == 1 {
-            // Single-leg: Alpaca requires order_class="simple" for options
-            let (sym, side, _intent) = legs.into_iter().next().unwrap();
+            // Single-leg: Alpaca requires symbol, qty, side, position_intent
+            let (sym, side, intent) = legs.into_iter().next().unwrap();
             Ok(OptionsOrderRequest {
                 r#type: order_type,
                 time_in_force: TimeInForce::Day,
                 symbol: Some(sym),
                 qty: Some(contracts.to_string()),
                 side: Some(side),
-                order_class: Some("simple".to_string()),
+                position_intent: Some(intent.to_string()),
+                order_class: None,
                 legs: None,
                 limit_price,
                 client_order_id: None,
             })
         } else {
-            // Multi-leg: use order_class=mleg with legs array
+            // Multi-leg: qty at top level is required (number of strategy units)
             Ok(OptionsOrderRequest {
                 r#type: order_type,
                 time_in_force: TimeInForce::Day,
                 symbol: None,
-                qty: None,
+                qty: Some(contracts.to_string()),
                 side: None,
+                position_intent: None,
                 order_class: Some("mleg".to_string()),
                 legs: Some(legs.into_iter().map(|(sym, side, intent)| OptionsLeg {
                     symbol: sym,
@@ -948,7 +979,7 @@ mod tests {
         let sym = req.symbol.as_deref().unwrap();
         assert!(sym.contains('P'), "must be a put");
         // Strike 161.5 → 00161500
-        assert!(leg.symbol.contains("00161500"), "OCC strike encoding mismatch");
+        assert!(sym.contains("00161500"), "OCC strike encoding mismatch");
         assert_eq!(req.limit_price, Some(3.00));
     }
 }

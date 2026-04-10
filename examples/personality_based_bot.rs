@@ -886,13 +886,17 @@ async fn try_submit_options(
             let mleg = OptionsOrderRequest {
                 r#type: OrderType::Market,
                 time_in_force: TimeInForce::Day,
-                order_class: "mleg".to_string(),
-                legs: vec![
+                symbol: None,
+                qty: Some("1".to_string()),
+                side: None,
+                position_intent: None,
+                order_class: Some("mleg".to_string()),
+                legs: Some(vec![
                     OptionsLeg { symbol: call_occ, ratio_qty: 1, side: OrderSide::Sell,
                                  position_intent: "sell_to_open".to_string() },
                     OptionsLeg { symbol: put_occ,  ratio_qty: 1, side: OrderSide::Sell,
                                  position_intent: "sell_to_open".to_string() },
-                ],
+                ]),
                 limit_price: None,
                 client_order_id: None,
             };
@@ -912,13 +916,17 @@ async fn try_submit_options(
             let mleg = OptionsOrderRequest {
                 r#type: OrderType::Market,
                 time_in_force: TimeInForce::Day,
-                order_class: "mleg".to_string(),
-                legs: vec![
+                symbol: None,
+                qty: Some("1".to_string()),
+                side: None,
+                position_intent: None,
+                order_class: Some("mleg".to_string()),
+                legs: Some(vec![
                     OptionsLeg { symbol: call_occ, ratio_qty: 1, side: OrderSide::Buy,
                                  position_intent: "buy_to_open".to_string() },
                     OptionsLeg { symbol: put_occ,  ratio_qty: 1, side: OrderSide::Buy,
                                  position_intent: "buy_to_open".to_string() },
-                ],
+                ]),
                 limit_price: None,
                 client_order_id: None,
             };
@@ -940,13 +948,17 @@ async fn try_submit_options(
             let mleg = OptionsOrderRequest {
                 r#type: OrderType::Market,
                 time_in_force: TimeInForce::Day,
-                order_class: "mleg".to_string(),
-                legs: vec![
+                symbol: None,
+                qty: Some("1".to_string()),
+                side: None,
+                position_intent: None,
+                order_class: Some("mleg".to_string()),
+                legs: Some(vec![
                     OptionsLeg { symbol: sc, ratio_qty: 1, side: OrderSide::Sell, position_intent: "sell_to_open".to_string() },
                     OptionsLeg { symbol: sp, ratio_qty: 1, side: OrderSide::Sell, position_intent: "sell_to_open".to_string() },
                     OptionsLeg { symbol: bc, ratio_qty: 1, side: OrderSide::Buy,  position_intent: "buy_to_open".to_string() },
                     OptionsLeg { symbol: bp, ratio_qty: 1, side: OrderSide::Buy,  position_intent: "buy_to_open".to_string() },
-                ],
+                ]),
                 limit_price: None,
                 client_order_id: None,
             };
@@ -969,13 +981,17 @@ async fn try_submit_options(
             let mleg = OptionsOrderRequest {
                 r#type: OrderType::Market,
                 time_in_force: TimeInForce::Day,
-                order_class: "mleg".to_string(),
-                legs: vec![
+                symbol: None,
+                qty: Some("1".to_string()),
+                side: None,
+                position_intent: None,
+                order_class: Some("mleg".to_string()),
+                legs: Some(vec![
                     OptionsLeg { symbol: sc, ratio_qty: 1, side: OrderSide::Sell, position_intent: "sell_to_open".to_string() },
                     OptionsLeg { symbol: bc, ratio_qty: 1, side: OrderSide::Buy,  position_intent: "buy_to_open".to_string() },
                     OptionsLeg { symbol: sp, ratio_qty: 1, side: OrderSide::Sell, position_intent: "sell_to_open".to_string() },
                     OptionsLeg { symbol: bp, ratio_qty: 1, side: OrderSide::Buy,  position_intent: "buy_to_open".to_string() },
-                ],
+                ]),
                 limit_price: None,
                 client_order_id: None,
             };
@@ -995,11 +1011,15 @@ async fn try_submit_options(
             let mleg = OptionsOrderRequest {
                 r#type: OrderType::Market,
                 time_in_force: TimeInForce::Day,
-                order_class: "mleg".to_string(),
-                legs: vec![
+                symbol: None,
+                qty: Some("1".to_string()),
+                side: None,
+                position_intent: None,
+                order_class: Some("mleg".to_string()),
+                legs: Some(vec![
                     OptionsLeg { symbol: sc, ratio_qty: 1, side: OrderSide::Sell, position_intent: "sell_to_open".to_string() },
                     OptionsLeg { symbol: bc, ratio_qty: 1, side: OrderSide::Buy,  position_intent: "buy_to_open".to_string() },
-                ],
+                ]),
                 limit_price: None,
                 client_order_id: None,
             };
@@ -1019,11 +1039,15 @@ async fn try_submit_options(
             let mleg = OptionsOrderRequest {
                 r#type: OrderType::Market,
                 time_in_force: TimeInForce::Day,
-                order_class: "mleg".to_string(),
-                legs: vec![
+                symbol: None,
+                qty: Some("1".to_string()),
+                side: None,
+                position_intent: None,
+                order_class: Some("mleg".to_string()),
+                legs: Some(vec![
                     OptionsLeg { symbol: sp, ratio_qty: 1, side: OrderSide::Sell, position_intent: "sell_to_open".to_string() },
                     OptionsLeg { symbol: bp, ratio_qty: 1, side: OrderSide::Buy,  position_intent: "buy_to_open".to_string() },
-                ],
+                ]),
                 limit_price: None,
                 client_order_id: None,
             };

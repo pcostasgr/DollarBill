@@ -75,16 +75,26 @@ pub async fn run_live_bot(
             let sqlite_syms: HashSet<String> =
                 persisted.iter().map(|p| p.symbol.clone()).collect();
             for ap in &alpaca_pos {
-                if !sqlite_syms.contains(&ap.symbol) {
-                    println!("  📥 Importing {} from Alpaca into SQLite", ap.symbol);
+                // For options (OCC symbols like "QCOM250509P00120000") use the
+                // underlying root as the key so WebSocket tick matching works.
+                // Store the full OCC symbol in occ_symbol for accurate closing.
+                let (rec_symbol, rec_occ) = if ap.asset_class == "us_option" && ap.symbol.len() >= 6 {
+                    let root = ap.symbol[..6].trim().to_string();
+                    (root, Some(ap.symbol.clone()))
+                } else {
+                    (ap.symbol.clone(), None)
+                };
+                if !sqlite_syms.contains(&rec_symbol) {
+                    println!("  📥 Importing {} (Alpaca: {}) from Alpaca into SQLite", rec_symbol, ap.symbol);
                     let rec = persistence::PositionRecord {
-                        symbol:            ap.symbol.clone(),
+                        symbol:            rec_symbol,
                         qty:               ap.qty.parse::<f64>().unwrap_or(0.0),
                         entry_price:       ap.avg_entry_price.parse::<f64>().unwrap_or(0.0),
                         entry_date:        "reconciled".to_string(),
                         strategy:          Some("reconciled".to_string()),
                         expires_at:        None,
                         premium_collected: None,
+                        occ_symbol:        rec_occ,
                     };
                     let _ = store.upsert_position(&rec).await;
                 }
@@ -418,20 +428,46 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                             info!("Closing {} ({}): {}", sym, pos.strategy.as_deref().unwrap_or("?"), close_reason);
                             println!("  🔒 Closing {} — {}", sym, close_reason);
                             if !dry_run {
-                                match client.close_position(&sym).await {
+                                // Use the stored OCC symbol for options, underlying for equity.
+                                // For multi-leg positions (occ_symbol = None, no equity ticker),
+                                // fall back to querying live positions and closing each leg.
+                                let occ_opt = pos.occ_symbol.clone();
+                                let close_sym = occ_opt.as_deref().unwrap_or(&sym);
+                                let close_result = client.close_position(close_sym).await;
+                                match close_result {
                                     Ok(_) => {
                                         let _ = store.close_position(&sym).await;
                                         open_syms.remove(&sym);
                                         open_positions.remove(&sym);
-                                        println!("    ✅ {} closed", sym);
+                                        println!("    ✅ {} closed ({})", sym, close_sym);
                                     }
                                     Err(e) => {
-                                        error!("close_position failed for {}: {}", sym, e);
-                                        eprintln!("    ⚠️  Close failed for {}: {}", sym, e);
+                                        // If direct close failed and we used the underlying,
+                                        // the position may be an untracked multi-leg options
+                                        // order.  Try closing all legs via positions lookup.
+                                        if occ_opt.is_none() {
+                                            warn!("Direct close failed for {} — trying leg lookup: {}", sym, e);
+                                            let results = client.close_positions_for_underlying(&sym).await;
+                                            let any_ok = results.iter().any(|r| r.is_ok());
+                                            if any_ok {
+                                                let _ = store.close_position(&sym).await;
+                                                open_syms.remove(&sym);
+                                                open_positions.remove(&sym);
+                                                println!("    ✅ {} legs closed via lookup", sym);
+                                            } else {
+                                                error!("close leg lookup also failed for {}: {:?}", sym,
+                                                    results.iter().map(|r| r.as_ref().err().map(|e| e.to_string())).collect::<Vec<_>>());
+                                                eprintln!("    ⚠️  All close attempts failed for {}", sym);
+                                            }
+                                        } else {
+                                            error!("close_position failed for {} ({}): {}", sym, close_sym, e);
+                                            eprintln!("    ⚠️  Close failed for {} ({}): {}", sym, close_sym, e);
+                                        }
                                     }
                                 }
                             } else {
-                                println!("    [DRY RUN] Would close {}", sym);
+                                let close_sym = pos.occ_symbol.as_deref().unwrap_or(&sym);
+                                println!("    [DRY RUN] Would close {} ({})", sym, close_sym);
                             }
                             continue; // Skip signal generation this tick — position is being closed
                         }
@@ -544,6 +580,15 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                     last_signal_desc.insert(sym.clone(), desc);
                                     let expiry_date = Utc::now().date_naive()
                                         + Duration::days(sig.expiry_days as i64);
+                                    // Store the OCC symbol from the confirmed fill so
+                                    // close logic can target the exact contract.
+                                    // Single-leg: filled.symbol is the OCC (>10 chars).
+                                    // Multi-leg:  filled.symbol may be empty/short; use None.
+                                    let occ = if filled.symbol.len() > 10 {
+                                        Some(filled.symbol.clone())
+                                    } else {
+                                        None
+                                    };
                                     let pos = persistence::PositionRecord {
                                         symbol:            sym.clone(),
                                         qty:               qty as f64,
@@ -552,6 +597,7 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                         strategy:          Some(sig.strategy_name.clone()),
                                         expires_at:        Some(expiry_date.format("%Y-%m-%d").to_string()),
                                         premium_collected: Some(rough_premium),
+                                        occ_symbol:        occ,
                                     };
                                     if let Err(e) = store.upsert_position(&pos).await {
                                         error!("DB position upsert failed: {}", e);

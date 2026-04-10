@@ -225,8 +225,8 @@ pub struct OptionsLeg {
 
 /// Request body for a single-leg or multi-leg options order.
 ///
-/// Single-leg: populate `symbol`, `qty`, `side`; leave `order_class` / `legs` absent.
-/// Multi-leg:  populate `order_class = "mleg"` and `legs`; leave `symbol`/`qty`/`side` absent.
+/// Single-leg: populate `symbol`, `qty`, `side`, `position_intent`; leave `order_class` / `legs` absent.
+/// Multi-leg:  populate `order_class = "mleg"`, `qty` (units of strategy), and `legs`; leave `symbol`/`side`/`position_intent` absent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptionsOrderRequest {
     pub r#type: OrderType,
@@ -238,6 +238,9 @@ pub struct OptionsOrderRequest {
     pub qty: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub side: Option<OrderSide>,
+    /// Required for options orders: buy_to_open, buy_to_close, sell_to_open, sell_to_close.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub position_intent: Option<String>,
     // ── Multi-leg fields ───────────────────────────────────────────────────
     #[serde(skip_serializing_if = "Option::is_none")]
     pub order_class: Option<String>,
