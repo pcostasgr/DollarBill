@@ -90,7 +90,8 @@ pub async fn run_live_bot(
                         symbol:            rec_symbol,
                         qty:               ap.qty.parse::<f64>().unwrap_or(0.0),
                         entry_price:       ap.avg_entry_price.parse::<f64>().unwrap_or(0.0),
-                        entry_date:        "reconciled".to_string(),
+                        // Use today so the max_position_days clock runs correctly.
+                        entry_date:        Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
                         strategy:          Some("reconciled".to_string()),
                         expires_at:        None,
                         premium_collected: None,
@@ -413,13 +414,26 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                 }
                             }
                         } else {
-                            // No expiry stored — use calendar days from entry
-                            if let Ok(entry_date) = NaiveDate::parse_from_str(
-                                    &pos.entry_date[..10], "%Y-%m-%d") {
-                                let age = (today - entry_date).num_days();
-                                if age >= max_position_days {
+                            // No expiry stored — use calendar days from entry.
+                            // If entry_date can't be parsed (e.g. old "reconciled" records
+                            // written before this fix), close immediately to free buying power.
+                            let raw = if pos.entry_date.len() >= 10 {
+                                &pos.entry_date[..10]
+                            } else {
+                                ""
+                            };
+                            match NaiveDate::parse_from_str(raw, "%Y-%m-%d") {
+                                Ok(entry_date) => {
+                                    let age = (today - entry_date).num_days();
+                                    if age >= max_position_days {
+                                        should_close = true;
+                                        close_reason = format!("max {} days elapsed", age);
+                                    }
+                                }
+                                Err(_) => {
+                                    // Unparseable entry date (stale reconciled record) — close now.
                                     should_close = true;
-                                    close_reason = format!("max {} days elapsed", age);
+                                    close_reason = "stale reconciled position (no valid entry date)".to_string();
                                 }
                             }
                         }
