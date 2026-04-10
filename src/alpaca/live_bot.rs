@@ -29,6 +29,18 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
+/// Parse expiry date from an OCC symbol string.
+/// OCC format: ROOT(6) YYMMDD(6) C|P(1) STRIKE(8)  — e.g. "QCOM260508P00120000"
+/// Returns `Some("2026-05-08")` or `None` if parsing fails.
+fn parse_occ_expiry(occ: &str) -> Option<String> {
+    if occ.len() < 15 { return None; }
+    let yy: u32 = occ[6..8].parse().ok()?;
+    let mm: u32 = occ[8..10].parse().ok()?;
+    let dd: u32 = occ[10..12].parse().ok()?;
+    if mm < 1 || mm > 12 || dd < 1 || dd > 31 { return None; }
+    Some(format!("20{:02}-{:02}-{:02}", yy, mm, dd))
+}
+
 pub async fn run_live_bot(
     client: AlpacaClient,
     symbols: Vec<String>,
@@ -75,29 +87,64 @@ pub async fn run_live_bot(
             let sqlite_syms: HashSet<String> =
                 persisted.iter().map(|p| p.symbol.clone()).collect();
             for ap in &alpaca_pos {
-                // For options (OCC symbols like "QCOM250509P00120000") use the
+                // For options (OCC symbols like "QCOM260508P00120000") use the
                 // underlying root as the key so WebSocket tick matching works.
                 // Store the full OCC symbol in occ_symbol for accurate closing.
-                let (rec_symbol, rec_occ) = if ap.asset_class == "us_option" && ap.symbol.len() >= 6 {
-                    let root = ap.symbol[..6].trim().to_string();
-                    (root, Some(ap.symbol.clone()))
-                } else {
-                    (ap.symbol.clone(), None)
-                };
+                let (rec_symbol, rec_occ, rec_expires_at) =
+                    if ap.asset_class == "us_option" && ap.symbol.len() >= 18 {
+                        let root = ap.symbol[..6].trim().to_string();
+                        // OCC: ROOT(6) YYMMDD(6) C|P(1) STRIKE(8)
+                        // e.g. QCOM260508P00120000 → 2026-05-08
+                        let exp = parse_occ_expiry(&ap.symbol);
+                        (root, Some(ap.symbol.clone()), exp)
+                    } else {
+                        (ap.symbol.clone(), None, None)
+                    };
                 if !sqlite_syms.contains(&rec_symbol) {
                     println!("  📥 Importing {} (Alpaca: {}) from Alpaca into SQLite", rec_symbol, ap.symbol);
+                    let premium = ap.avg_entry_price.parse::<f64>().ok()
+                        .filter(|&p| p > 0.0);
                     let rec = persistence::PositionRecord {
                         symbol:            rec_symbol,
                         qty:               ap.qty.parse::<f64>().unwrap_or(0.0),
                         entry_price:       ap.avg_entry_price.parse::<f64>().unwrap_or(0.0),
-                        // Use today so the max_position_days clock runs correctly.
                         entry_date:        Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
                         strategy:          Some("reconciled".to_string()),
-                        expires_at:        None,
-                        premium_collected: None,
+                        expires_at:        rec_expires_at,
+                        premium_collected: premium,
                         occ_symbol:        rec_occ,
                     };
                     let _ = store.upsert_position(&rec).await;
+                } else {
+                    // Position already in SQLite — patch expires_at and premium_collected
+                    // if they are missing (e.g. previous reconciliation didn't fill them).
+                    if let Some(existing) = persisted.iter().find(|p| p.symbol == rec_symbol) {
+                        if existing.expires_at.is_none() || existing.premium_collected.is_none() {
+                            let exp = if existing.expires_at.is_none() {
+                                if ap.asset_class == "us_option" && ap.symbol.len() >= 18 {
+                                    parse_occ_expiry(&ap.symbol)
+                                } else { None }
+                            } else {
+                                existing.expires_at.clone()
+                            };
+                            let premium = if existing.premium_collected.is_none() {
+                                ap.avg_entry_price.parse::<f64>().ok().filter(|&p| p > 0.0)
+                            } else {
+                                existing.premium_collected
+                            };
+                            let patched = persistence::PositionRecord {
+                                expires_at:        exp,
+                                premium_collected: premium,
+                                occ_symbol:        existing.occ_symbol.clone().or_else(|| {
+                                    if ap.asset_class == "us_option" { Some(ap.symbol.clone()) } else { None }
+                                }),
+                                ..existing.clone()
+                            };
+                            let _ = store.upsert_position(&patched).await;
+                            println!("  🔧 Patched {} — expires_at={:?} premium={:?}",
+                                rec_symbol, patched.expires_at, patched.premium_collected);
+                        }
+                    }
                 }
             }
         }
