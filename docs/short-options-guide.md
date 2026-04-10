@@ -280,10 +280,8 @@ println!("Order ID: {}", response.id);
 ```
 
 Supported signals: `BuyCall`, `BuyPut`, `SellCall`, `SellPut`,
-`CreditCallSpread`, `CreditPutSpread`, `IronCondor`, `CoveredCall`.
-
-Unsupported (require caller to resolve to explicit strikes first):
-`SellStraddle`, `BuyStraddle`, `IronButterfly`, `CashSecuredPut`.
+`CreditCallSpread`, `CreditPutSpread`, `IronCondor`, `CoveredCall`,
+`CashSecuredPut`, `SellStraddle`, `BuyStraddle`, `IronButterfly`.
 
 ### OCC symbol format
 
@@ -312,3 +310,67 @@ Before going live with short options, verify:
 
 The backtest does **not** model early assignment risk on dividends or deep-ITM
 scenarios.  Always add a conservative buffer when sizing real positions.
+
+---
+
+## Live Position Management
+
+The live bot (`dollarbill trade --live`) enforces a four-tier automated exit
+ladder for every open short-put position.
+
+### Decision Ladder
+
+Evaluated on every price tick for each symbol with an open position:
+
+```
+spot > strike × (1 + roll_trigger_pct)   → Hold (no action)
+strike × (1 + itm_proximity_pct) < spot
+  ≤ strike × (1 + roll_trigger_pct)      → Roll down/out
+spot ≤ strike × (1 + itm_proximity_pct) → ITM-proximity close
+0–1 DTE                                  → Expiry close
+premium ≤ entry × profit_target_pct      → Profit-target close
+premium ≥ entry × stop_loss_pct          → Stop-loss close
+```
+
+### Roll Down / Out
+
+A roll is a two-step atomic sequence:
+1. **Buy to close** the current OCC contract at market
+2. **Sell to open** a new put at the *same strike*, expiring `roll_dte_days`
+   calendar days from today (default 30)
+
+The replacement contract is resolved via `resolve_single_leg_occ` (queries the
+live Alpaca options chain for the nearest listed strike/expiry) before
+submission.
+
+`roll_count` is stored in SQLite and incremented on every successful roll.
+When `roll_count ≥ max_rolls` (default 2), the roll zone is skipped entirely
+and the position falls through to the ITM-proximity close on the next trigger.
+
+### Configuration Reference
+
+| Field | Default | Description |
+|---|---|---|
+| `profit_target_pct` | `0.50` | Close when option value = 50% of entry premium |
+| `stop_loss_pct` | `2.00` | Close when option value = 2× entry premium |
+| `max_position_days` | `21` | Force-close after N calendar days |
+| `itm_proximity_pct` | `0.03` | Close if spot ≤ strike × 1.03 |
+| `roll_trigger_pct` | `0.05` | Roll if spot ≤ strike × 1.05 |
+| `roll_dte_days` | `30` | DTE target for the new leg |
+| `max_rolls` | `2` | Maximum rolls per position before hard close |
+
+Set either `itm_proximity_pct` or `roll_trigger_pct` to `0.0` to disable that tier.
+
+### Re-entry Cooldown
+
+After any position close (automatic or manual), the bot blocks new entry
+signals for that symbol for 5 minutes to prevent immediately reversing the
+close on the next tick.
+
+### ITM Guard (Entry)
+
+Before submitting a new cash-secured put, the resolved OCC strike is compared
+to the current spot price.  If the resolved put strike is ≥ 99.5% of spot
+(ATM or ITM), the order is skipped — preventing the `resolve_occ` nearest-strike
+logic from accidentally placing an ATM put when a 5%-OTM target was intended.
+

@@ -200,6 +200,66 @@ A separate `ratatui` terminal UI that monitors the bot in real time.
 
 ---
 
+### 7. **Automated Position Management** ⭐ NEW
+
+The live bot manages open options positions autonomously through a four-tier
+decision ladder evaluated on every price tick.
+
+#### Trigger Ladder (short put example — strike $120, spot falling from $126)
+
+| Zone | Spot threshold | Action |
+|---|---|---|
+| Normal | spot > strike × 1.05 | Hold — no action |
+| **Roll zone** | strike × 1.03 < spot ≤ strike × 1.05 | Auto-roll (close + reopen 30 DTE out) |
+| **Close zone** | spot ≤ strike × 1.03 | Auto-close (ITM proximity guard) |
+| Expiry / P&L | 0–1 DTE, or 50% profit / 2× stop | Standard exit |
+
+#### Roll Down / Out
+
+When spot enters the *roll zone*, the bot:
+1. Buys to close the current OCC contract (market order)
+2. Resolves the nearest listed contract at the same strike ~30 DTE out
+3. Sells to open the new contract (market order)
+4. Updates SQLite: new `occ_symbol`, new `expires_at`, new `premium_collected`, `roll_count += 1`
+
+Rolling caps out at `max_rolls` (default 2). On the third approach toward the
+strike the bot falls through to the ITM-proximity close instead.
+
+#### Configuration (`config/trading_bot_config.json`)
+
+```json
+"bot_runtime": {
+  "profit_target_pct":  0.50,   // Close when 50% of premium has decayed
+  "stop_loss_pct":      2.00,   // Close when option doubles in price
+  "max_position_days":  21,     // Force-close after 21 calendar days
+  "itm_proximity_pct":  0.03,   // Close if spot ≤ strike × 1.03 (3% buffer)
+  "roll_trigger_pct":   0.05,   // Roll if spot ≤ strike × 1.05 (5% buffer)
+  "roll_dte_days":      30,     // Target DTE for rolled leg
+  "max_rolls":          2       // Max roll attempts per position
+}
+```
+
+Set `"itm_proximity_pct": 0.0` or `"roll_trigger_pct": 0.0` to disable that
+tier individually.
+
+#### Re-entry Cooldown
+
+After any close (automatic or manual reconciliation), the bot suppresses new
+entry signals for that symbol for 5 minutes (`REENTRY_COOLDOWN_SECS = 300`).
+This prevents immediately reversing the close on the next tick.
+
+#### ITM Guard (Order Submission)
+
+Before submitting a new cash-secured put, the bot calls
+`resolve_single_leg_occ` and checks the resolved strike against the current
+spot price.  If the resolved put strike is ≥ 99.5% of spot (ATM or ITM), the
+order is skipped with a warning — avoiding the scenario where `resolve_occ`
+snaps a 5%-OTM target to a nearby ATM contract.
+
+
+
+---
+
 ### 6. **Email Alerts (`lettre` SMTP)** ⭐ NEW
 
 The bot sends email notifications for critical events — no polling required.

@@ -187,6 +187,24 @@ pub struct BotRuntimeConfig {
     /// position (0–1). Signals skipped when realized vol is below this floor.
     #[serde(default = "BotRuntimeConfig::default_min_vol_percentile")]
     pub min_vol_percentile: f64,
+    /// Auto-close a short-put (CSP) when spot falls within this fraction of the
+    /// strike price (e.g. 0.03 = close when spot ≤ strike × 1.03).
+    /// Set to 0.0 to disable.
+    #[serde(default = "BotRuntimeConfig::default_itm_proximity_pct")]
+    pub itm_proximity_pct: f64,
+    /// Roll a short-put when spot falls within this fraction of the strike
+    /// (e.g. 0.05 = roll when spot ≤ strike × 1.05), but is still outside
+    /// `itm_proximity_pct`.  Set to 0.0 to disable rolling.
+    #[serde(default = "BotRuntimeConfig::default_roll_trigger_pct")]
+    pub roll_trigger_pct: f64,
+    /// Target DTE for the replacement leg when rolling out (e.g. 30 → sell
+    /// a put expiring ~30 calendar days from today).
+    #[serde(default = "BotRuntimeConfig::default_roll_dte_days")]
+    pub roll_dte_days: u32,
+    /// Maximum number of times a single position may be rolled before the
+    /// bot stops rolling and lets the ITM-proximity close handle it.
+    #[serde(default = "BotRuntimeConfig::default_max_rolls")]
+    pub max_rolls: u32,
 }
 
 impl BotRuntimeConfig {
@@ -199,6 +217,10 @@ impl BotRuntimeConfig {
     fn default_stop_loss_pct()        -> f64  { 2.00 }
     fn default_max_position_days()    -> i64  { 21   }
     fn default_min_vol_percentile()   -> f64  { 0.40 }
+    fn default_itm_proximity_pct()     -> f64  { 0.03 }
+    fn default_roll_trigger_pct()      -> f64  { 0.05 }
+    fn default_roll_dte_days()         -> u32  { 30   }
+    fn default_max_rolls()             -> u32  { 2    }
 }
 
 impl Default for BotRuntimeConfig {
@@ -213,6 +235,10 @@ impl Default for BotRuntimeConfig {
             stop_loss_pct:        Self::default_stop_loss_pct(),
             max_position_days:    Self::default_max_position_days(),
             min_vol_percentile:   Self::default_min_vol_percentile(),
+            itm_proximity_pct:    Self::default_itm_proximity_pct(),
+            roll_trigger_pct:     Self::default_roll_trigger_pct(),
+            roll_dte_days:        Self::default_roll_dte_days(),
+            max_rolls:            Self::default_max_rolls(),
         }
     }
 }

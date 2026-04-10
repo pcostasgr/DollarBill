@@ -442,6 +442,45 @@ if iv_edge > min_iv_edge && estimated_premium_pct > premium_threshold {
 - **Behavioral Fit**: Stable stocks with predictable ranges
 - **Performance**: +31.4% edge in backtesting vs traditional approaches
 
+### 8. Automated Position Management ⭐ NEW
+
+**What it does:** The live bot (`dollarbill trade --live`) now manages open short-put positions through their full lifecycle without manual intervention — including rolling when the underlying approaches the strike and force-closing when it trades dangerously close to ITM.
+
+**Decision Ladder (evaluated every bar, in priority order):**
+
+1. **Profit target** — If unrealized gain ≥ 50% of premium collected → buy-to-close
+2. **Max hold / expiry** — If DTE ≤ 0 or days held ≥ `max_days_hold` → buy-to-close
+3. **Roll down/out** — If `spot ≤ strike × (1 + roll_trigger_pct)` AND `roll_count < max_rolls` → buy-to-close, open new 30-DTE put at same strike
+4. **ITM proximity close** — If `spot ≤ strike × (1 + itm_proximity_pct)` → emergency buy-to-close
+5. **Normal hold** — No action
+
+**Entry Guard:** Before placing any new short put the bot checks `resolved_strike < spot × 0.995`. If the nearest listed contract is ATM or ITM the order is skipped entirely — protecting against options chains where the 5%-OTM target snaps to the wrong strike.
+
+**Re-entry Cooldown:** After any close (including roll failures) the underlying is blocked from re-entry for 300 seconds.
+
+**Roll Tracking:** Each roll increments `roll_count` in the SQLite `positions` table. DB schema migration (`ALTER TABLE positions ADD COLUMN roll_count INTEGER NOT NULL DEFAULT 0`) is applied automatically on first run.
+
+**Configuration (`config/trading_bot_config.json`):**
+```json
+{
+  "itm_proximity_pct": 0.03,
+  "roll_trigger_pct":  0.05,
+  "roll_dte_days":     30,
+  "max_rolls":         2
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `itm_proximity_pct` | `0.03` | Emergency close when spot is within 3% above strike |
+| `roll_trigger_pct` | `0.05` | Roll when spot is within 5% above strike |
+| `roll_dte_days` | `30` | DTE target for the replacement leg |
+| `max_rolls` | `2` | Maximum number of rolls per original position |
+
+> See [short-options-guide.md](short-options-guide.md#live-position-management) for the complete operational reference and [trading-guide.md](trading-guide.md) Section 7 for trigger table details.
+
+---
+
 ## 🧠 Stock Personality Analysis System ⭐ NEW
 
 **What it does:** Analyzes historical stock behavior to classify stocks into distinct personality types, then automatically matches the optimal trading strategies for each personality. This personality-driven approach delivers 200%+ performance improvements by aligning strategy selection with stock characteristics.

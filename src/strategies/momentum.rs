@@ -31,7 +31,7 @@ impl MomentumStrategy {
     pub fn new() -> Self {
         Self {
             momentum_period: 20,
-            threshold: 0.15, // 15% ratio deviation (e.g. IV/HV > 1.15)
+            threshold: 0.10, // 10% ratio deviation (e.g. IV/HV > 1.10)
             min_iv: 0.10,    // ignore if market IV < 10%
         }
     }

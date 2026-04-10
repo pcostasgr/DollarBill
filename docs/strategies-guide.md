@@ -31,6 +31,21 @@ DollarBill supports both simple and complex multi-leg options strategies. All st
 | Short Straddle | Neutral | Undefined | Advanced |
 | Short Strangle | Neutral | Undefined | Advanced |
 
+### Live Bot Signal Generator Thresholds
+
+The live trading bot uses signal generators to decide *when* market conditions warrant a new entry. The current thresholds (tuned for more frequent signal generation) are:
+
+| Signal Generator | Key Parameter | Current Value | Notes |
+|-----------------|---------------|---------------|-------|
+| **Momentum** | `threshold` | 0.10 (10%) | Rolling return required to trigger directional signal |
+| **MeanReversion** | `oversold_threshold` | −1.5 σ | Z-score below which a put-sell signal fires |
+| **MeanReversion** | `overbought_threshold` | +1.5 σ | Z-score above which a call-sell signal fires |
+| **Breakout** | `breakout_threshold` | 0.20 (20%) | Distance from range boundary to confirm breakout |
+| **Breakout** | `confirmation_threshold` | 1.05 | Close/high ratio required for confirmation |
+| **VolArb** | `min_edge` | 0.010 ($0.01) | Minimum model-vs-market edge to enter a vol-arb position |
+
+These values live in `src/strategies/{momentum,mean_reversion,breakout,vol_arbitrage}.rs` and are compared against live price/vol inputs each bar.
+
 ---
 
 ## Credit Spreads
@@ -382,9 +397,25 @@ let config = CashSecuredPutConfig {
 let signals = config.generate_signals(spot, volatility);
 ```
 
----
+#### Live Bot Behavior
 
-## Strategy Templates System
+When the live bot (`dollarbill trade --live`) manages a Cash-Secured Put it applies the full automated lifecycle:
+
+| Condition | Threshold | Action |
+|-----------|-----------|--------|
+| Profit target reached | ≥ 50% of premium | Buy-to-close (take profit) |
+| Max hold days exceeded | `max_days_hold` (default 30) | Buy-to-close (time exit) |
+| **Roll trigger** | spot ≤ strike × 1.05 (5% OTM buffer) | Roll down/out to new 30-DTE put at same strike |
+| **ITM proximity close** | spot ≤ strike × 1.03 (3% OTM buffer) | Emergency buy-to-close |
+| Position expired | DTE = 0 | Buy-to-close at expiry |
+
+**ITM Entry Guard:** Before opening any new put, the bot verifies `resolved_strike < spot × 0.995`. If the nearest listed contract falls within 0.5% of spot (i.e., effectively ATM or ITM) the order is skipped entirely.
+
+**Roll mechanics:** Up to `max_rolls` (default 2) rolls are allowed per position. Each successful roll increments `roll_count` in the database. If the new-leg order fails after the close succeeds, the position is removed and a 5-minute re-entry cooldown applies.
+
+> See [short-options-guide.md](short-options-guide.md#live-position-management) for the full decision ladder and all config knobs.
+
+---
 
 DollarBill provides a flexible template system that allows you to quickly configure and backtest strategies with custom parameters.
 

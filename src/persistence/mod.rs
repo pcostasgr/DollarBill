@@ -86,6 +86,9 @@ pub struct PositionRecord {
     /// Full OCC symbol for options positions (e.g. "QCOM250509P00120000").
     /// None for equity positions.  Used to issue the correct close order.
     pub occ_symbol:        Option<String>,
+    /// Number of times this position has been rolled.  Used to cap roll
+    /// attempts and avoid infinite rolling on a declining underlying.
+    pub roll_count:        i32,
 }
 
 // ─── TradeStore ───────────────────────────────────────────────────────────
@@ -174,6 +177,8 @@ impl TradeStore {
             .execute(pool).await;
         let _ = sqlx::query("ALTER TABLE positions ADD COLUMN occ_symbol TEXT")
             .execute(pool).await;
+        let _ = sqlx::query("ALTER TABLE positions ADD COLUMN roll_count INTEGER NOT NULL DEFAULT 0")
+            .execute(pool).await;
 
         // ── Indexes ────────────────────────────────────────────────
         sqlx::query(
@@ -219,8 +224,8 @@ impl TradeStore {
     pub async fn upsert_position(&self, p: &PositionRecord) -> Result<(), sqlx::Error> {
         sqlx::query(
             "INSERT OR REPLACE INTO positions
-             (symbol, qty, entry_price, entry_date, strategy, expires_at, premium_collected, occ_symbol)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             (symbol, qty, entry_price, entry_date, strategy, expires_at, premium_collected, occ_symbol, roll_count)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         )
         .bind(&p.symbol)
         .bind(p.qty)
@@ -230,6 +235,7 @@ impl TradeStore {
         .bind(&p.expires_at)
         .bind(p.premium_collected)
         .bind(&p.occ_symbol)
+        .bind(p.roll_count)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -247,7 +253,7 @@ impl TradeStore {
     /// Return all currently open positions.
     pub async fn get_open_positions(&self) -> Result<Vec<PositionRecord>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT symbol, qty, entry_price, entry_date, strategy, expires_at, premium_collected, occ_symbol FROM positions",
+            "SELECT symbol, qty, entry_price, entry_date, strategy, expires_at, premium_collected, occ_symbol, roll_count FROM positions",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -263,6 +269,7 @@ impl TradeStore {
                 expires_at:        row.get("expires_at"),
                 premium_collected: row.get("premium_collected"),
                 occ_symbol:        row.get("occ_symbol"),
+                roll_count:        row.get::<Option<i32>, _>("roll_count").unwrap_or(0),
             })
             .collect())
     }

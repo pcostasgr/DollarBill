@@ -29,8 +29,8 @@ impl MeanReversionStrategy {
     pub fn new() -> Self {
         Self {
             lookback_period: 20,
-            oversold_threshold: -2.0,
-            overbought_threshold: 2.0,
+            oversold_threshold: -1.5,
+            overbought_threshold: 1.5,
             min_volatility: 0.15,
             vol_of_vol_scale: 0.25, // assume vol-of-vol ≈ 25% of historical_vol
         }

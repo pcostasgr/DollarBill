@@ -14,7 +14,7 @@ impl VolatilityArbitrageStrategy {
         Self {
             iv_threshold: 0.02, // 2% minimum IV difference
             lookback_days: 30,
-            min_edge: 0.015, // 1.5% minimum edge
+            min_edge: 0.010, // 1.0% minimum edge
             max_dte: 45,
         }
     }

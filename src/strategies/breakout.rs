@@ -28,8 +28,8 @@ impl BreakoutStrategy {
     pub fn new() -> Self {
         Self {
             consolidation_period: 15,
-            breakout_threshold: 0.30, // IV must be ≥ 30% above realised vol
-            confirmation_threshold: 1.10, // model IV must also be ≥ 10% above HV
+            breakout_threshold: 0.20, // IV must be ≥ 20% above realised vol
+            confirmation_threshold: 1.05, // model IV must also be ≥ 5% above HV
             min_iv: 0.12,
         }
     }
