@@ -772,3 +772,35 @@ The originally proposed thresholds have been corrected against TSLA 2025 reality
 - [ ] Live profit factor > 1.5 over first 500 trades
 - [ ] No uncharted crash: max daily loss < 5% for any single session
 - [ ] Total tests: 660+ after all new validation tests
+
+---
+
+## April 2026 Audit — Priority Fix List
+
+> Source: external code review, April 10, 2026.
+> Six claimed flaws were checked against the actual codebase.
+> Two were wrong, two were partially wrong, two were correct.
+
+### Confirmed Problems (implement in order)
+
+| Priority | Item | Status | Details |
+|----------|------|--------|---------|
+| 🔴 1 | **Replace Nelder-Mead with CMA-ES for Heston calibration** | ❌ Not done | `calibrate_heston()` in `src/calibration/heston_calibrator.rs` uses 500-iteration Nelder-Mead. On noisy real chains (TSLA vol regime switching), simplex stagnates at local minima. CMA-ES or differential evolution required. Zero-dependency pure Rust CMA-ES is ~300 lines. |
+| 🔴 2 | **Add SVI per-expiry smile fit with butterfly arbitrage check** | ❌ Not done | Current smile fitting: cubic spline (can produce negative butterfly density) or SABR (breaks at extreme strikes). No no-arb enforcement at the surface level. Edge signals derived from an arbitrageable surface are unreliable. SVI parameterization: σ²(k) = a + b(ρ(k−m) + √((k−m)² + σ²)); butterfly check: d²C/dK² ≥ 0. |
+| 🟠 3 | **Halve position size in HighVol regime** | ❌ Not done | `RegimeDetector` classifies correctly and gates which strategies fire, but `suggested_size` in `PositionDecision` is NOT reduced when `regime == HighVol`. When realized vol > 40% (TSLA Feb-Mar 2025 reality), the bot was still sizing at normal contract counts. Fix: in `live_bot.rs`, after `pm.can_take_position()`, multiply `qty` by 0.5 (round up) when `regime == MarketRegime::HighVol`. |
+| 🟡 4 | **Add vanna, volga, charm to Greeks struct and portfolio aggregation** | ❌ Not done | `Greeks` struct has Δ, Γ, θ, vega, ρ. `HigherOrderGreeks` has speed, zomma, color. Missing: **vanna** = ∂Δ/∂σ = ∂²V/∂S∂σ, **volga** = ∂²V/∂σ² (vega convexity), **charm** = ∂Δ/∂t (delta decay). These matter for multi-leg hedging. All three are closed-form in BSM. Add to `bs_mod.rs` and aggregate in `risk_analytics.rs`. |
+| 🟡 5 | **Calibrate slippage params against actual TSLA Feb-Mar 2025 spread behavior** | ⚠️ Structure OK, params not validated | `PanicWidening` and `FullMarketImpact` models exist in `engine.rs`. But `normal_vol`, `panic_exponent`, `cap_multiplier` values are chosen by convention, not fitted to real spread data. Run the stress scenario with `SlippageModel::PanicWidening { normal_vol: 0.25, panic_exponent: 2.0 }` on the TSLA Feb-Mar window and verify the slippage-adjusted P&L is materially worse than the flat model. |
+
+### Claimed Problems That Were Wrong
+
+| Claim | Verdict | Reality |
+|-------|---------|---------|
+| "Options trading is paper-only simulation" | ❌ False | Live bot submits real Alpaca API options orders. QCOM position is live proof. |
+| "No regime detection" | ❌ False | `RegimeDetector` in `src/analysis/regime_detector.rs` classifies 5 regimes per bar; live bot gates strategy weights. Gap is position sizing, not detection. |
+
+### Claimed Problems That Were Partially Wrong
+
+| Claim | Verdict | Reality |
+|-------|---------|---------|
+| "No portfolio-level Greeks (vanna, volga, charm)" | ⚠️ Partial | First-order Greeks (Δ,Γ,θ,vega) ARE aggregated. Higher-order (speed, zomma, color) exist. Vanna/volga/charm genuinely missing. |
+| "Backtester is optimistic (no real bid-ask, weak slippage)" | ⚠️ Partial | Five slippage models including `PanicWidening` exist. Problem is params not calibrated to actual spread observations, not missing architecture. |
