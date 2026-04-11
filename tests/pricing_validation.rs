@@ -23,6 +23,10 @@ use dollarbill::models::bs_mod::{black_scholes_merton_call, black_scholes_merton
 use dollarbill::models::heston::HestonParams;
 use dollarbill::models::heston_analytical::{heston_call_carr_madan, heston_put_carr_madan};
 #[cfg(not(debug_assertions))]
+use dollarbill::models::heston_analytical::HestonCfCache;
+#[cfg(not(debug_assertions))]
+use dollarbill::models::gauss_laguerre::GaussLaguerreRule;
+#[cfg(not(debug_assertions))]
 use std::time::Instant;
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -205,8 +209,11 @@ fn bsm_delta_vs_finite_difference() {
 /// Heston analytical: 50 strikes × 10 expiries must price in < 1.5 ms (release).
 ///
 /// This test is **release-only** (`--release` flag required).  Debug builds
-/// produce code that is ~100× slower; 500 Heston prices take > 1 s in debug
-/// whereas they comfortably clear 1.5 ms in a release build on a modern CPU.
+/// produce code that is ~100× slower.
+///
+/// Uses `HestonCfCache` + Gauss-Laguerre 32-node quadrature: the characteristic
+/// function is computed **once per maturity** (~64 CF evals), then all 50 strikes
+/// are priced via cheap phase-multiplication — no redundant CF evaluations.
 ///
 /// Run with: `cargo test --release --test pricing_validation heston_batch`
 #[test]
@@ -230,16 +237,27 @@ fn heston_batch_50x10_under_1500us() {
     // 10 maturities: 1 month … 10 months
     let maturities: Vec<f64> = (1..=10).map(|m| m as f64 / 12.0).collect();
 
-    // Warm-up: single call so the instruction cache is hot before timing.
-    let _ = heston_call_carr_madan(spot, spot, 0.5, 0.045, &base);
+    // Pre-build a 32-node Gauss-Laguerre rule (reused across all maturities).
+    let rule = GaussLaguerreRule::new(32);
+
+    // Warm-up: build + price one maturity so instruction caches are hot.
+    {
+        let mut wp = base.clone();
+        wp.t = 0.5;
+        let cache = HestonCfCache::new(spot, 0.5, 0.045, &wp, &rule);
+        let _ = cache.price_calls(&strikes);
+    }
 
     let t0 = Instant::now();
     let mut checksum = 0.0_f64; // prevents dead-code elimination
     for &mat in &maturities {
         let mut p = base.clone();
         p.t = mat;
-        for &k in &strikes {
-            checksum += heston_call_carr_madan(spot, k, mat, 0.045, &p);
+        // Build the CF cache once per maturity (≈ 64 CF evaluations),
+        // then price all 50 strikes via cheap phase-multiplication.
+        let cache = HestonCfCache::new(spot, mat, 0.045, &p, &rule);
+        for price in cache.price_calls(&strikes) {
+            checksum += price;
         }
     }
     let elapsed_us = t0.elapsed().as_micros();

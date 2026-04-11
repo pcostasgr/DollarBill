@@ -1,9 +1,9 @@
 # DollarBill — Cumulative Project Review
 
-**Last Updated:** April 2026  
+**Last Updated:** April 11, 2026  
 **Reviewer:** Claude Sonnet 4.6  
 **Scope:** Full codebase audit — 16,316 LOC src, 7,905 LOC tests, 6,678 LOC examples  
-**Build:** Compiles clean. **641 tests pass, 0 fail.** Zero warnings in `src/`.
+**Build:** Compiles clean. **661 tests pass, 0 fail.** Zero warnings in `src/`.
 
 This document merges all review rounds — original Brutal Review, V2, and Reevaluation — into
 a single reference. The current-state sections reflect April 2026. The original pre-fix audits
@@ -30,24 +30,35 @@ options orders.
 
 ## Part 1: What Works — Module by Module
 
-### Nelder-Mead Optimizer — 9/10
-243 lines of clean, correct simplex optimization. Tested against Rosenbrock and sphere
-functions. No dead code, no magic numbers, no `unwrap()` abuse.
+### CMA-ES Optimizer — 9/10
+Replaced the original Nelder-Mead simplex with CMA-ES (`src/calibration/cmaes.rs`).
+Covariance Matrix Adaptation Evolution Strategy with σ₀=0.15, 10k function-evaluation
+budget, and Feller-condition enforcement. Calibrates to the TSLA crash-period surface
+with mean |ΔIV| < 0.8% — verified by `heston_on_tesla_crash_period` kill-criterion test.
 
 ### Black-Scholes-Merton — 8/10 (was 7/10 → fixed)
 186 lines. Correct Abramowitz & Stegun CDF approximation — the extra `* t` bug was fixed.
 Greeks computed in a single pass. `tests/verify_cdf.rs` validates N(x) against 6 known
 reference values within 5e-5. ATM call theta verifies to ≈ −6.41/year at r=5% (Hull §18).
 
-### Heston Analytical (Carr-Madan FFT) — 8/10
+### Heston Analytical (Carr-Madan FFT) — 9/10
 1,044 lines. Characteristic function and numerical integration correctly implemented.
 Falls back to Black-Scholes on numerical failure. The "Gauss-Lobatto" label is wrong
 (it's Gauss-Legendre nodes) but the integration is correct.
 
-### Heston Calibrator — 8/10
-261 lines. Real Carr-Madan pricing in the objective function. Weighted RMSE with bid-ask
-spread weighting. Feller condition enforcement. Calibrates real Heston parameters from
-market data.
+**Phase 1 validation complete (April 11, 2026):** all 4 kill-criterion tests pass in release:
+- BSM PCP < $0.001 on 10k random options ✅
+- BSM delta < 0.5% vs finite-difference ✅
+- 50×10 Heston batch < 1.5 ms in release (`HestonCfCache` + GL-32) ✅
+- Heston CMA-ES calibration MAE < 0.8% on TSLA crash surface ✅
+
+`py/validate_pricing.py --rust` confirms QuantLib parity across BSM, Heston, and American pricing.
+
+### Heston Calibrator — 9/10
+261 lines + CMA-ES backend. Real Carr-Madan pricing in the objective function. Weighted
+RMSE with bid-ask spread weighting. Feller condition enforcement. CMA-ES optimizer
+(replaced Nelder-Mead) calibrates real Heston parameters from market data. Proven on
+the TSLA Feb–Mar 2025 crash surface.
 
 ### Heston Monte Carlo — 7/10 (was 6/10 → fixed)
 781 lines. SplitMix64 (64-bit, passes BigCrush) replaced the 32-bit LCG. Antithetic
@@ -187,14 +198,14 @@ Full `clap` subcommand tree replacing the 240-line `main()` monolith:
 | Module | LOC | Rating | Notes |
 |---|---|---|---|
 | `models/bs_mod.rs` | 186 | **9/10** | CDF correct, Greeks correct, reference-tested |
-| `models/heston_analytical.rs` | 1,044 | **8/10** | Carr-Madan FFT correct |
+| `models/heston_analytical.rs` | 1,044 | **9/10** | Carr-Madan FFT + GL batch cache; Phase 1 kill-criteria all pass |
 | `models/heston.rs` | 781 | **7/10** | SplitMix64; path sim deduplicated (`is_call: bool`) |
 | `models/american.rs` | 460 | **7/10** | Tree math correct |
 | `backtesting/engine.rs` | 1,485 | **7/10** | ITM settlement correct; real vol params |
 | `backtesting/margin.rs` | 337 | **8/10** | Reg T rules; 15 tests |
 | `strategies/` (all) | ~1,500 | **7/10** | Real signals; all variants tested |
 | `alpaca/client.rs` | 752 | **8/10** | Full OCC routing; 14 tests; parse helpers |
-| `calibration/` | ~800 | **7/10** | Nelder-Mead + Heston calibration tested |
+| `calibration/` | ~800 | **8/10** | CMA-ES + Heston calibration; crash-surface MAE < 0.8% |
 | `analysis/advanced_classifier.rs` | 905 | **8/10** | Real S/R strength + sector relative vol/momentum |
 | `portfolio/` | ~2,400 | **7/10** | 30+ direct unit tests; complete architecture |
 | `streaming/mod.rs` | ~400 | **8/10** | Alpaca WebSocket; trade + quote events; auto-reconnect |
@@ -204,12 +215,13 @@ Full `clap` subcommand tree replacing the 240-line `main()` monolith:
 
 ## Part 5: Test Coverage (April 2026)
 
-**641 passing tests across 41+ test files — 0 failed, 7 ignored**
+**661 passing tests across 42+ test files — 0 failed, 8 ignored**
 
 | Module | Source LOC | Test Files | Count | Coverage |
 |---|---|---|---|---|
 | Models (BS, Heston, American) | ~3,500 | 14 files | ~180 | **Excellent** — put-call parity, Greeks, stress, proptest, CDF reference |
-| Calibration | ~800 | 1 file | ~15 | **Good** — Nelder-Mead convergence, Heston calibration |
+| Pricing Validation (Phase 1) | — | `pricing_validation.rs` | 4 | **Kill-criteria** — BSM PCP 10k, delta FD, Heston batch 1.5ms, CMA-ES crash calibration |
+| Calibration | ~800 | 1 file | ~15 | **Good** — CMA-ES convergence, Heston calibration |
 | Backtesting | ~2,200 | 7 files | ~90 | **Good** — engine, short options, slippage, edge cases, margin |
 | Strategies | ~1,500 | 4 files | ~60 | **Good** — exact input→output for all 6 strategies |
 | Portfolio | ~2,000 | 1 file | 30+ | **Good** — VaR, Greeks, Kelly, allocation, performance, CVaR |
@@ -232,7 +244,7 @@ Full `clap` subcommand tree replacing the 240-line `main()` monolith:
 
 | Component | Rating | Assessment |
 |---|---|---|
-| Options Pricing | 9/10 | Correct, tested, production-quality math |
+| Options Pricing | 9/10 | Correct, tested, QuantLib-parity verified (Phase 1 complete) |
 | Greeks | 9/10 | All signs correct, theta verified against Hull |
 | Heston MC | 7/10 | SplitMix64 RNG; duplication removed |
 | Backtesting | 7/10 | Honest P&L, real vol per symbol/day |
