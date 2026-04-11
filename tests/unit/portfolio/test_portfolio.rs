@@ -45,6 +45,7 @@ fn make_position(id: usize, symbol: &str, qty: i32, price: f64, greeks: Greeks) 
         status: PositionStatus::Open,
         days_held: 0,
         entry_greeks: Some(greeks),
+        entry_higher_greeks: None,
         realized_pnl: 0.0,
         unrealized_pnl: 0.0,
     }
@@ -67,6 +68,7 @@ fn closed_position(id: usize, symbol: &str, pnl: f64) -> Position {
         status: PositionStatus::Closed,
         days_held: 30,
         entry_greeks: None,
+        entry_higher_greeks: None,
         realized_pnl: pnl,
         unrealized_pnl: 0.0,
     }

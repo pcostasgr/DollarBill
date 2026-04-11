@@ -350,6 +350,7 @@ mod tests {
                 vega: 0.15,
                 rho: 0.1,
             }),
+            entry_higher_greeks: None,
             realized_pnl: 0.0,
             unrealized_pnl: 0.0,
         }

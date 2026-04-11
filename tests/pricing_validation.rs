@@ -21,6 +21,10 @@ use dollarbill::market_data::csv_loader::load_csv_closes;
 use dollarbill::models::bs_mod::{black_scholes_merton_call, black_scholes_merton_put};
 use dollarbill::analysis::regime_detector::RegimeDetector;
 use dollarbill::analysis::advanced_classifier::MarketRegime;
+use dollarbill::analysis::portfolio_greeks::{
+    compute_book_greeks, compute_exposure_vectors, check_limits,
+    OptionLeg, PortfolioLimits,
+};
 #[cfg(not(debug_assertions))]
 use dollarbill::models::heston::HestonParams;
 use dollarbill::models::heston_analytical::HestonCfCache;
@@ -1455,4 +1459,75 @@ fn heston_regime_parameter_stability() {
          calm regime should be substantially closer to satisfying Feller.",
         fr_calm, fr_crash, feller_diff
     );
+}
+
+// ─── Kill criterion 11: portfolio Greeks performance ─────────────────────────
+
+/// 20-leg book: full Greeks (Δ, Γ, ν, θ, ρ, vanna, volga, charm) + exposure
+/// vectors must complete in < 2 ms (release build).
+///
+/// This validates that the closed-form BSM Greeks + analytical higher-order
+/// computation is fast enough for real-time pre-trade risk checks.
+#[test]
+#[cfg(not(debug_assertions))]
+fn portfolio_greeks_20leg_under_2ms() {
+    let spot = 250.0;
+    let rate = 0.045;
+
+    // Build a realistic 20-leg book: mix of calls/puts, long/short, varying
+    // strikes and maturities, like a large iron-condor portfolio.
+    let legs: Vec<OptionLeg> = (0..20).map(|i| {
+        let frac = 0.85 + (i as f64) * 0.015;  // 85% to 113.5% moneyness
+        OptionLeg {
+            strike: (spot * frac / 5.0).round() * 5.0,
+            time_to_expiry: 7.0 / 365.0 + (i as f64) * 10.0 / 365.0, // 7 to 197 DTE
+            sigma: 0.20 + (i as f64) * 0.005,   // 20% to 29.5% IV
+            is_call: i % 2 == 0,
+            quantity: if i % 3 == 0 { -2 } else { 1 },
+            dividend_yield: 0.0,
+        }
+    }).collect();
+
+    // Warm-up
+    let _ = compute_book_greeks(spot, rate, &legs);
+
+    let start = Instant::now();
+    let iterations = 100;
+    for _ in 0..iterations {
+        let pg = compute_book_greeks(spot, rate, &legs);
+        let _ev = compute_exposure_vectors(spot, rate, &legs, &pg);
+        std::hint::black_box(&pg);
+    }
+    let elapsed = start.elapsed();
+    let per_call = elapsed / iterations;
+
+    println!(
+        "20-leg book Greeks + exposure vectors: {:.1} µs/call ({} iterations, {:.1} ms total)",
+        per_call.as_nanos() as f64 / 1_000.0,
+        iterations,
+        elapsed.as_secs_f64() * 1_000.0
+    );
+
+    assert!(
+        per_call.as_micros() < 2_000,
+        "20-leg book Greeks took {} µs — exceeds 2 ms budget.",
+        per_call.as_micros()
+    );
+
+    // Verify Greeks are sane
+    let pg = compute_book_greeks(spot, rate, &legs);
+    assert!(pg.net_delta.is_finite(), "net_delta must be finite");
+    assert!(pg.net_vanna.is_finite(), "net_vanna must be finite");
+    assert!(pg.net_volga.is_finite(), "net_volga must be finite");
+    assert!(pg.net_charm.is_finite(), "net_charm must be finite");
+
+    // Verify exposure vectors are non-zero (mixed book should have sensitivity)
+    let ev = compute_exposure_vectors(spot, rate, &legs, &pg);
+    assert!(ev.delta_1pct_up.abs() > 1e-6, "delta exposure should be non-zero");
+    assert!(ev.vega_1pt_up.abs() > 1e-6, "vega exposure should be non-zero");
+
+    // Verify limit checks work
+    let limits = PortfolioLimits::default();
+    let breaches = check_limits(&pg, &limits, 100_000.0);
+    println!("Limit breaches: {:?}", breaches.iter().map(|b| b.greek).collect::<Vec<_>>());
 }

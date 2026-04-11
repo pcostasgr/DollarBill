@@ -1,7 +1,7 @@
 // Portfolio-level risk analytics
 
 use crate::backtesting::position::{Position, PositionStatus, OptionType};
-use crate::models::bs_mod::Greeks;
+use crate::models::bs_mod::{Greeks, HigherOrderGreeks};
 use std::collections::HashMap;
 
 /// Portfolio risk metrics
@@ -14,6 +14,10 @@ pub struct PortfolioRisk {
     pub net_exposure: f64,      // Net delta exposure in dollars
     pub gross_exposure: f64,    // Gross exposure (sum of absolute values)
     pub beta_weighted_delta: f64,
+    // Second-order cross-Greeks
+    pub total_vanna: f64,       // ∂Δ/∂σ — delta sensitivity to vol
+    pub total_volga: f64,       // ∂²V/∂σ² — vega convexity
+    pub total_charm: f64,       // −∂Δ/∂t — delta decay
     pub var_95: f64,            // 95% Value at Risk
     pub var_99: f64,            // 99% Value at Risk
     pub cvar_95: f64,           // 95% Conditional VaR (Expected Shortfall)
@@ -31,6 +35,9 @@ impl Default for PortfolioRisk {
             net_exposure: 0.0,
             gross_exposure: 0.0,
             beta_weighted_delta: 0.0,
+            total_vanna: 0.0,
+            total_volga: 0.0,
+            total_charm: 0.0,
             var_95: 0.0,
             var_99: 0.0,
             cvar_95: 0.0,
@@ -52,6 +59,8 @@ pub struct RiskLimits {
     pub max_portfolio_delta: f64,      // Maximum net delta
     pub max_portfolio_gamma: f64,      // Maximum gamma exposure
     pub max_portfolio_vega: f64,       // Maximum vega exposure
+    pub max_portfolio_volga: f64,      // Maximum volga exposure (tail convexity)
+    pub max_portfolio_charm: f64,      // Maximum charm exposure (overnight gamma risk)
     pub max_concentration_pct: f64,    // Max % in single position
     pub max_var_pct: f64,              // Max VaR as % of portfolio
     pub max_sector_exposure_pct: f64,  // Max exposure to single sector
@@ -63,6 +72,8 @@ impl Default for RiskLimits {
             max_portfolio_delta: 0.3,     // 30% net delta
             max_portfolio_gamma: 0.1,      // 10% gamma
             max_portfolio_vega: 0.15,      // 15% vega
+            max_portfolio_volga: 0.10,     // 10% volga
+            max_portfolio_charm: 0.08,     // 8% charm
             max_concentration_pct: 20.0,   // 20% max per position
             max_var_pct: 10.0,             // 10% max VaR
             max_sector_exposure_pct: 40.0, // 40% per sector
@@ -93,7 +104,18 @@ impl RiskAnalyzer {
                 risk.total_gamma += greeks.gamma * position_multiplier;
                 risk.total_theta += greeks.theta * position_multiplier;
                 risk.total_vega += greeks.vega * position_multiplier;
-                
+            }
+
+            // Aggregate higher-order Greeks if available
+            if let Some(hog) = &pos.entry_higher_greeks {
+                let position_multiplier = pos.quantity as f64 * 100.0;
+                risk.total_vanna += hog.vanna * position_multiplier;
+                risk.total_volga += hog.volga * position_multiplier;
+                risk.total_charm += hog.charm * position_multiplier;
+            }
+
+            if let Some(greeks) = &pos.entry_greeks {
+                let position_multiplier = pos.quantity as f64 * 100.0;
                 // Track position value
                 let position_value = greeks.price * position_multiplier.abs();
                 position_values.push(position_value);
@@ -215,6 +237,25 @@ impl RiskAnalyzer {
                 "VaR {:.1}% exceeds limit {:.1}%",
                 var_pct,
                 self.risk_limits.max_var_pct
+            ));
+        }
+
+        // Higher-order Greek limits
+        let volga_pct = (risk.total_volga.abs() / self.portfolio_value).min(1.0);
+        if volga_pct > self.risk_limits.max_portfolio_volga {
+            violations.push(format!(
+                "Portfolio volga {:.1}% exceeds limit {:.1}%",
+                volga_pct * 100.0,
+                self.risk_limits.max_portfolio_volga * 100.0
+            ));
+        }
+
+        let charm_pct = (risk.total_charm.abs() / self.portfolio_value).min(1.0);
+        if charm_pct > self.risk_limits.max_portfolio_charm {
+            violations.push(format!(
+                "Portfolio charm {:.1}% exceeds limit {:.1}%",
+                charm_pct * 100.0,
+                self.risk_limits.max_portfolio_charm * 100.0
             ));
         }
         
@@ -339,6 +380,7 @@ mod tests {
             status: PositionStatus::Open,
             days_held: 0,
             entry_greeks: Some(greeks),
+            entry_higher_greeks: None,
             realized_pnl: 0.0,
             unrealized_pnl: 0.0,
         }

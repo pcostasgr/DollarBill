@@ -1,7 +1,7 @@
 // Position tracking for open options positions
 
 use crate::models::american::ExerciseStyle;
-use crate::models::bs_mod::Greeks;
+use crate::models::bs_mod::{Greeks, HigherOrderGreeks};
 
 #[derive(Debug, Clone)]
 pub enum PositionStatus {
@@ -35,6 +35,7 @@ pub struct Position {
     
     // Greeks at entry
     pub entry_greeks: Option<Greeks>,
+    pub entry_higher_greeks: Option<HigherOrderGreeks>,
     
     // P&L tracking
     pub realized_pnl: f64,
@@ -70,6 +71,7 @@ impl Position {
             status: PositionStatus::Open,
             days_held: 0,
             entry_greeks,
+            entry_higher_greeks: None,
             realized_pnl: 0.0,
             unrealized_pnl: 0.0,
         }

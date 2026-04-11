@@ -372,6 +372,7 @@ mod tests {
             status: PositionStatus::Open,
             days_held: 0,
             entry_greeks: None,
+            entry_higher_greeks: None,
             realized_pnl: pnl,
             unrealized_pnl: 0.0,
         };

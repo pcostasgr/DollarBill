@@ -189,7 +189,7 @@ pub fn pnl_attribution(
 //   • "The Complete Guide to Option Pricing Formulas", Haug (2007), Ch. 5
 //   • "Greeks for Higher Order Risk", Dupire (2004)
 
-/// Container for third-order Black-Scholes Greeks.
+/// Container for second- and third-order Black-Scholes Greeks.
 #[derive(Debug, Clone, Copy)]
 pub struct HigherOrderGreeks {
     /// Speed = ∂Γ/∂S — rate of change of gamma w.r.t. spot.
@@ -201,6 +201,14 @@ pub struct HigherOrderGreeks {
     /// Color = ∂Γ/∂t — rate of change of gamma w.r.t. time (daily decay of gamma).
     /// Note: sign convention here is *positive when gamma increases with time*.
     pub color: f64,
+    /// Vanna = ∂Δ/∂σ = ∂ν/∂S — delta sensitivity to vol (closed-form).
+    pub vanna: f64,
+    /// Volga = ∂²V/∂σ² = ∂ν/∂σ — vega convexity (closed-form).
+    /// Also known as "vomma".
+    pub volga: f64,
+    /// Charm = −∂Δ/∂t — delta decay (closed-form).
+    /// Positive charm means delta drifts towards zero as time passes.
+    pub charm: f64,
 }
 
 /// Compute third-order BSM Greeks using singularity-aware central differences.
@@ -238,6 +246,9 @@ pub fn higher_order_greeks(
         }
     };
 
+    // ── Closed-form vanna, volga, charm ──
+    let (vanna, volga, charm) = closed_form_vvc(s, k, t, r, sigma, q, is_call);
+
     // Base Gamma at the four perturbed spots needed for Speed.
     let g_up  = pricer(s + h_spot, sigma, t).gamma;
     let g_mid = pricer(s,           sigma, t).gamma;
@@ -264,7 +275,47 @@ pub fn higher_order_greeks(
         0.0 // T too small to differentiate meaningfully
     };
 
-    HigherOrderGreeks { speed, zomma, color: -g_mid / (2.0 * t) + color }
+    HigherOrderGreeks { speed, zomma, color: -g_mid / (2.0 * t) + color, vanna, volga, charm }
+}
+
+/// Compute closed-form BSM vanna, volga, charm.
+///
+/// These are second-order cross-Greeks that have exact analytical expressions.
+/// Much faster and more accurate than finite differences.
+///
+/// - Vanna = −e^{−qT} · φ(d₁) · d₂ / σ
+/// - Volga = ν · d₁ · d₂ / σ  (where ν = vega)
+/// - Charm (call) = −e^{−qT} · φ(d₁) · [q − (r−q)d₂/(σ√T) − (1+d₁d₂)/(2T)]
+/// - Charm (put)  = charm_call + q·e^{−qT}
+fn closed_form_vvc(
+    s: f64, k: f64, t: f64, r: f64, sigma: f64, q: f64, is_call: bool,
+) -> (f64, f64, f64) {
+    if t <= 0.0 || sigma <= 0.0 || s <= 0.0 || k <= 0.0 {
+        return (0.0, 0.0, 0.0);
+    }
+    let sqrt_t = t.sqrt();
+    let d1 = ((s / k).ln() + (r - q + 0.5 * sigma * sigma) * t) / (sigma * sqrt_t);
+    let d2 = d1 - sigma * sqrt_t;
+    let e_qt = (-q * t).exp();
+    let phi_d1 = norm_pdf(d1);
+
+    // Vanna = −e^{−qT} · φ(d₁) · d₂ / σ
+    let vanna = -e_qt * phi_d1 * d2 / sigma;
+
+    // Volga = S · e^{−qT} · φ(d₁) · √T · d₁ · d₂ / σ
+    // equivalently = vega · d₁ · d₂ / σ
+    let vega = s * e_qt * sqrt_t * phi_d1;
+    let volga = vega * d1 * d2 / sigma;
+
+    // Charm (call) = −e^{−qT} · φ(d₁) · [q − d₂(r−q)/(σ√T) − (1+d₁·d₂)/(2T)]
+    // For puts: charm_put = charm_call + q·e^{−qT}
+    // Sign convention: positive charm = delta decays towards zero
+    let charm_call = -e_qt * phi_d1 * (
+        q - d2 * (r - q) / (sigma * sqrt_t) - (1.0 + d1 * d2) / (2.0 * t)
+    );
+    let charm = if is_call { charm_call } else { charm_call + q * e_qt };
+
+    (vanna, volga, charm)
 }
 
 

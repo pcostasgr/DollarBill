@@ -285,6 +285,7 @@ fn create_position(id: usize, symbol: &str, quantity: i32, price: f64, delta: f6
             vega: 0.15,
             rho: 0.1,
         }),
+        entry_higher_greeks: None,
         realized_pnl: 0.0,
         unrealized_pnl: 0.0,
     }
