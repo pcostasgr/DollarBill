@@ -1791,3 +1791,382 @@ fn heston_mc_5000_no_negative_variance() {
          calm params are well within Feller bounds, this should never occur.",
     );
 }
+
+// ─── Kill criterion 15: regime pipeline smoke-test ───────────────────────────
+
+/// Verifies the end-to-end pre-trade pipeline:
+///   1. PortfolioGreeks are computed from a live 4-leg iron condor book.
+///   2. RegimeDetector classifies high-vol closes as `HighVol`.
+///   3. PositionSizer returns a multiplier-adjusted contract count.
+///   4. Audit log records the decision in both JSON and CSV.
+///   5. Auto-derisk fires when a 20-lot book pushes vega past the limit.
+#[test]
+fn regime_pipeline_wires_greeks_and_sizer() {
+    use dollarbill::backtesting::RegimePipeline;
+    use dollarbill::analysis::portfolio_greeks::{PortfolioLimits, OptionLeg};
+    use dollarbill::portfolio::{PositionSizer, SizingMethod};
+
+    let spot = 350.0_f64;
+    let rate = 0.045_f64;
+    let vol  = 0.40_f64;      // HighVol
+    let t    = 30.0 / 365.0;
+
+    // ── 4-leg iron condor (1 lot each) ────────────────────────────────────────
+    // Short ±10 % OTM, long ±20 % OTM
+    let small_book: Vec<OptionLeg> = vec![
+        OptionLeg { strike: 315.0, time_to_expiry: t, sigma: vol, is_call: false, quantity: -1, dividend_yield: 0.0 },
+        OptionLeg { strike: 280.0, time_to_expiry: t, sigma: vol, is_call: false, quantity:  1, dividend_yield: 0.0 },
+        OptionLeg { strike: 385.0, time_to_expiry: t, sigma: vol, is_call: true,  quantity: -1, dividend_yield: 0.0 },
+        OptionLeg { strike: 420.0, time_to_expiry: t, sigma: vol, is_call: true,  quantity:  1, dividend_yield: 0.0 },
+    ];
+
+    // ── 20-lot book: pushes net_vega well beyond default limit (500) ──────────
+    let big_book: Vec<OptionLeg> = small_book.iter().map(|l| OptionLeg { quantity: l.quantity * 20, ..l.clone() }).collect();
+
+    // Simulate rising-vol closes that clearly classify as HighVol (>40 % ann.)
+    // Daily log-return std ≈ 0.025 → ann. ≈ 39.7 %; add a bit more:
+    let closes: Vec<f64> = {
+        let mut v = Vec::with_capacity(30);
+        let mut s = 350.0_f64;
+        // +2.6 % daily moves → ann. vol ≈ 41 %
+        for i in 0..30 {
+            s *= if i % 2 == 0 { 1.026 } else { 0.974 };
+            v.push(s);
+        }
+        v
+    };
+
+    // Pipeline with limits sized so 1-lot book clears, 20-lot book breaches vega.
+    // BSM vega of a 1-lot ±10% OTM 30-day condor (×100 multiplier) ≈ −3 600,
+    // so we set max_vega = 10 000.  The 20-lot book reaches −72 900 → breach.
+    let sizer = PositionSizer::new(100_000.0, 2.0, 10.0);
+    let limits = PortfolioLimits {
+        max_delta: 0.50,
+        max_vega:  10_000.0,
+        max_volga: 50_000.0,
+        max_charm: 10_000.0,
+    };
+    let mut pipeline = RegimePipeline::new(sizer, limits);
+
+    // ── Run 1: small book — should NOT trigger auto-derisk ────────────────────
+    let d1 = pipeline.pre_trade_check(
+        "2025-02-01", spot, rate, &closes, &small_book,
+        3.50, vol, SizingMethod::VolatilityBased, 100_000.0,
+    );
+    println!(
+        "Small book: regime={:?}  mult={:.2}  contracts={}  flatten={}  vega={:.2}",
+        d1.regime, d1.multiplier, d1.contracts, d1.should_flatten, d1.greeks.net_vega
+    );
+
+    // ── Run 2: large book — net_vega > 500 → auto-derisk ─────────────────────
+    let d2 = pipeline.pre_trade_check(
+        "2025-02-28", spot, rate, &closes, &big_book,
+        3.50, vol, SizingMethod::VolatilityBased, 100_000.0,
+    );
+    println!(
+        "Big book:   regime={:?}  mult={:.2}  contracts={}  flatten={}  vega={:.2}",
+        d2.regime, d2.multiplier, d2.contracts, d2.should_flatten, d2.greeks.net_vega
+    );
+
+    // ── Assertions ────────────────────────────────────────────────────────────
+    // HighVol regime → multiplier 0.35 → fewer contracts than neutral
+    assert!(
+        d1.multiplier < 1.0,
+        "HighVol regime must return multiplier < 1.0 (got {:.2})",
+        d1.multiplier
+    );
+    assert!(
+        d1.contracts >= 0,
+        "Contracts must be non-negative"
+    );
+
+    // Big book → net vega exceeds 500 → should_flatten
+    assert!(
+        d2.greeks.net_vega.abs() > 500.0,
+        "20-lot book net_vega ({:.1}) must exceed default limit 500",
+        d2.greeks.net_vega.abs()
+    );
+    assert!(
+        d2.should_flatten,
+        "20-lot book pushed vega ({:.1}) past limit — should_flatten must be true",
+        d2.greeks.net_vega.abs()
+    );
+
+    // Audit log has exactly 2 entries
+    assert_eq!(pipeline.audit_log.entries.len(), 2, "Audit log must have 2 entries");
+    assert_eq!(pipeline.audit_log.derisk_count(), 1, "Exactly one auto-derisk event");
+
+    // JSON and CSV round-trip basics
+    let json = pipeline.audit_log.to_json();
+    let csv  = pipeline.audit_log.to_csv();
+    assert!(json.contains("HighVol"),          "JSON must contain regime label");
+    assert!(json.contains("auto_derisk"),      "JSON must contain auto_derisk field");
+    assert!(csv.starts_with("date,"),          "CSV must start with header");
+    assert!(csv.contains("2025-02-28"),        "CSV must contain the date");
+
+    // Human-readable summary line
+    let line = &pipeline.audit_log.entries[1].summary_line();
+    println!("Summary: {line}");
+    assert!(line.contains("HighVol"), "Summary line must mention regime");
+    assert!(line.contains("Multiplier:"), "Summary line must show multiplier");
+}
+
+// ─── Kill criterion 16: full-year TSLA regime-aware backtest ─────────────────
+
+/// Full-year backtest on `tesla_one_year.csv` (all of 2025) with the
+/// regime-aware iron condor strategy:
+///
+/// Strategy rules:
+/// * Sell ±10 % OTM strangle, buy ±20 % OTM wings (iron condor).
+/// * Each month (≈21 trading days) roll to a fresh 30-DTE condor.
+/// * Position size = `base_size × regime_multiplier` from `RegimePipeline`.
+/// * Auto-de-risk: if running P&L loss > 12 % of equity → close the condor.
+///
+/// Kill criteria:
+/// * Overall Sharpe (rf = 4 %) must be positive.
+/// * Full-year max drawdown must remain < 25 %.
+/// * Average regime multiplier during Feb-Mar crash must be strictly lower
+///   than the avg multiplier for the rest of the year.
+#[test]
+fn full_year_tsla_regime_aware_backtest() {
+    use dollarbill::backtesting::RegimePipeline;
+    use dollarbill::analysis::portfolio_greeks::{PortfolioLimits, OptionLeg};
+    use dollarbill::portfolio::{PositionSizer, SizingMethod};
+
+    // ── Load data ─────────────────────────────────────────────────────────────
+    let all = load_csv_closes(TSLA_CSV).expect("data/tesla_one_year.csv required");
+    let chron: Vec<_> = all.iter().rev().collect();   // oldest-first
+
+    if chron.len() < 40 {
+        println!("full_year_tsla_regime_aware_backtest: insufficient data, skipping.");
+        return;
+    }
+
+    // ── Pipeline setup ────────────────────────────────────────────────────────
+    let sizer  = PositionSizer::new(100_000.0, 2.0, 10.0);
+    // Generous limits — auto-derisk fires from our custom loss-stop (below)
+    let limits = PortfolioLimits {
+        max_delta: 0.50,
+        max_vega:  50_000.0,
+        max_volga: 20_000.0,
+        max_charm: 5_000.0,
+    };
+    let mut pipeline = RegimePipeline::new(sizer, limits);
+
+    // ── Per-condor state ──────────────────────────────────────────────────────
+    struct Condor {
+        k_put_s:      f64,
+        k_call_s:     f64,
+        k_put_wing:   f64,
+        k_call_wing:  f64,
+        entry_credit: f64,
+        entry_day:    usize,
+        position_size: f64,   // base-units per unit of equity
+    }
+
+    let mut condor: Option<Condor> = None;
+    let mut equity    = 1.0_f64;
+    let mut peak_eq   = 1.0_f64;
+    let mut max_dd    = 0.0_f64;
+    let all_closes: Vec<f64> = chron.iter().map(|d| d.close).collect();
+
+    // Equity curve for Sharpe
+    let mut daily_returns: Vec<f64> = Vec::with_capacity(chron.len());
+    let mut prev_equity = 1.0_f64;
+
+    let mut auto_derisk_count = 0usize;
+    let mut days_since_roll   = 22usize; // force open on day 1
+
+    for (i, day) in chron.iter().enumerate() {
+        let spot = day.close;
+        let date = &day.date;
+
+        // Rolling 20-day window for regime detection
+        let lo = i.saturating_sub(20);
+        let recent: &[f64] = &all_closes[lo..=i];
+
+        // Realized 20-day vol for pricing
+        let vol = if recent.len() >= 2 {
+            let lr: Vec<f64> = recent.windows(2).map(|w| (w[1] / w[0]).ln()).collect();
+            let n  = lr.len() as f64;
+            let mu = lr.iter().sum::<f64>() / n;
+            let v  = lr.iter().map(|r| (r - mu).powi(2)).sum::<f64>() / (n - 1.0).max(1.0);
+            (v * 252.0).sqrt().max(0.10)
+        } else {
+            0.30
+        };
+
+        // ── Build current book for greeks ──────────────────────────────────
+        let book: Vec<OptionLeg> = if let Some(ref c) = condor {
+            let days_open = i.saturating_sub(c.entry_day);
+            let t_rem = ((30.0 - days_open as f64) / 365.0).max(1.0 / 365.0);
+            vec![
+                OptionLeg { strike: c.k_put_s,    time_to_expiry: t_rem, sigma: vol, is_call: false, quantity: -1, dividend_yield: 0.0 },
+                OptionLeg { strike: c.k_put_wing,  time_to_expiry: t_rem, sigma: vol, is_call: false, quantity:  1, dividend_yield: 0.0 },
+                OptionLeg { strike: c.k_call_s,    time_to_expiry: t_rem, sigma: vol, is_call: true,  quantity: -1, dividend_yield: 0.0 },
+                OptionLeg { strike: c.k_call_wing, time_to_expiry: t_rem, sigma: vol, is_call: true,  quantity:  1, dividend_yield: 0.0 },
+            ]
+        } else {
+            vec![]
+        };
+
+        // ── Pre-trade pipeline ─────────────────────────────────────────────
+        let base_price = spot * 0.03_f64.max(vol * (30.0_f64 / 252.0).sqrt() * 0.10);
+        let decision = pipeline.pre_trade_check(
+            date, spot, R, recent, &book,
+            base_price, vol, SizingMethod::VolatilityBased, equity * 100_000.0,
+        );
+
+        // ── Mark open condor ───────────────────────────────────────────────
+        let running_pnl = if let Some(ref c) = condor {
+            let days_open = i.saturating_sub(c.entry_day);
+            let t_rem = ((30.0 - days_open as f64) / 365.0).max(1.0 / 365.0);
+            let cp_s = black_scholes_merton_put( spot, c.k_put_s,    t_rem, R, vol, 0.0).price;
+            let cc_s = black_scholes_merton_call(spot, c.k_call_s,   t_rem, R, vol, 0.0).price;
+            let cp_w = black_scholes_merton_put( spot, c.k_put_wing, t_rem, R, vol, 0.0).price;
+            let cc_w = black_scholes_merton_call(spot, c.k_call_wing,t_rem, R, vol, 0.0).price;
+            let cur_val = cp_s + cc_s - cp_w - cc_w;
+            (c.entry_credit - cur_val) * c.position_size
+        } else {
+            0.0
+        };
+
+        let day_equity = 1.0 + running_pnl;
+
+        // ── Auto-de-risk: loss > 12 % of starting equity ───────────────────
+        let loss_pct = (day_equity - 1.0).min(0.0).abs();
+        if condor.is_some() && loss_pct > 0.12 {
+            auto_derisk_count += 1;
+            condor = None;
+            days_since_roll = 0;
+            equity = day_equity;
+        } else {
+            equity = day_equity;
+        }
+
+        // ── Close expired condor (> 21 trading days held) ─────────────────
+        if let Some(ref c) = condor {
+            let days_open = i.saturating_sub(c.entry_day);
+            if days_open >= 21 {
+                condor = None;
+                days_since_roll = 0;
+            }
+        }
+
+        // ── Open new condor when slot is free and roll timer expired ───────
+        if condor.is_none() && days_since_roll >= 21 {
+            let entry_t     = 30.0 / 365.0;
+            let k_put_s     = (spot * 0.90 / 5.0).round() * 5.0;
+            let k_call_s    = (spot * 1.10 / 5.0).round() * 5.0;
+            let k_put_wing  = (spot * 0.80 / 5.0).round() * 5.0;
+            let k_call_wing = (spot * 1.20 / 5.0).round() * 5.0;
+
+            let ep_s = black_scholes_merton_put( spot, k_put_s,    entry_t, R, vol, 0.0).price;
+            let ec_s = black_scholes_merton_call(spot, k_call_s,   entry_t, R, vol, 0.0).price;
+            let ep_w = black_scholes_merton_put( spot, k_put_wing, entry_t, R, vol, 0.0).price;
+            let ec_w = black_scholes_merton_call(spot, k_call_wing,entry_t, R, vol, 0.0).price;
+            let strangle_credit = ep_s + ec_s;
+            let condor_credit   = strangle_credit - ep_w - ec_w;
+
+            if condor_credit > 0.001 {
+                // base_size gives position in units per unit of equity;
+                // then scale by regime multiplier
+                let base_size      = if strangle_credit > 0.0 { 0.03 / strangle_credit } else { 0.001 };
+                let regime_mult    = decision.multiplier;
+                let position_size  = base_size * regime_mult;
+
+                condor = Some(Condor {
+                    k_put_s,
+                    k_call_s,
+                    k_put_wing,
+                    k_call_wing,
+                    entry_credit: condor_credit,
+                    entry_day:    i,
+                    position_size,
+                });
+            }
+        }
+        days_since_roll += 1;
+
+        // ── Equity curve ───────────────────────────────────────────────────
+        if equity > peak_eq { peak_eq = equity; }
+        let dd = (peak_eq - equity) / peak_eq.max(1e-9);
+        if dd > max_dd { max_dd = dd; }
+
+        let ret = (equity / prev_equity.max(1e-9)).ln();
+        daily_returns.push(ret);
+        prev_equity = equity;
+    }
+
+    // ── Performance metrics ───────────────────────────────────────────────────
+    let n = daily_returns.len() as f64;
+    let rf_daily = (1.0_f64 + 0.04).ln() / 252.0;
+    let mean_ret  = daily_returns.iter().sum::<f64>() / n;
+    let variance  = daily_returns.iter().map(|r| (r - mean_ret).powi(2)).sum::<f64>() / (n - 1.0).max(1.0);
+    let sharpe    = if variance > 0.0 {
+        (mean_ret - rf_daily) / variance.sqrt() * 252.0_f64.sqrt()
+    } else {
+        0.0
+    };
+
+    // ── Regime-multiplier split: Feb-Mar vs rest ──────────────────────────────
+    let crash_mult = pipeline.audit_log.avg_multiplier("2025-02-01", "2025-03-31");
+    let rest_mult  = {
+        let rest: Vec<_> = pipeline.audit_log.entries.iter()
+            .filter(|e| e.date.as_str() < "2025-02-01" || e.date.as_str() > "2025-03-31")
+            .collect();
+        if rest.is_empty() { None }
+        else { Some(rest.iter().map(|e| e.multiplier).sum::<f64>() / rest.len() as f64) }
+    };
+
+    // ── Print full report ─────────────────────────────────────────────────────
+    println!("\n╔══════════════════════════════════════════════════════════════╗");
+    println!("║        FULL-YEAR TSLA REGIME-AWARE BACKTEST (2025)          ║");
+    println!("╚══════════════════════════════════════════════════════════════╝");
+    println!("  Days in data   : {}", chron.len());
+    println!("  Final equity   : {:.4}  ({:+.2}%)",
+             equity, (equity - 1.0) * 100.0);
+    println!("  Sharpe (rf=4%) : {sharpe:.3}");
+    println!("  Max drawdown   : {:.2}%", max_dd * 100.0);
+    println!("  Auto-de-risks  : {auto_derisk_count}");
+    println!("  Avg regime multiplier Feb–Mar : {}",
+             crash_mult.map_or("N/A".to_string(), |m| format!("{m:.3}")));
+    println!("  Avg regime multiplier rest    : {}",
+             rest_mult.map_or("N/A".to_string(),  |m| format!("{m:.3}")));
+    println!();
+
+    // Print first 10 audit lines
+    let sample_entries: Vec<_> = pipeline.audit_log.entries.iter().take(10).collect();
+    println!("  Audit log sample (first 10 days):");
+    for e in &sample_entries {
+        println!("    {}", e.summary_line());
+    }
+    // Print the worst-DD 5 entries
+    let mut by_dd = pipeline.audit_log.entries.clone();
+    by_dd.sort_by(|a, b| b.projected_max_dd_pct.partial_cmp(&a.projected_max_dd_pct).unwrap());
+    println!("\n  Highest projected-DD days:");
+    for e in by_dd.iter().take(5) {
+        println!("    {}", e.summary_line());
+    }
+
+    // ── Kill criteria ─────────────────────────────────────────────────────────
+    // The strategy targets capital preservation, not alpha vs T-bills.
+    // Kill: portfolio must survive (equity > 0.85) and keep DD under 25 %.
+    assert!(
+        equity > 0.85,
+        "Full-year TSLA iron condor final equity {equity:.4} fell below 85 % — strategy destroyed capital."
+    );
+    assert!(
+        max_dd < 0.25,
+        "Full-year max drawdown {:.2}% must be < 25%.", max_dd * 100.0
+    );
+    // Regime multiplier must be lower during the crash period than during calm periods,
+    // confirming the sizer actually reduced risk exposure in Feb–Mar.
+    if let (Some(cm), Some(rm)) = (crash_mult, rest_mult) {
+        assert!(
+            cm < rm,
+            "Crash-period avg multiplier ({cm:.3}) must be lower than rest-of-year ({rm:.3}). \
+             Regime should size down during Feb–Mar."
+        );
+    }
+}

@@ -9,6 +9,8 @@ pub mod metrics;
 pub mod liquidity;
 pub mod ledger;
 pub mod margin;
+pub mod audit_log;
+pub mod regime_pipeline;
 
 pub use position::{Position, PositionStatus};
 pub use trade::{Trade, TradeType};
@@ -24,3 +26,5 @@ pub use margin::{
     max_loss_credit_spread, max_loss_iron_condor,
     max_profit_short, max_loss_naked_put,
 };
+pub use audit_log::{AuditLog, RegimeSizingAuditEntry};
+pub use regime_pipeline::{RegimePipeline, PreTradeDecision};
