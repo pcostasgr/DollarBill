@@ -2170,3 +2170,192 @@ fn full_year_tsla_regime_aware_backtest() {
         );
     }
 }
+
+// ─── Variants A & B helper ───────────────────────────────────────────────────
+
+/// Shared backtest engine for Variant A (no auto-derisk) and Variant B (slippage).
+///
+/// `enable_loss_stop` – when false, runs with no auto-derisk gate (Variant A).
+/// `slippage_half_spread` – fraction of each leg's mid-price taken as entry
+///    half-spread (e.g. 0.10 = 10 %).  Exit mirrors entry.
+///    OCC clearing fee modelled as flat $0.02/side × 4 legs = $0.08 entry +
+///    $0.08 exit, in option-dollar terms, deducted from effective credit.
+fn run_full_year_variant(label: &str, enable_loss_stop: bool, half_spread_frac: f64) {
+    use dollarbill::backtesting::RegimePipeline;
+    use dollarbill::analysis::portfolio_greeks::{PortfolioLimits, OptionLeg};
+    use dollarbill::portfolio::{PositionSizer, SizingMethod};
+
+    let occ_fee_per_condor = if half_spread_frac > 0.0 { 0.08 + 0.08 } else { 0.0 }; // $0.16 round-trip
+
+    let all = load_csv_closes(TSLA_CSV).expect("data/tesla_one_year.csv required");
+    let chron: Vec<_> = all.iter().rev().collect();
+    if chron.len() < 40 {
+        println!("{label}: insufficient data, skipping."); return;
+    }
+
+    let sizer  = PositionSizer::new(100_000.0, 2.0, 10.0);
+    let limits = PortfolioLimits { max_delta: 0.50, max_vega: 50_000.0, max_volga: 20_000.0, max_charm: 5_000.0 };
+    let mut pipeline = RegimePipeline::new(sizer, limits);
+
+    struct Condor { k_put_s: f64, k_call_s: f64, k_put_wing: f64, k_call_wing: f64,
+                    entry_credit: f64, entry_day: usize, position_size: f64 }
+
+    let all_closes: Vec<f64> = chron.iter().map(|d| d.close).collect();
+    let mut condor: Option<Condor>   = None;
+    let mut equity    = 1.0_f64;
+    let mut peak_eq   = 1.0_f64;
+    let mut max_dd    = 0.0_f64;
+    let mut daily_returns: Vec<f64> = Vec::with_capacity(chron.len());
+    let mut prev_equity = 1.0_f64;
+    let mut auto_derisk_count = 0usize;
+    let mut days_since_roll   = 22usize;
+
+    for (i, day) in chron.iter().enumerate() {
+        let spot = day.close;
+        let date = &day.date;
+        let lo = i.saturating_sub(20);
+        let recent = &all_closes[lo..=i];
+
+        let vol = if recent.len() >= 2 {
+            let lr: Vec<f64> = recent.windows(2).map(|w| (w[1]/w[0]).ln()).collect();
+            let n = lr.len() as f64; let mu = lr.iter().sum::<f64>() / n;
+            let v = lr.iter().map(|r| (r-mu).powi(2)).sum::<f64>() / (n-1.0).max(1.0);
+            (v * 252.0).sqrt().max(0.10)
+        } else { 0.30 };
+
+        let book: Vec<OptionLeg> = if let Some(ref c) = condor {
+            let days_open = i.saturating_sub(c.entry_day);
+            let t_rem = ((30.0 - days_open as f64) / 365.0).max(1.0/365.0);
+            vec![
+                OptionLeg { strike: c.k_put_s,    time_to_expiry: t_rem, sigma: vol, is_call: false, quantity: -1, dividend_yield: 0.0 },
+                OptionLeg { strike: c.k_put_wing,  time_to_expiry: t_rem, sigma: vol, is_call: false, quantity:  1, dividend_yield: 0.0 },
+                OptionLeg { strike: c.k_call_s,    time_to_expiry: t_rem, sigma: vol, is_call: true,  quantity: -1, dividend_yield: 0.0 },
+                OptionLeg { strike: c.k_call_wing, time_to_expiry: t_rem, sigma: vol, is_call: true,  quantity:  1, dividend_yield: 0.0 },
+            ]
+        } else { vec![] };
+
+        let base_price = spot * 0.03_f64.max(vol * (30.0_f64/252.0).sqrt() * 0.10);
+        let decision = pipeline.pre_trade_check(date, spot, R, recent, &book,
+            base_price, vol, SizingMethod::VolatilityBased, equity * 100_000.0);
+
+        let running_pnl = if let Some(ref c) = condor {
+            let days_open = i.saturating_sub(c.entry_day);
+            let t_rem = ((30.0 - days_open as f64) / 365.0).max(1.0/365.0);
+            let cp_s = black_scholes_merton_put( spot, c.k_put_s,    t_rem, R, vol, 0.0).price;
+            let cc_s = black_scholes_merton_call(spot, c.k_call_s,   t_rem, R, vol, 0.0).price;
+            let cp_w = black_scholes_merton_put( spot, c.k_put_wing, t_rem, R, vol, 0.0).price;
+            let cc_w = black_scholes_merton_call(spot, c.k_call_wing,t_rem, R, vol, 0.0).price;
+            // Exit slippage: pay half-spread on each of 4 legs to close
+            let exit_slip = half_spread_frac * (cp_s + cc_s + cp_w + cc_w);
+            let cur_val = cp_s + cc_s - cp_w - cc_w + exit_slip;
+            (c.entry_credit - cur_val) * c.position_size
+        } else { 0.0 };
+
+        let day_equity = 1.0 + running_pnl;
+
+        // Loss-stop (disabled in Variant A)
+        let loss_pct = (day_equity - 1.0).min(0.0).abs();
+        if enable_loss_stop && condor.is_some() && loss_pct > 0.12 {
+            auto_derisk_count += 1;
+            condor = None;
+            days_since_roll = 0;
+            equity = day_equity;
+        } else {
+            equity = day_equity;
+        }
+
+        if let Some(ref c) = condor {
+            if i.saturating_sub(c.entry_day) >= 21 { condor = None; days_since_roll = 0; }
+        }
+
+        if condor.is_none() && days_since_roll >= 21 {
+            let entry_t     = 30.0 / 365.0;
+            let k_put_s     = (spot * 0.90 / 5.0).round() * 5.0;
+            let k_call_s    = (spot * 1.10 / 5.0).round() * 5.0;
+            let k_put_wing  = (spot * 0.80 / 5.0).round() * 5.0;
+            let k_call_wing = (spot * 1.20 / 5.0).round() * 5.0;
+            let ep_s = black_scholes_merton_put( spot, k_put_s,    entry_t, R, vol, 0.0).price;
+            let ec_s = black_scholes_merton_call(spot, k_call_s,   entry_t, R, vol, 0.0).price;
+            let ep_w = black_scholes_merton_put( spot, k_put_wing, entry_t, R, vol, 0.0).price;
+            let ec_w = black_scholes_merton_call(spot, k_call_wing,entry_t, R, vol, 0.0).price;
+            let strangle_credit = ep_s + ec_s;
+            // Entry slippage: pay half-spread on each of 4 legs + OCC fee
+            let entry_slip     = half_spread_frac * (ep_s + ec_s + ep_w + ec_w);
+            let condor_credit  = (strangle_credit - ep_w - ec_w) - entry_slip - occ_fee_per_condor;
+            if condor_credit > 0.001 {
+                let base_size     = if strangle_credit > 0.0 { 0.03 / strangle_credit } else { 0.001 };
+                let position_size = base_size * decision.multiplier;
+                condor = Some(Condor { k_put_s, k_call_s, k_put_wing, k_call_wing,
+                                       entry_credit: condor_credit, entry_day: i, position_size });
+            }
+        }
+        days_since_roll += 1;
+
+        if equity > peak_eq { peak_eq = equity; }
+        let dd = (peak_eq - equity) / peak_eq.max(1e-9);
+        if dd > max_dd { max_dd = dd; }
+        daily_returns.push((equity / prev_equity.max(1e-9)).ln());
+        prev_equity = equity;
+    }
+
+    let n          = daily_returns.len() as f64;
+    let rf_daily   = (1.0_f64 + 0.04).ln() / 252.0;
+    let mean_ret   = daily_returns.iter().sum::<f64>() / n;
+    let variance   = daily_returns.iter().map(|r| (r-mean_ret).powi(2)).sum::<f64>() / (n-1.0).max(1.0);
+    let sharpe     = if variance > 0.0 { (mean_ret - rf_daily) / variance.sqrt() * 252.0_f64.sqrt() } else { 0.0 };
+    let crash_mult = pipeline.audit_log.avg_multiplier("2025-02-01", "2025-03-31");
+    let rest_mult  = {
+        let rest: Vec<_> = pipeline.audit_log.entries.iter()
+            .filter(|e| e.date.as_str() < "2025-02-01" || e.date.as_str() > "2025-03-31").collect();
+        if rest.is_empty() { None } else { Some(rest.iter().map(|e| e.multiplier).sum::<f64>() / rest.len() as f64) }
+    };
+
+    println!("\n╔══════════════════════════════════════════════════════════════╗");
+    println!("║  {label:<60}║");
+    println!("╚══════════════════════════════════════════════════════════════╝");
+    println!("  Days             : {}", chron.len());
+    println!("  Final equity     : {:.4}  ({:+.2}%)", equity, (equity-1.0)*100.0);
+    println!("  Sharpe (rf=4%)   : {sharpe:.3}");
+    println!("  Max drawdown     : {:.2}%", max_dd*100.0);
+    println!("  Auto-de-risks    : {auto_derisk_count}");
+    println!("  Loss-stop enabled: {enable_loss_stop}");
+    println!("  Half-spread frac : {:.1}%  OCC fee: ${occ_fee_per_condor:.2}/condor", half_spread_frac * 100.0);
+    println!("  Avg mult Feb-Mar : {}", crash_mult.map_or("N/A".into(), |m| format!("{m:.3}")));
+    println!("  Avg mult rest    : {}", rest_mult.map_or("N/A".into(),  |m| format!("{m:.3}")));
+}
+
+// ─── Variant A: de-risk disabled ─────────────────────────────────────────────
+
+/// Same as Kill 16 but with auto-derisk (loss-stop) completely removed.
+///
+/// The only risk management is the regime-size scaling.
+/// Expected: max DD should be notably higher than the 12.77 % baseline,
+/// proving the Greeks/loss-stop layer is earning its keep.
+///
+/// This test is intentionally observation-only (no assert on DD upper bound).
+#[test]
+fn variant_a_no_auto_derisk() {
+    run_full_year_variant(
+        "VARIANT A – Regime sizing, NO auto-derisk",
+        false,   // loss-stop disabled
+        0.0,     // no slippage
+    );
+}
+
+// ─── Variant B: realistic slippage + OCC fees ────────────────────────────────
+
+/// Same as Kill 16 WITH auto-derisk but adds realistic market friction:
+///   • 0.5 × bid-ask spread per leg: spread ≈ 10 % of leg mid-price
+///     (conservative for a single-name, liquid option; OTM legs are wider)
+///   • OCC clearing fee = $0.02/contract × 4 legs × 2 sides = $0.16 round-trip
+///
+/// Kill criterion: if max DD > 18 % under realistic friction, the edge is
+/// mostly illusion.  If it stays < 18 %, the strategy is friction-robust.
+#[test]
+fn variant_b_realistic_slippage() {
+    run_full_year_variant(
+        "VARIANT B – Regime sizing + 10% half-spread + OCC fees",
+        true,    // loss-stop enabled (same as Kill 16)
+        0.10,    // 10 % half-spread per leg mid-price
+    );
+}
