@@ -15,6 +15,10 @@ use crate::models::bs_mod::compute_historical_vol;
 use crate::models::heston::heston_start;
 use crate::persistence;
 use crate::portfolio::{PortfolioManager, PortfolioConfig};
+use crate::portfolio::position_monitor::{
+    CloseDecision, CloseReason, CooldownTracker,
+    PositionMonitor, PositionMonitorConfig, PositionSnapshot,
+};
 use crate::strategies::{
     SignalAction, StrategyRegistry,
     momentum::MomentumStrategy,
@@ -181,14 +185,10 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
     let min_prices_for_hv     = bot_cfg.min_prices_for_hv;
     let max_price_buf         = bot_cfg.max_price_buf;
     let min_confidence        = bot_cfg.min_confidence;
-    let profit_target_pct     = bot_cfg.profit_target_pct;
-    let stop_loss_pct         = bot_cfg.stop_loss_pct;
-    let max_position_days     = bot_cfg.max_position_days;
+    // profit_target_pct, stop_loss_pct, itm_proximity_pct, roll_trigger_pct,
+    // roll_dte_days, and max_rolls are passed into PositionMonitorConfig below.
+    let max_rolls             = bot_cfg.max_rolls;   // still used in log messages
     let min_vol_percentile    = bot_cfg.min_vol_percentile;
-    let itm_proximity_pct     = bot_cfg.itm_proximity_pct;
-    let roll_trigger_pct      = bot_cfg.roll_trigger_pct;
-    let roll_dte_days         = bot_cfg.roll_dte_days;
-    let max_rolls             = bot_cfg.max_rolls;
     let max_daily_loss        = equity * bot_cfg.max_daily_loss_pct;
     let mut estimated_daily_loss = 0.0_f64;
     let mut circuit_broken       = false;
@@ -335,12 +335,37 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
     // ── Rolling price buffers and signal-cooldown trackers ────────────────
     let mut price_buf: HashMap<String, VecDeque<f64>> = HashMap::new();
     let mut last_signal: HashMap<String, Instant>     = HashMap::new();
-    // Re-entry cooldown: after closing a position, block new entries for this
-    // many seconds to prevent the bot from immediately reversing the close.
-    const REENTRY_COOLDOWN_SECS: u64 = 300; // 5 minutes
-    let mut recently_closed: HashMap<String, Instant> = HashMap::new();
+    // ── Position monitor (P2.1 close/roll/ITM logic via portfolio engine) ─
+    let position_monitor = PositionMonitor::new(PositionMonitorConfig {
+        profit_target_pct:     bot_cfg.profit_target_pct,
+        stop_loss_pct:         bot_cfg.stop_loss_pct,
+        max_position_days:     bot_cfg.max_position_days as i64,
+        itm_proximity_pct:     bot_cfg.itm_proximity_pct,
+        roll_trigger_pct:      bot_cfg.roll_trigger_pct,
+        roll_dte_days:         bot_cfg.roll_dte_days,
+        max_rolls:             bot_cfg.max_rolls,
+        reentry_cooldown_secs: 300,
+    });
+    // Re-entry cooldown: after closing a position, block new entries for 5 min
+    let mut cooldown = CooldownTracker::new(300);
 
     println!("📡 Connecting to Alpaca live stream for {} symbols...", symbols.len());
+    // ── Options tier gate ─────────────────────────────────────────────────
+    // For live accounts, abort if options trading is not yet approved.
+    // Paper trading skips this check (paper accounts always report level 0).
+    // To apply: https://app.alpaca.markets → Account → Options Trading → Apply
+    if client.is_live() {
+        match client.verify_options_approval(1).await {
+            Ok(level) => println!("✅ Options Tier {} approved — live options orders enabled", level),
+            Err(e) => {
+                eprintln!("❌ Options approval check failed:\n{}", e);
+                return;
+            }
+        }
+    } else {
+        println!("ℹ️  Paper trading: skipping options tier check");
+    }
+    // ─────────────────────────────────────────────────────────────────────
     let mut stream = match streaming::AlpacaStream::connect_from_env(&symbols).await {
         Ok(s) => s,
         Err(e) => { eprintln!("WebSocket connect failed: {}", e); return; }
@@ -453,266 +478,150 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                     continue;
                 }
 
-                // ── P2.1 Position close check ─────────────────────────────
+                // ── P2.1 Position close check (via PositionMonitor) ──────
                 if open_syms.contains(&sym) {
                     if let Some(pos) = open_positions.get(&sym).cloned() {
-                        let pos = pos; // owned clone — safe to mutate open_positions later
-                        let today = Utc::now().date_naive();
-                        let mut should_close = false;
-                        let mut close_reason = String::new();
-
-                        // Days-based close: force exit after max_position_days
-                        if let Some(exp_str) = &pos.expires_at {
-                            if let Ok(exp_date) = NaiveDate::parse_from_str(exp_str, "%Y-%m-%d") {
-                                let remaining = (exp_date - today).num_days();
-                                if remaining <= 0 {
-                                    should_close = true;
-                                    close_reason = "expired / max days reached".to_string();
-                                } else if remaining <= 1 {
-                                    // 1 DTE — exit day before expiry to avoid pin risk
-                                    should_close = true;
-                                    close_reason = format!("1 DTE early exit (exp {})", exp_str);
-                                } else {
-                                    // P&L-based close using ATM option repricing
-                                    if let Some(entry_premium) = pos.premium_collected {
-                                        if entry_premium > 0.0 {
-                                            let remaining_t = (remaining as f64 / 365.0).max(1.0 / 365.0);
-                                            let current_val = price * sigma * remaining_t.sqrt();
-                                            let pct = current_val / entry_premium;
-                                            if pct <= profit_target_pct {
-                                                should_close = true;
-                                                close_reason = format!(
-                                                    "profit target hit ({:.0}% of premium remaining)",
-                                                    pct * 100.0);
-                                            } else if pct >= stop_loss_pct {
-                                                should_close = true;
-                                                close_reason = format!(
-                                                    "stop loss hit ({:.0}% of premium = {:.0}% loss)",
-                                                    pct * 100.0,
-                                                    (pct - 1.0) * 100.0);
-                                            }
-                                        }
-                                    }
-                                }
+                        let snapshot = PositionSnapshot {
+                            symbol:        sym.clone(),
+                            occ_symbol:    pos.occ_symbol.clone(),
+                            entry_premium: pos.premium_collected,
+                            expires_at:    pos.expires_at.clone(),
+                            entry_date:    pos.entry_date.clone(),
+                            roll_count:    pos.roll_count,
+                        };
+                        match position_monitor.evaluate(&snapshot, price, sigma) {
+                            CloseDecision::Hold => {
+                                // Position is healthy — fall through
                             }
-                        } else {
-                            // No expiry stored — use calendar days from entry.
-                            // If entry_date can't be parsed (e.g. old "reconciled" records
-                            // written before this fix), close immediately to free buying power.
-                            let raw = if pos.entry_date.len() >= 10 {
-                                &pos.entry_date[..10]
-                            } else {
-                                ""
-                            };
-                            match NaiveDate::parse_from_str(raw, "%Y-%m-%d") {
-                                Ok(entry_date) => {
-                                    let age = (today - entry_date).num_days();
-                                    if age >= max_position_days {
-                                        should_close = true;
-                                        close_reason = format!("max {} days elapsed", age);
-                                    }
-                                }
-                                Err(_) => {
-                                    // Unparseable entry date (stale reconciled record) — close now.
-                                    should_close = true;
-                                    close_reason = "stale reconciled position (no valid entry date)".to_string();
-                                }
-                            }
-                        }
 
-                        // ── Roll down/out for short puts ──────────────────
-                        // When spot falls within `roll_trigger_pct` of the put
-                        // strike (but is still *outside* `itm_proximity_pct`),
-                        // roll the position: buy to close the current contract
-                        // and sell to open a new put at the same strike, dated
-                        // `roll_dte_days` from today.  Capped at `max_rolls`.
-                        let mut did_roll = false;
-                        if !should_close && roll_trigger_pct > roll_trigger_pct.min(itm_proximity_pct) || (!should_close && roll_trigger_pct > 0.0) {
-                            if let Some(ref occ) = pos.occ_symbol.clone() {
-                                let is_put = occ.len() >= 13
-                                    && occ.chars().nth(12) == Some('P');
-                                if is_put {
-                                    if let Some(strike) = occ.get(13..21)
-                                        .and_then(|s| s.parse::<f64>().ok())
-                                        .map(|v| v / 1000.0)
-                                    {
-                                        let roll_threshold = strike * (1.0 + roll_trigger_pct);
-                                        let itm_threshold  = strike * (1.0 + itm_proximity_pct);
-                                        // Roll zone: spot is between ITM threshold and roll threshold
-                                        if price <= roll_threshold && price > itm_threshold
-                                            && pos.roll_count < max_rolls as i32
-                                        {
-                                            info!("Roll trigger [{}]: spot ${:.2} within {:.0}% of strike ${:.2} (roll #{}/{})",
-                                                sym, price, roll_trigger_pct * 100.0, strike,
-                                                pos.roll_count + 1, max_rolls);
-                                            println!("  🔄 Rolling {} — spot ${:.2} within {:.0}% of K=${:.2} (roll {}/{})",
-                                                sym, price, roll_trigger_pct * 100.0, strike,
-                                                pos.roll_count + 1, max_rolls);
-                                            if !dry_run {
-                                                // Step 1: Buy to close current contract
-                                                let close_result = client.close_position(occ).await;
-                                                match close_result {
-                                                    Ok(_) => {
-                                                        println!("    ✅ Closed old leg {}", occ);
-                                                        // Step 2: Sell to open new contract at same
-                                                        //         strike, roll_dte_days out
-                                                        use crate::alpaca::types::{OptionsOrderRequest, OrderType, TimeInForce, OrderSide};
-                                                        let (yy, mm, dd) = AlpacaClient::expiry_from_dte(roll_dte_days as usize);
-                                                        let new_occ = AlpacaClient::occ_symbol(&sym, yy, mm, dd, false, strike);
-                                                        let resolved = client.resolve_single_leg_occ(&new_occ).await;
-                                                        let new_order = OptionsOrderRequest {
-                                                            r#type: OrderType::Market,
-                                                            time_in_force: TimeInForce::Day,
-                                                            symbol: Some(resolved.clone()),
-                                                            qty: Some(pos.qty.abs().to_string()),
-                                                            side: Some(OrderSide::Sell),
-                                                            position_intent: Some("sell_to_open".to_string()),
-                                                            order_class: None,
-                                                            legs: None,
-                                                            limit_price: None,
-                                                            client_order_id: None,
+                            CloseDecision::Roll { new_strike, new_dte_days, roll_number } => {
+                                if let Some(ref occ) = pos.occ_symbol.clone() {
+                                    info!("Roll trigger [{}]: spot ${:.2} → roll #{} at K={:.2} +{}d",
+                                        sym, price, roll_number, new_strike, new_dte_days);
+                                    println!("  🔄 Rolling {} — spot ${:.2} K=${:.2} (roll {}/{})",
+                                        sym, price, new_strike, roll_number, max_rolls);
+                                    if !dry_run {
+                                        let close_result = client.close_position(occ).await;
+                                        match close_result {
+                                            Ok(_) => {
+                                                println!("    ✅ Closed old leg {}", occ);
+                                                use crate::alpaca::types::{OptionsOrderRequest, OrderType, TimeInForce, OrderSide};
+                                                let (yy, mm, dd) = AlpacaClient::expiry_from_dte(new_dte_days as usize);
+                                                let new_occ = AlpacaClient::occ_symbol(&sym, yy, mm, dd, false, new_strike);
+                                                let resolved = client.resolve_single_leg_occ(&new_occ).await;
+                                                let new_order = OptionsOrderRequest {
+                                                    r#type: OrderType::Market,
+                                                    time_in_force: TimeInForce::Day,
+                                                    symbol: Some(resolved.clone()),
+                                                    qty: Some(pos.qty.abs().to_string()),
+                                                    side: Some(OrderSide::Sell),
+                                                    position_intent: Some("sell_to_open".to_string()),
+                                                    order_class: None,
+                                                    legs: None,
+                                                    limit_price: None,
+                                                    client_order_id: None,
+                                                };
+                                                match client.submit_options_order(&new_order).await {
+                                                    Ok(filled) => {
+                                                        let new_expiry = format!("20{:02}-{:02}-{:02}", yy, mm, dd);
+                                                        let new_occ_stored = if filled.symbol.len() > 10 {
+                                                            Some(filled.symbol.clone())
+                                                        } else {
+                                                            Some(resolved.clone())
                                                         };
-                                                        match client.submit_options_order(&new_order).await {
-                                                            Ok(filled) => {
-                                                                let new_expiry = {
-                                                                    let (ry, rm, rd) = (yy, mm, dd);
-                                                                    format!("20{:02}-{:02}-{:02}", ry, rm, rd)
-                                                                };
-                                                                let new_occ_stored = if filled.symbol.len() > 10 {
-                                                                    Some(filled.symbol.clone())
-                                                                } else {
-                                                                    Some(resolved.clone())
-                                                                };
-                                                                let new_premium = filled.filled_avg_price
-                                                                    .as_deref()
-                                                                    .and_then(|p| p.parse::<f64>().ok())
-                                                                    .filter(|&p| p > 0.0)
-                                                                    .or(pos.premium_collected);
-                                                                let rolled_pos = persistence::PositionRecord {
-                                                                    symbol:            sym.clone(),
-                                                                    qty:               pos.qty,
-                                                                    entry_price:       price,
-                                                                    entry_date:        ts.clone(),
-                                                                    strategy:          pos.strategy.clone(),
-                                                                    expires_at:        Some(new_expiry),
-                                                                    premium_collected: new_premium,
-                                                                    occ_symbol:        new_occ_stored,
-                                                                    roll_count:        pos.roll_count + 1,
-                                                                };
-                                                                if let Err(e) = store.upsert_position(&rolled_pos).await {
-                                                                    error!("DB roll upsert failed: {}", e);
-                                                                } else {
-                                                                    open_positions.insert(sym.clone(), rolled_pos);
-                                                                    println!("    ✅ Rolled to {} (roll {}/{})",
-                                                                        filled.symbol, pos.roll_count + 1, max_rolls);
-                                                                    did_roll = true;
-                                                                }
-                                                            }
-                                                            Err(e) => {
-                                                                error!("Roll new leg submit failed for {}: {}", sym, e);
-                                                                eprintln!("    ⚠️  Roll new leg failed for {}: {}", sym, e);
-                                                                // Old leg is already closed; remove from tracking
-                                                                let _ = store.close_position(&sym).await;
-                                                                open_syms.remove(&sym);
-                                                                open_positions.remove(&sym);
-                                                                recently_closed.insert(sym.clone(), Instant::now());
-                                                            }
+                                                        let new_premium = filled.filled_avg_price
+                                                            .as_deref()
+                                                            .and_then(|p| p.parse::<f64>().ok())
+                                                            .filter(|&p| p > 0.0)
+                                                            .or(pos.premium_collected);
+                                                        let rolled_pos = persistence::PositionRecord {
+                                                            symbol:            sym.clone(),
+                                                            qty:               pos.qty,
+                                                            entry_price:       price,
+                                                            entry_date:        ts.clone(),
+                                                            strategy:          pos.strategy.clone(),
+                                                            expires_at:        Some(new_expiry),
+                                                            premium_collected: new_premium,
+                                                            occ_symbol:        new_occ_stored,
+                                                            roll_count:        roll_number,
+                                                        };
+                                                        if let Err(e) = store.upsert_position(&rolled_pos).await {
+                                                            error!("DB roll upsert failed: {}", e);
+                                                        } else {
+                                                            open_positions.insert(sym.clone(), rolled_pos);
+                                                            println!("    ✅ Rolled to {} (roll {}/{})",
+                                                                filled.symbol, roll_number, max_rolls);
                                                         }
                                                     }
                                                     Err(e) => {
-                                                        error!("Roll close old leg failed for {} ({}): {}", sym, occ, e);
-                                                        eprintln!("    ⚠️  Roll close failed for {}: {}", sym, e);
+                                                        error!("Roll new leg submit failed for {}: {}", sym, e);
+                                                        eprintln!("    ⚠️  Roll new leg failed for {}: {}", sym, e);
+                                                        let _ = store.close_position(&sym).await;
+                                                        open_syms.remove(&sym);
+                                                        open_positions.remove(&sym);
+                                                        cooldown.record_close(&sym);
                                                     }
                                                 }
+                                            }
+                                            Err(e) => {
+                                                error!("Roll close old leg failed for {} ({}): {}", sym, occ, e);
+                                                eprintln!("    ⚠️  Roll close failed for {}: {}", sym, e);
+                                            }
+                                        }
+                                    } else {
+                                        let (yy2, mm2, dd2) = AlpacaClient::expiry_from_dte(new_dte_days as usize);
+                                        let preview = AlpacaClient::occ_symbol(&sym, yy2, mm2, dd2, false, new_strike);
+                                        println!("    [DRY RUN] Would roll {} → {} (roll {}/{})",
+                                            occ, preview, roll_number, max_rolls);
+                                    }
+                                }
+                                continue;
+                            }
+
+                            CloseDecision::Close(reason) => {
+                                let close_reason = format!("{:?}", reason);
+                                info!("Closing {} ({}): {}", sym, pos.strategy.as_deref().unwrap_or("?"), close_reason);
+                                println!("  🔒 Closing {} — {}", sym, close_reason);
+                                if !dry_run {
+                                    let occ_opt = pos.occ_symbol.clone();
+                                    let close_sym = occ_opt.as_deref().unwrap_or(&sym);
+                                    let close_result = client.close_position(close_sym).await;
+                                    match close_result {
+                                        Ok(_) => {
+                                            let _ = store.close_position(&sym).await;
+                                            open_syms.remove(&sym);
+                                            open_positions.remove(&sym);
+                                            cooldown.record_close(&sym);
+                                            println!("    ✅ {} closed ({})", sym, close_sym);
+                                        }
+                                        Err(e) => {
+                                            if occ_opt.is_none() {
+                                                warn!("Direct close failed for {} — trying leg lookup: {}", sym, e);
+                                                let results = client.close_positions_for_underlying(&sym).await;
+                                                let any_ok = results.iter().any(|r| r.is_ok());
+                                                if any_ok {
+                                                    let _ = store.close_position(&sym).await;
+                                                    open_syms.remove(&sym);
+                                                    open_positions.remove(&sym);
+                                                    cooldown.record_close(&sym);
+                                                    println!("    ✅ {} legs closed via lookup", sym);
+                                                } else {
+                                                    error!("close leg lookup also failed for {}: {:?}", sym,
+                                                        results.iter().map(|r| r.as_ref().err().map(|e| e.to_string())).collect::<Vec<_>>());
+                                                    eprintln!("    ⚠️  All close attempts failed for {}", sym);
+                                                }
                                             } else {
-                                                let (yy2, mm2, dd2) = AlpacaClient::expiry_from_dte(roll_dte_days as usize);
-                                                let preview = AlpacaClient::occ_symbol(&sym, yy2, mm2, dd2, false, strike);
-                                                println!("    [DRY RUN] Would roll {} → {} (roll {}/{})",
-                                                    occ, preview, pos.roll_count + 1, max_rolls);
-                                                did_roll = true;
+                                                error!("close_position failed for {} ({}): {}", sym, close_sym, e);
+                                                eprintln!("    ⚠️  Close failed for {} ({}): {}", sym, close_sym, e);
                                             }
                                         }
                                     }
+                                } else {
+                                    let close_sym = pos.occ_symbol.as_deref().unwrap_or(&sym);
+                                    println!("    [DRY RUN] Would close {} ({})", sym, close_sym);
                                 }
+                                continue;
                             }
-                        }
-                        if did_roll { continue; }
-
-                        // ── ITM proximity guard for short puts ────────────
-                        // Parse the strike from the stored OCC symbol and close
-                        // if spot has fallen within `itm_proximity_pct` of the
-                        // strike (e.g. 3% buffer: close when spot ≤ strike × 1.03).
-                        // Only applies to short puts (OCC char 12 = 'P').
-                        if !should_close && itm_proximity_pct > 0.0 {
-                            if let Some(ref occ) = pos.occ_symbol {
-                                let is_put = occ.len() >= 13
-                                    && occ.chars().nth(12) == Some('P');
-                                if is_put {
-                                    if let Some(strike) = occ.get(13..21)
-                                        .and_then(|s| s.parse::<f64>().ok())
-                                        .map(|v| v / 1000.0)
-                                    {
-                                        let proximity_threshold = strike * (1.0 + itm_proximity_pct);
-                                        if price <= proximity_threshold {
-                                            should_close = true;
-                                            close_reason = format!(
-                                                "ITM proximity: spot ${:.2} within {:.0}% of put strike ${:.2}",
-                                                price, itm_proximity_pct * 100.0, strike
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        if should_close {
-                            info!("Closing {} ({}): {}", sym, pos.strategy.as_deref().unwrap_or("?"), close_reason);
-                            println!("  🔒 Closing {} — {}", sym, close_reason);
-                            if !dry_run {
-                                // Use the stored OCC symbol for options, underlying for equity.
-                                // For multi-leg positions (occ_symbol = None, no equity ticker),
-                                // fall back to querying live positions and closing each leg.
-                                let occ_opt = pos.occ_symbol.clone();
-                                let close_sym = occ_opt.as_deref().unwrap_or(&sym);
-                                let close_result = client.close_position(close_sym).await;
-                                match close_result {
-                                    Ok(_) => {
-                                        let _ = store.close_position(&sym).await;
-                                        open_syms.remove(&sym);
-                                        open_positions.remove(&sym);
-                                        recently_closed.insert(sym.clone(), Instant::now());
-                                        println!("    ✅ {} closed ({})", sym, close_sym);
-                                    }
-                                    Err(e) => {
-                                        // If direct close failed and we used the underlying,
-                                        // the position may be an untracked multi-leg options
-                                        // order.  Try closing all legs via positions lookup.
-                                        if occ_opt.is_none() {
-                                            warn!("Direct close failed for {} — trying leg lookup: {}", sym, e);
-                                            let results = client.close_positions_for_underlying(&sym).await;
-                                            let any_ok = results.iter().any(|r| r.is_ok());
-                                            if any_ok {
-                                                let _ = store.close_position(&sym).await;
-                                                open_syms.remove(&sym);
-                                                open_positions.remove(&sym);
-                                                recently_closed.insert(sym.clone(), Instant::now());
-                                                println!("    ✅ {} legs closed via lookup", sym);
-                                            } else {
-                                                error!("close leg lookup also failed for {}: {:?}", sym,
-                                                    results.iter().map(|r| r.as_ref().err().map(|e| e.to_string())).collect::<Vec<_>>());
-                                                eprintln!("    ⚠️  All close attempts failed for {}", sym);
-                                            }
-                                        } else {
-                                            error!("close_position failed for {} ({}): {}", sym, close_sym, e);
-                                            eprintln!("    ⚠️  Close failed for {} ({}): {}", sym, close_sym, e);
-                                        }
-                                    }
-                                }
-                            } else {
-                                let close_sym = pos.occ_symbol.as_deref().unwrap_or(&sym);
-                                println!("    [DRY RUN] Would close {} ({})", sym, close_sym);
-                            }
-                            continue; // Skip signal generation this tick — position is being closed
                         }
                     }
                     // Position is open and not ready to close; skip new-entry signals
@@ -720,15 +629,10 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                 }
 
                 // ── Re-entry cooldown: skip if symbol was recently closed ─
-                if let Some(&closed_at) = recently_closed.get(&sym) {
-                    if closed_at.elapsed().as_secs() < REENTRY_COOLDOWN_SECS {
-                        debug!("Skipping {} — re-entry cooldown ({:.0}s remaining)",
-                            sym,
-                            REENTRY_COOLDOWN_SECS as f64 - closed_at.elapsed().as_secs_f64());
-                        continue;
-                    } else {
-                        recently_closed.remove(&sym);
-                    }
+                if cooldown.is_cooling_down(&sym) {
+                    debug!("Skipping {} — re-entry cooldown ({:.0}s remaining)",
+                        sym, cooldown.secs_remaining(&sym) as f64);
+                    continue;
                 }
 
                 // ── P2.2 HV-rank gate: skip low-IV environments ───────────

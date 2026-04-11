@@ -97,7 +97,11 @@ fn test_calibration_to_pricing_consistency() {
         }).sum()
     };
 
-    let optimizer = dollarbill::calibration::nelder_mead::NelderMead::new(Default::default());
+    let optimizer = dollarbill::calibration::cmaes::Cmaes::new(
+        dollarbill::calibration::cmaes::CmaesConfig {
+            max_fevals: 5_000, sigma0: 0.1, ftol: 1e-8, xtol: 1e-8, ..Default::default()
+        }
+    );
     let result = optimizer.minimize(&calibration_objective, vec![0.2]);
     let calibrated_vol = result.best_params[0];
 

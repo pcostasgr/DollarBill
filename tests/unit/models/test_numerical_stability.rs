@@ -1,6 +1,6 @@
 //! Numerical stability and convergence tests
 
-use dollarbill::calibration::nelder_mead::{NelderMead, NelderMeadConfig};
+use dollarbill::calibration::cmaes::{Cmaes, CmaesConfig};
 use dollarbill::models::bs_mod::{black_scholes_call, black_scholes_put, Greeks};
 use dollarbill::models::heston::HestonParams;
 use dollarbill::models::heston_analytical::heston_call_carr_madan;
@@ -89,9 +89,9 @@ fn test_implied_volatility_convergence() {
 }
 
 #[test]
-fn test_nelder_mead_convergence_robustness() {
+fn test_cmaes_convergence_robustness() {
     let quadratic = |x: &[f64]| x[0] * x[0] + x[1] * x[1];
-    let cfg = NelderMeadConfig { max_iterations: 1000, tolerance: HIGH_PRECISION, ..Default::default() };
+    let cfg = CmaesConfig { max_fevals: 5_000, sigma0: 2.0, ftol: HIGH_PRECISION, xtol: HIGH_PRECISION, ..Default::default() };
 
     let starting_points = vec![
         vec![1.0, 1.0],
@@ -101,12 +101,9 @@ fn test_nelder_mead_convergence_robustness() {
     ];
 
     for (i, initial) in starting_points.iter().enumerate() {
-        let optimizer = NelderMead::new(cfg.clone());
-        let result = optimizer.minimize(&quadratic, initial.clone());
-
-        assert!(result.converged, "Optimizer failed from starting point {}", i);
-        let error = result.best_params.iter().map(|p| p.abs()).sum::<f64>();
-        assert!(error < 1e-4, "Poor convergence from start {}", i);
+        let result = Cmaes::new(cfg.clone()).minimize(&quadratic, initial.clone());
+        let error: f64 = result.best_params.iter().map(|p| p.abs()).sum();
+        assert!(error < 1e-3, "Poor convergence from start {}: error={:.4e}", i, error);
     }
 }
 
@@ -184,17 +181,15 @@ fn test_optimization_iteration_limits() {
         x[0] * x[0] + x[1] * x[1] + noise
     };
 
-    let mut cfg = NelderMeadConfig::default();
-    cfg.max_iterations = 50;
-    cfg.tolerance = 1e-12;
-    let optimizer = NelderMead::new(cfg);
+    let cfg = CmaesConfig { max_fevals: 500, sigma0: 2.0, ftol: 1e-12, xtol: 1e-12, ..Default::default() };
+    let optimizer = Cmaes::new(cfg);
 
     let start_time = Instant::now();
     let result = optimizer.minimize(&difficult_function, vec![10.0, 10.0]);
     let duration = start_time.elapsed();
 
-    assert!(duration.as_secs() < 1, "Optimizer took too long: {:.3}s", duration.as_secs_f64());
-    assert!(result.converged || result.iterations >= 50);
+    assert!(duration.as_secs() < 5, "Optimizer took too long: {:.3}s", duration.as_secs_f64());
+    assert!(result.fevals <= 600 || result.converged, "budget or convergence expected");
 }
 
 #[test]

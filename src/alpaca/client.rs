@@ -37,6 +37,8 @@ pub struct AlpacaClient {
     api_secret: String,
     base_url: String,
     data_url: String,
+    /// `true` when connected to the live brokerage endpoint (real money).
+    live: bool,
 }
 
 impl AlpacaClient {
@@ -65,6 +67,7 @@ impl AlpacaClient {
             api_secret,
             base_url: PAPER_TRADING_URL.to_string(),
             data_url: MARKET_DATA_URL.to_string(),
+            live: false,
         }
     }
 
@@ -101,6 +104,7 @@ impl AlpacaClient {
             api_secret,
             base_url: base_url.to_string(),
             data_url: MARKET_DATA_URL.to_string(),
+            live,
         })
     }
 
@@ -185,6 +189,56 @@ impl AlpacaClient {
     }
 
     // ============ Account / Clock Methods ============
+
+    /// Returns `true` when using the **live** brokerage endpoint (real money).
+    pub fn is_live(&self) -> bool {
+        self.live
+    }
+
+    /// Verify that this account has Alpaca options approval at `min_level` or higher.
+    ///
+    /// Alpaca options levels:
+    /// * **Level 1** — covered calls, cash-secured puts (single-leg, defined risk from long stock)
+    /// * **Level 2** — vertical spreads, iron condors, and other defined-risk multi-leg strategies
+    ///
+    /// Returns `Ok(approved_level)` on success.  
+    /// Returns `Err` with actionable instructions when the account is not yet approved or
+    /// the level is insufficient.
+    ///
+    /// Apply for options approval at:
+    /// <https://app.alpaca.markets> → Account → Options Trading → Apply/Upgrade
+    ///
+    /// # Example
+    /// ```no_run
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = dollarbill::alpaca::AlpacaClient::from_env()?;
+    /// // Require at least Level 1 before submitting any options order
+    /// let level = client.verify_options_approval(1).await?;
+    /// println!("Options Tier {} approved", level);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn verify_options_approval(&self, min_level: u8) -> Result<u8, Box<dyn Error>> {
+        let account = self.get_account().await?;
+        match account.options_approved_level {
+            None | Some(0) => Err(
+                "This Alpaca account has no options trading approval.\n\
+                 To apply: log in at https://app.alpaca.markets → Account → Options Trading → Apply.\n\
+                 Level 1 covers cash-secured puts and covered calls.\n\
+                 Level 2 covers spreads and iron condors.\n\
+                 Approval typically takes 1–2 business days."
+                    .into()
+            ),
+            Some(level) if level < min_level => Err(format!(
+                "Options Tier {} is required but this account is approved only for Tier {}.\n\
+                 To upgrade: https://app.alpaca.markets → Account → Options Trading → Upgrade.\n\
+                 Tier 2 unlocks vertical spreads and iron condors.",
+                min_level, level
+            ).into()),
+            Some(level) => Ok(level),
+        }
+    }
 
     /// Get account information
     pub async fn get_account(&self) -> Result<Account, Box<dyn Error>> {

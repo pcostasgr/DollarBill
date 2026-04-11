@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
-use dollarbill::calibration::nelder_mead::{NelderMead, NelderMeadConfig};
+use dollarbill::calibration::cmaes::{Cmaes, CmaesConfig};
 use dollarbill::models::bs_mod::black_scholes_call;
 
 #[test]
@@ -33,10 +33,9 @@ fn test_parallel_calibration_independence() {
     let handles: Vec<_> = (0..num_parallel_calibrations).map(|calib_id| {
         thread::spawn(move || {
             let target = 2.0 + calib_id as f64;
-            let quadratic = |x: &[f64]| (x[0] - target).powi(2) + (x[1] - target).powi(2);
-            let optimizer = NelderMead::new(NelderMeadConfig::default());
-            let result = optimizer.minimize(&quadratic, vec![0.0, 0.0]);
-            result.best_params
+            let quadratic = move |x: &[f64]| (x[0] - target).powi(2) + (x[1] - target).powi(2);
+            let cfg = CmaesConfig { max_fevals: 2_000, sigma0: 1.0, ftol: 1e-6, xtol: 1e-6, ..Default::default() };
+            Cmaes::new(cfg).minimize(&quadratic, vec![0.0, 0.0]).best_params
         })
     }).collect();
 

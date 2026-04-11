@@ -1,9 +1,9 @@
-﻿// Heston parameter calibration using custom Nelder-Mead optimizer
+﻿// Heston parameter calibration using CMA-ES (Covariance Matrix Adaptation ES)
 
 use crate::models::heston::HestonParams;
 use crate::models::heston_analytical::{heston_call_carr_madan, heston_put_carr_madan};
 use crate::calibration::market_option::{MarketOption, OptionType};
-use crate::calibration::nelder_mead::{NelderMead, NelderMeadConfig};
+use crate::calibration::cmaes::{Cmaes, CmaesConfig};
 
 /// Compact calibration parameters (just the 5 we're fitting)
 #[derive(Debug, Clone)]
@@ -145,7 +145,11 @@ fn check_feller(params: &[f64]) -> bool {
     2.0 * kappa * theta > sigma.powi(2)
 }
 
-/// Calibrate Heston parameters using Nelder-Mead optimization
+/// Calibrate Heston parameters using CMA-ES.
+///
+/// CMA-ES handles the noisy, non-convex 5-D Heston landscape far more robustly
+/// than simplex methods: it adapts the covariance of the search distribution
+/// and is invariant to linear transformations of the parameter space.
 pub fn calibrate_heston(
     spot: f64,
     rate: f64,
@@ -155,10 +159,9 @@ pub fn calibrate_heston(
     if market_data.is_empty() {
         return Err("No market data provided for calibration".to_string());
     }
-    
-    println!("Starting Heston calibration with {} options...", market_data.len());
-    
-    // Convert initial guess to vector
+
+    println!("Starting Heston calibration (CMA-ES) with {} options...", market_data.len());
+
     let initial_params = vec![
         initial_guess.kappa,
         initial_guess.theta,
@@ -166,70 +169,49 @@ pub fn calibrate_heston(
         initial_guess.rho,
         initial_guess.v0,
     ];
-    
+
     let initial_error = {
-        let calib_params = CalibParams {
-            kappa: initial_params[0],
-            theta: initial_params[1],
-            sigma: initial_params[2],
-            rho: initial_params[3],
-            v0: initial_params[4],
-        };
-        calculate_error(&calib_params, spot, rate, &market_data)
+        let p = params_from_slice(&initial_params);
+        calculate_error(&p, spot, rate, &market_data)
     };
-    
-    // Define objective function with penalties for constraint violations
-    let objective = |params: &[f64]| {
-        // Check bounds
-        if !check_bounds(params) {
-            return 1e10;  // Penalty for out of bounds
-        }
-        
-        // Check Feller condition
-        if !check_feller(params) {
-            return 1e10;  // Penalty for violating Feller
-        }
-        
-        let calib_params = CalibParams {
-            kappa: params[0],
-            theta: params[1],
-            sigma: params[2],
-            rho: params[3],
-            v0: params[4],
-        };
-        
-        calculate_error(&calib_params, spot, rate, &market_data)
+
+    // Objective: weighted RMSE with hard-penalty for bound / Feller violations.
+    let objective = |x: &[f64]| -> f64 {
+        if !check_bounds(x) { return 1e10; }
+        if !check_feller(x) { return 1e10; }
+        calculate_error(&params_from_slice(x), spot, rate, &market_data)
     };
-    
-    // Run Nelder-Mead optimization
-    let config = NelderMeadConfig {
-        max_iterations: 500,
-        tolerance: 1e-6,
+
+    // σ₀ chosen as ~10% of the typical parameter range so early exploration
+    // covers the whole feasible region before converging.
+    let config = CmaesConfig {
+        max_fevals: 10_000,
+        sigma0:     0.15,
+        ftol:       1e-8,
+        xtol:       1e-8,
         ..Default::default()
     };
-    
-    let optimizer = NelderMead::new(config);
-    let result = optimizer.minimize(objective, initial_params);
-    
-    let final_params = CalibParams {
-        kappa: result.best_params[0],
-        theta: result.best_params[1],
-        sigma: result.best_params[2],
-        rho: result.best_params[3],
-        v0: result.best_params[4],
-    };
-    
-    let final_error = result.best_value;
-    let success = result.converged && final_error < initial_error * 0.5;
-    
+
+    let result = Cmaes::new(config).minimize(objective, initial_params);
+
+    let final_params = params_from_slice(&result.best_params);
+    let final_error  = result.best_value;
+    let success      = result.converged && final_error < initial_error * 0.5;
+
     Ok(CalibrationResult {
-        params: final_params,
-        rmse: final_error,
-        iterations: result.iterations as u64,
+        params:        final_params,
+        rmse:          final_error,
+        iterations:    result.fevals as u64,
         success,
         initial_error,
         final_error,
     })
+}
+
+/// Helper: build a CalibParams from a raw parameter slice [κ, θ, σ, ρ, v₀].
+#[inline]
+fn params_from_slice(x: &[f64]) -> CalibParams {
+    CalibParams { kappa: x[0], theta: x[1], sigma: x[2], rho: x[3], v0: x[4] }
 }
 
 /// Create synthetic market data for testing

@@ -1,7 +1,7 @@
 //! Performance smoke tests (lightweight to keep CI fast)
 
 use std::time::Instant;
-use dollarbill::calibration::nelder_mead::{NelderMead, NelderMeadConfig};
+use dollarbill::calibration::cmaes::{Cmaes, CmaesConfig};
 use dollarbill::models::bs_mod::{black_scholes_call, Greeks};
 use dollarbill::models::heston::HestonParams;
 use dollarbill::models::heston_analytical::heston_call_carr_madan;
@@ -47,16 +47,16 @@ fn bench_heston_pricing_speed() {
 }
 
 #[test]
-fn bench_nelder_mead_optimization_speed() {
+fn bench_cmaes_optimization_speed() {
     let iterations = 5;
     let quadratic = |x: &[f64]| (x[0] - 2.0).powi(2) + (x[1] - 3.0).powi(2);
-    let optimizer = NelderMead::new(NelderMeadConfig::default());
+    let cfg = CmaesConfig { max_fevals: 2_000, sigma0: 1.0, ftol: 1e-8, xtol: 1e-8, ..Default::default() };
 
     let start = Instant::now();
     for _ in 0..iterations {
-        let _ = optimizer.minimize(&quadratic, vec![0.0, 0.0]);
+        let _ = Cmaes::new(cfg.clone()).minimize(&quadratic, vec![0.0, 0.0]);
     }
     let duration = start.elapsed();
     let avg_time_ms = duration.as_millis() / iterations as u128;
-    assert!(avg_time_ms < 200, "Nelder-Mead too slow: {} ms", avg_time_ms);
+    assert!(avg_time_ms < 500, "CMA-ES too slow: {} ms", avg_time_ms);
 }

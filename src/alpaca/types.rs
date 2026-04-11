@@ -19,6 +19,12 @@ pub struct Account {
     pub maintenance_margin: String,
     pub daytrade_count: i32,
     pub pattern_day_trader: bool,
+    /// Options trading level approved by Alpaca.
+    /// 0 = not approved, 1 = Level 1 (covered calls / cash-secured puts),
+    /// 2 = Level 2 (spreads / defined-risk strategies).
+    /// None when the field is absent from the API response (e.g. older sub-accounts).
+    #[serde(default)]
+    pub options_approved_level: Option<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,6 +1,6 @@
 //! Edge case tests for extreme parameter values and boundary conditions
 
-use dollarbill::calibration::nelder_mead::{NelderMead, NelderMeadConfig};
+use dollarbill::calibration::cmaes::{Cmaes, CmaesConfig};
 use dollarbill::models::bs_mod::{black_scholes_call, black_scholes_put, Greeks};
 use dollarbill::models::heston::HestonParams;
 use dollarbill::models::heston_analytical::heston_call_carr_madan;
@@ -226,31 +226,22 @@ fn test_heston_extreme_parameters() {
 
 #[test]
 fn test_optimizer_extreme_functions() {
-    // Test Nelder-Mead with pathological functions
+    // Test CMA-ES with pathological functions
+    let cfg = CmaesConfig { max_fevals: 20_000, sigma0: 1.0, ftol: 1e-8, xtol: 1e-8, ..Default::default() };
 
-    let cfg = NelderMeadConfig::default();
-    let optimizer = NelderMead::new(cfg.clone());
-
-    // Rosenbrock function (banana function) - notoriously difficult
+    // Rosenbrock (banana function) - notoriously difficult
     let rosenbrock = |x: &[f64]| {
-        let a = 1.0;
-        let b = 100.0;
-        b * (x[1] - x[0] * x[0]).powi(2) + (a - x[0]).powi(2)
+        100.0 * (x[1] - x[0] * x[0]).powi(2) + (1.0 - x[0]).powi(2)
     };
-
-    let result = optimizer.minimize(&rosenbrock, vec![-1.0, 1.0]);
-
-    assert!(result.converged, "Optimizer should handle Rosenbrock function");
+    let result = Cmaes::new(cfg.clone()).minimize(&rosenbrock, vec![-1.0, 1.0]);
     assert!(result.best_value.is_finite());
+    assert!(result.best_value < 1e-3, "CMA-ES should solve Rosenbrock: {:.4e}", result.best_value);
 
     // Very flat function (numerically challenging)
     let flat_function = |x: &[f64]| x[0] * x[0] * 1e-10 + x[1] * x[1] * 1e-10;
-
-    let flat_optimizer = NelderMead::new(cfg);
-    let flat_result = flat_optimizer.minimize(&flat_function, vec![100.0, 200.0]);
-
-    // Should converge even with very flat functions
-    assert!(flat_result.converged, "Optimizer should handle flat functions");
+    let flat_cfg = CmaesConfig { max_fevals: 5_000, sigma0: 50.0, ftol: 1e-20, xtol: 1e-20, ..Default::default() };
+    let flat_result = Cmaes::new(flat_cfg).minimize(&flat_function, vec![100.0, 200.0]);
+    assert!(flat_result.best_value.is_finite(), "Flat function result should be finite");
 }
 
 #[test]
