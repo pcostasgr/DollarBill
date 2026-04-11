@@ -4,6 +4,7 @@
 use crate::alerting::Alerter;
 use crate::alpaca::AlpacaClient;
 use crate::analysis::regime_detector::RegimeDetector;
+use crate::analysis::performance_matrix::StrategyRecommendations;
 use crate::calibration::heston_calibrator::{calibrate_heston, CalibParams};
 use crate::config;
 use crate::market_data::csv_loader::load_csv_closes;
@@ -244,6 +245,30 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
     registry.register(Box::new(BreakoutStrategy::new()));
     registry.register(Box::new(VolatilityArbitrageStrategy::new()));
     registry.register(Box::new(CashSecuredPuts::new()));
+
+    // ── P2.3 StrategyMatcher — per-symbol strategy recommendations ────────
+    // Load the performance matrix so we can skip historically-poor strategies
+    // for each symbol.  Falls back to an empty matcher (no filtering) on error.
+    let strategy_avoid: HashMap<String, String> = {
+        use crate::strategies::matching::StrategyMatcher;
+        let matcher = StrategyMatcher::load_from_files(
+            "models/stock_classifier.json",
+            "models/performance_matrix.json",
+        ).unwrap_or_else(|_| {
+            info!("P2.3: performance_matrix.json not found — strategy filtering disabled");
+            StrategyMatcher::new()
+        });
+        let mut map = HashMap::new();
+        for sym in &symbols {
+            let recs: StrategyRecommendations = matcher.get_recommendations(sym);
+            if recs.confidence_score > 0.0 && recs.avoid_strategy != "Unknown" {
+                info!("P2.3 [{}]: best={}, avoid={} (conf={:.2})",
+                    sym, recs.recommended_strategy, recs.avoid_strategy, recs.confidence_score);
+                map.insert(sym.clone(), recs.avoid_strategy);
+            }
+        }
+        map
+    };
 
     // ── P3.1 Live IV cache (15-min TTL) ───────────────────────────────────
     let iv_cache = LiveIvCache::new(900);
@@ -727,12 +752,15 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
 
                 // Generate signals
                 let signals = registry.generate_all_signals(&sym, price, sigma, model_iv, sigma);
+                let avoid_strat = strategy_avoid.get(&sym).map(|s| s.as_str()).unwrap_or("");
                 let actionable: Vec<_> = signals.iter()
                     .filter(|s| {
                         // Base confidence gate
                         if s.confidence < min_confidence { return false; }
                         if matches!(s.action, SignalAction::NoAction) { return false; }
                         if matches!(s.action, SignalAction::ClosePosition { .. }) { return false; }
+                        // P2.3 performance-matrix gate: skip historically worst strategy
+                        if !avoid_strat.is_empty() && s.strategy_name == avoid_strat { return false; }
                         // Regime weight gate: skip strategies with weight < 0.5
                         let weight = RegimeDetector::weight_for(&regime, &s.strategy_name);
                         s.confidence * weight >= min_confidence

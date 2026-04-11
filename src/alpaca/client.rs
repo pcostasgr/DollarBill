@@ -524,7 +524,9 @@ impl AlpacaClient {
         is_call: bool,
         strike: f64,
     ) -> String {
-        let strike = Self::round_to_standard_strike(strike);
+        // Encode strike exactly: OCC uses integer thousandths of a dollar.
+        // Rounding to exchange increments is the caller's responsibility;
+        // `occ_symbol` is a pure encoding function.
         format!(
             "{:<6}{:02}{:02}{:02}{}{:08.0}",
             underlying,
