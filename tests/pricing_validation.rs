@@ -2180,7 +2180,17 @@ fn full_year_tsla_regime_aware_backtest() {
 ///    half-spread (e.g. 0.10 = 10 %).  Exit mirrors entry.
 ///    OCC clearing fee modelled as flat $0.02/side × 4 legs = $0.08 entry +
 ///    $0.08 exit, in option-dollar terms, deducted from effective credit.
-fn run_full_year_variant(label: &str, enable_loss_stop: bool, half_spread_frac: f64) {
+fn run_full_year_variant(
+    label: &str,
+    enable_loss_stop: bool,
+    half_spread_frac: f64,
+    // Only open a new condor when net_credit / wing_premium > this ratio.
+    // Set to 0.0 to disable the filter.
+    entry_credit_filter: f64,
+    // When true, use `decision.should_flatten` from the Greeks pipeline as a
+    // dynamic exit signal in addition to (or instead of) the fixed 12% loss-stop.
+    use_dynamic_stop: bool,
+) {
     use dollarbill::backtesting::RegimePipeline;
     use dollarbill::analysis::portfolio_greeks::{PortfolioLimits, OptionLeg};
     use dollarbill::portfolio::{PositionSizer, SizingMethod};
@@ -2253,9 +2263,11 @@ fn run_full_year_variant(label: &str, enable_loss_stop: bool, half_spread_frac: 
 
         let day_equity = 1.0 + running_pnl;
 
-        // Loss-stop (disabled in Variant A)
+        // Loss-stop (disabled in Variant A) – fixed 12% floor OR dynamic Greeks signal
         let loss_pct = (day_equity - 1.0).min(0.0).abs();
-        if enable_loss_stop && condor.is_some() && loss_pct > 0.12 {
+        let fixed_stop_fires  = enable_loss_stop && condor.is_some() && loss_pct > 0.12;
+        let dynamic_stop_fires = use_dynamic_stop && condor.is_some() && decision.should_flatten;
+        if fixed_stop_fires || dynamic_stop_fires {
             auto_derisk_count += 1;
             condor = None;
             days_since_roll = 0;
@@ -2282,7 +2294,10 @@ fn run_full_year_variant(label: &str, enable_loss_stop: bool, half_spread_frac: 
             // Entry slippage: pay half-spread on each of 4 legs + OCC fee
             let entry_slip     = half_spread_frac * (ep_s + ec_s + ep_w + ec_w);
             let condor_credit  = (strangle_credit - ep_w - ec_w) - entry_slip - occ_fee_per_condor;
-            if condor_credit > 0.001 {
+            // Entry quality filter: skip if net credit is a thin fraction of wing premium
+            let wing_premium = (ep_w + ec_w).max(1e-9);
+            let quality_ok = entry_credit_filter <= 0.0 || (condor_credit / wing_premium) > entry_credit_filter;
+            if condor_credit > 0.001 && quality_ok {
                 let base_size     = if strangle_credit > 0.0 { 0.03 / strangle_credit } else { 0.001 };
                 let position_size = base_size * decision.multiplier;
                 condor = Some(Condor { k_put_s, k_call_s, k_put_wing, k_call_wing,
@@ -2320,6 +2335,8 @@ fn run_full_year_variant(label: &str, enable_loss_stop: bool, half_spread_frac: 
     println!("  Auto-de-risks    : {auto_derisk_count}");
     println!("  Loss-stop enabled: {enable_loss_stop}");
     println!("  Half-spread frac : {:.1}%  OCC fee: ${occ_fee_per_condor:.2}/condor", half_spread_frac * 100.0);
+    println!("  Entry filter     : {}", if entry_credit_filter > 0.0 { format!("credit/wing > {entry_credit_filter:.2}") } else { "disabled".into() });
+    println!("  Dynamic stop     : {use_dynamic_stop}");
     println!("  Avg mult Feb-Mar : {}", crash_mult.map_or("N/A".into(), |m| format!("{m:.3}")));
     println!("  Avg mult rest    : {}", rest_mult.map_or("N/A".into(),  |m| format!("{m:.3}")));
 }
@@ -2339,6 +2356,8 @@ fn variant_a_no_auto_derisk() {
         "VARIANT A – Regime sizing, NO auto-derisk",
         false,   // loss-stop disabled
         0.0,     // no slippage
+        0.0,     // entry filter disabled
+        false,   // dynamic stop disabled
     );
 }
 
@@ -2357,5 +2376,49 @@ fn variant_b_realistic_slippage() {
         "VARIANT B – Regime sizing + 10% half-spread + OCC fees",
         true,    // loss-stop enabled (same as Kill 16)
         0.10,    // 10 % half-spread per leg mid-price
+        0.0,     // entry filter disabled
+        false,   // dynamic stop disabled
+    );
+}
+
+// ─── Variant C: entry quality filter ────────────────────────────────────────
+
+/// Adds a credit-quality gate: only open the iron condor when
+///   net_credit / wing_premium > 0.25
+/// This skips thin-credit trades that are most hurt by slippage and still
+/// keeps the fixed 12% loss-stop active.
+///
+/// Expected: fewer trades opened but better average quality; max DD should
+/// drop relative to baseline (12.77%).
+#[test]
+fn variant_c_entry_quality_filter() {
+    run_full_year_variant(
+        "VARIANT C – Entry quality filter (credit/wing > 0.25)",
+        true,    // loss-stop enabled
+        0.0,     // no slippage (isolate the filter effect)
+        0.25,    // entry filter: credit must be > 25% of wing cost
+        false,   // dynamic stop disabled
+    );
+}
+
+// ─── Variant D: entry filter + dynamic stop + realistic slippage ─────────────
+
+/// The full stack: quality gate + Greeks-pipeline dynamic exit + real friction.
+///
+/// Dynamic stop: instead of the fixed 12% equity floor, the position is
+/// flattened whenever the Greeks pipeline signals `should_flatten` (i.e.
+/// portfolio vega exceeds the limit — meaning the regime-scaled vega has
+/// gone offside).
+///
+/// This is the harshest test: if max DD stays below 18% despite realistic
+/// slippage, the strategy is genuinely friction-robust.
+#[test]
+fn variant_d_full_stack() {
+    run_full_year_variant(
+        "VARIANT D – Entry filter + dynamic stop + 10% slippage",
+        false,   // fixed loss-stop disabled (dynamic stop takes over)
+        0.10,    // 10% half-spread
+        0.25,    // entry filter enabled
+        true,    // dynamic stop: use should_flatten from Greeks pipeline
     );
 }
