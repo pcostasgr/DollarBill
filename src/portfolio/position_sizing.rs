@@ -1,5 +1,8 @@
 // Position sizing algorithms for portfolio management
 
+use crate::analysis::advanced_classifier::MarketRegime;
+use crate::analysis::regime_detector::RegimeDetector;
+
 /// Position sizing method
 #[derive(Debug, Clone, Copy)]
 pub enum SizingMethod {
@@ -67,6 +70,32 @@ impl PositionSizer {
         // Apply maximum position size limit
         let max_contracts = self.max_position_contracts(option_price);
         size.min(max_contracts)
+    }
+
+    /// Calculate position size scaled by the current market regime.
+    ///
+    /// Calls [`calculate_size`] for the base contract count, then multiplies
+    /// by [`RegimeDetector::sizing_multiplier`].  Result is rounded and floored
+    /// to at least 0 (never shorts what was requested as a long, etc.).
+    ///
+    /// | Regime    | Multiplier | Effect                           |
+    /// |-----------|------------|----------------------------------|
+    /// | HighVol   | 0.35       | 65% reduction for crash regimes  |
+    /// | LowVol    | 1.80       | 80% increase for calm markets    |
+    /// | others    | 0.50–1.00  | see `RegimeDetector::sizing_multiplier` |
+    pub fn calculate_size_with_regime(
+        &self,
+        method: SizingMethod,
+        option_price: f64,
+        volatility: f64,
+        win_rate: Option<f64>,
+        avg_win: Option<f64>,
+        avg_loss: Option<f64>,
+        regime: &MarketRegime,
+    ) -> i32 {
+        let base = self.calculate_size(method, option_price, volatility, win_rate, avg_win, avg_loss);
+        let mult = RegimeDetector::sizing_multiplier(regime);
+        ((base as f64 * mult).floor() as i32).max(0)
     }
 
     /// Fixed fractional position sizing

@@ -132,6 +132,27 @@ impl RegimeDetector {
             .map(|(_, w)| *w)
             .unwrap_or(1.0)
     }
+
+    /// Return the global **position-sizing multiplier** for a regime.
+    ///
+    /// Applied to the base contract count from any `PositionSizer` method.
+    ///
+    /// | Regime        | Multiplier | Rationale                                     |
+    /// |---------------|------------|-----------------------------------------------|
+    /// | `HighVol`     | 0.35       | Crash/panic: 65 % size reduction to cap DD    |
+    /// | `LowVol`      | 1.80       | Calm market: deploy more size for higher θ    |
+    /// | `Trending`    | 1.00       | Neutral: direction is clear, keep full size   |
+    /// | `MeanRev`     | 1.00       | Neutral: equal chance either way              |
+    /// | `EventDriven` | 0.50       | Binary risk: pre-earnings / binary events     |
+    pub fn sizing_multiplier(regime: &MarketRegime) -> f64 {
+        match regime {
+            MarketRegime::HighVol       => 0.35,
+            MarketRegime::LowVol        => 1.80,
+            MarketRegime::Trending      => 1.00,
+            MarketRegime::MeanReverting => 1.00,
+            MarketRegime::EventDriven   => 0.50,
+        }
+    }
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
