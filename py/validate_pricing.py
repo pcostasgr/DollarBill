@@ -699,6 +699,261 @@ def print_header() -> None:
     print(f"    scipy_chk  = |QL − scipy|                  < 0.0001")
 
 
+# ─── Surface MAE validation  (--surface / --period / --report-wings) ──────────
+
+def _bsm_iv_call(price: float, S: float, K: float, T: float, r: float,
+                 lo: float = 0.001, hi: float = 10.0, tol: float = 1e-7) -> float:
+    """Bisection implied vol for a call price."""
+    if price <= 0.0 or T <= 0.0:
+        return float("nan")
+    for _ in range(120):
+        mid = (lo + hi) * 0.5
+        v = scipy_bsm_call(S, K, T, r, mid)
+        if abs(v - price) < tol:
+            return mid
+        if v < price:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) * 0.5
+
+
+def _load_csv_window(csv_path: str, start: str, end: str) -> "list[tuple[str,float]]":
+    """Load (date, close) pairs from a CSV restricted to [start, end] inclusive."""
+    rows: list[tuple[str, float]] = []
+    import csv as _csv
+    with open(csv_path, newline="") as fh:
+        reader = _csv.DictReader(fh)
+        for row in reader:
+            date_val = row.get("Date", row.get("date", "")).strip()
+            close_val = row.get("Close", row.get("close", "")).strip()
+            try:
+                close_f = float(close_val)
+            except (ValueError, TypeError):
+                continue
+            if start <= date_val <= end:
+                rows.append((date_val, close_f))
+    rows.sort(key=lambda r: r[0])
+    return rows
+
+
+def _realized_vol(closes: "list[float]") -> float:
+    """Annualized realized vol from a list of closing prices."""
+    import math as _math
+    rets = [_math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes))]
+    n = len(rets)
+    if n < 2:
+        return float("nan")
+    mu = sum(rets) / n
+    var = sum((r - mu) ** 2 for r in rets) / (n - 1)
+    return _math.sqrt(var * 252)
+
+
+def _ql_calibrate_heston(
+    S: float, r: float,
+    maturities: "list[float]",
+    strikes_per_mat: "list[list[float]]",
+    prices_per_mat: "list[list[float]]",
+) -> "dict":
+    """
+    Calibrate Heston model to a call-price surface via QuantLib's
+    LevenbergMarquardt optimizer + AnalyticHestonEngine.
+
+    Returns dict with keys: v0, kappa, theta, sigma, rho, final_rmse.
+    """
+    if not HAS_QUANTLIB:
+        return {}
+
+    today = ql.Date(1, 1, 2025)
+    ql.Settings.instance().evaluationDate = today
+
+    spot_h   = ql.QuoteHandle(ql.SimpleQuote(S))
+    rate_ts  = _ql_flat_ts(today, r)
+    div_ts   = _ql_flat_ts(today, 0.0)
+
+    helpers = []
+    for T, strikes, prices in zip(maturities, strikes_per_mat, prices_per_mat):
+        mat_date = today + ql.Period(int(round(T * 365)), ql.Days)
+        for K, price in zip(strikes, prices):
+            # HestonModelHelper takes market implied vol, not price — convert.
+            iv = _bsm_iv_call(price, S, K, T, r)
+            if math.isnan(iv) or iv <= 0:
+                continue
+            helper = ql.HestonModelHelper(
+                ql.Period(int(round(T * 365)), ql.Days),
+                ql.NullCalendar(),
+                S,          # spot — Real, not QuoteHandle
+                K,
+                ql.QuoteHandle(ql.SimpleQuote(iv)),
+                rate_ts,
+                div_ts,
+            )
+            helpers.append(helper)
+
+    if not helpers:
+        return {}
+
+    # Initial guess: flat vol close to realized
+    v0_init    = 0.09
+    proc = ql.HestonProcess(rate_ts, div_ts, spot_h, v0_init, 2.0, v0_init, 0.3, -0.5)
+    model = ql.HestonModel(proc)
+    engine = ql.AnalyticHestonEngine(model, 64)
+    for h in helpers:
+        h.setPricingEngine(engine)
+
+    om = ql.LevenbergMarquardt()
+    model.calibrate(helpers, om, ql.EndCriteria(1000, 100, 1e-8, 1e-8, 1e-8))
+
+    params = model.params()
+    # QuantLib Heston params order: [theta, kappa, sigma, rho, v0]
+    theta, kappa, sigma, rho, v0 = params[0], params[1], params[2], params[3], params[4]
+
+    total_sq = sum(h.calibrationError() ** 2 for h in helpers)
+    rmse = math.sqrt(total_sq / len(helpers))
+
+    return dict(v0=v0, kappa=kappa, theta=theta, sigma=sigma, rho=rho,
+                calibration_rmse=rmse, n_helpers=len(helpers))
+
+
+def validate_surface(csv_path: str, period: str, report_wings: bool, r: float = 0.045) -> int:
+    """
+    Full surface MAE report:
+      1. Load CSV, extract [start, end] window.
+      2. Compute annualized realized vol.
+      3. Build synthetic call surface (7 strikes × 4 maturities) from RV.
+      4. Calibrate Heston via QuantLib LevenbergMarquardt.
+      5. Price every cell with calibrated params and compute |ΔIV|.
+      6. Report total MAE, per-maturity MAE, and (if --report-wings) ATM vs wing split.
+    """
+    import math as _math
+
+    # ── parse date range ─────────────────────────────────────────────────────
+    if ":" not in period:
+        print(red(f"ERROR: --period must be 'YYYY-MM-DD:YYYY-MM-DD', got '{period}'"))
+        return 1
+    start, end = period.split(":", 1)
+
+    section(f"Surface MAE Validation — {csv_path}  [{start} → {end}]")
+
+    rows = _load_csv_window(csv_path, start, end)
+    if len(rows) < 5:
+        print(red(f"  ERROR: only {len(rows)} rows in window {start}:{end} — need ≥5"))
+        return 1
+
+    closes = [c for _, c in rows]
+    spot   = closes[-1]
+    rv     = _realized_vol(closes)
+
+    print(f"  Window : {rows[0][0]} → {rows[-1][0]}  ({len(rows)} trading days)")
+    print(f"  Spot   : {spot:.2f}")
+    print(f"  Ann RV : {rv * 100:.2f}%")
+
+    if _math.isnan(rv) or rv <= 0:
+        print(red("  ERROR: could not compute realized vol"))
+        return 1
+
+    # ── build synthetic surface from RV ──────────────────────────────────────
+    maturities = [7 / 365, 30 / 365, 90 / 365, 180 / 365]
+    mat_labels  = ["1w", "1m", "3m", "6m"]
+    moneyness   = [0.75, 0.833, 0.917, 1.0, 1.083, 1.167, 1.25]  # 7 strikes
+
+    # "Market" vol surface: flat RV with a mild ~5% skew (deeper OTM puts richer)
+    def market_iv(m: float, T: float) -> float:
+        skew = -0.05 * (m - 1.0)        # roughly -5% per unit moneyness
+        term = 0.02 * _math.sqrt(T)     # term-structure steepening
+        return max(rv + skew + term, 0.05)
+
+    strikes_per_mat: list[list[float]] = []
+    prices_per_mat:  list[list[float]] = []
+    mkt_ivs_per_mat: list[list[float]] = []
+
+    for T in maturities:
+        row_k: list[float] = []
+        row_p: list[float] = []
+        row_v: list[float] = []
+        for m in moneyness:
+            K   = round(spot * m / 5.0) * 5.0
+            iv  = market_iv(m, T)
+            p   = scipy_bsm_call(spot, K, T, r, iv)
+            row_k.append(K)
+            row_p.append(p)
+            row_v.append(iv)
+        strikes_per_mat.append(row_k)
+        prices_per_mat.append(row_p)
+        mkt_ivs_per_mat.append(row_v)
+
+    total_cells = sum(len(r) for r in strikes_per_mat)
+    print(f"  Surface: {len(maturities)} maturities × {len(moneyness)} strikes = {total_cells} cells")
+    print()
+
+    # ── QuantLib Heston calibration ───────────────────────────────────────────
+    print("  Calibrating Heston (QuantLib LevenbergMarquardt)…")
+    cal = _ql_calibrate_heston(spot, r, maturities, strikes_per_mat, prices_per_mat)
+    if not cal:
+        print(red("  ERROR: calibration failed — QuantLib not available or no valid helpers"))
+        return 1
+
+    print(f"  Calibrated params:")
+    print(f"    v0={cal['v0']:.4f}  kappa={cal['kappa']:.4f}  theta={cal['theta']:.4f}"
+          f"  sigma={cal['sigma']:.4f}  rho={cal['rho']:.4f}")
+    print(f"    calibration RMSE (IV units): {cal['calibration_rmse']:.6f}")
+    print()
+
+    # ── per-cell |ΔIV| ────────────────────────────────────────────────────────
+    v0, kappa, theta, sigma_h, rho_h = cal["v0"], cal["kappa"], cal["theta"], cal["sigma"], cal["rho"]
+
+    all_errors: list[float] = []
+    atm_errors: list[float] = []
+    wing_errors: list[float] = []
+
+    header = f"  {'Mat':<5}  {'Strike':>8}  {'Mon':>6}  {'MktIV':>8}  {'ModelIV':>8}  {'|ΔIV|':>8}  {'Zone':<5}"
+    print(header)
+    print("  " + "-" * (len(header) - 2))
+
+    for i, (T, label) in enumerate(zip(maturities, mat_labels)):
+        mat_errs: list[float] = []
+        for j, (K, mkt_iv) in enumerate(zip(strikes_per_mat[i], mkt_ivs_per_mat[i])):
+            model_price = ql_heston_call(spot, K, T, r, v0, kappa, theta, sigma_h, rho_h, n_laguerre=64)
+            model_iv    = _bsm_iv_call(model_price, spot, K, T, r)
+            if _math.isnan(model_iv):
+                continue
+            err = abs(model_iv - mkt_iv)
+            m   = K / spot
+            zone = "ATM" if abs(m - 1.0) < 0.10 else "wing"
+            all_errors.append(err)
+            mat_errs.append(err)
+            if zone == "ATM":
+                atm_errors.append(err)
+            else:
+                wing_errors.append(err)
+            print(f"  {label:<5}  {K:>8.2f}  {m:>6.3f}  {mkt_iv*100:>7.3f}%  "
+                  f"{model_iv*100:>7.3f}%  {err*100:>7.4f}%  {zone}")
+
+        if mat_errs:
+            print(f"  {'─'*5}  {'mat MAE':>8}{"":>7}{"":>9}{"":>9}  {sum(mat_errs)/len(mat_errs)*100:>7.4f}%")
+        print()
+
+    # ── summary ───────────────────────────────────────────────────────────────
+    total_mae = sum(all_errors) / len(all_errors) if all_errors else float("nan")
+    print(bold("  ─── Surface Summary ───────────────────────────────────"))
+    print(f"  Total cells    : {len(all_errors)}")
+    print(f"  Overall MAE    : {total_mae*100:.4f}%  (kill criterion: 0.80%)")
+    status = green("PASS") if total_mae < 0.008 else red("FAIL")
+    print(f"  Kill criterion : {status}")
+
+    if report_wings:
+        atm_mae  = sum(atm_errors)  / len(atm_errors)  if atm_errors  else float("nan")
+        wing_mae = sum(wing_errors) / len(wing_errors) if wing_errors else float("nan")
+        print()
+        print(f"  ATM  cells ({len(atm_errors):2d}) MAE : {atm_mae*100:.4f}%")
+        print(f"  Wing cells ({len(wing_errors):2d}) MAE : {wing_mae*100:.4f}%")
+        worst_idx = max(range(len(all_errors)), key=lambda i: all_errors[i])
+        print(f"  Worst cell     : {all_errors[worst_idx]*100:.4f}%")
+
+    print(bold("  ──────────────────────────────────────────────────────"))
+    return 0 if total_mae < 0.008 else 1
+
+
 # ─── Entry point ──────────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -709,7 +964,23 @@ def main() -> int:
                         help="Cargo test name filter (default: empty = run all test_quantlib tests)")
     parser.add_argument("--speed", action="store_true",
                         help="Run head-to-head speed benchmark: QuantLib Python vs Rust (cargo bench)")
+    parser.add_argument("--surface", default="",
+                        help="Path to OHLCV CSV (e.g. data/tesla_one_year.csv) for surface MAE report")
+    parser.add_argument("--period", default="",
+                        help="Date window for --surface, format: YYYY-MM-DD:YYYY-MM-DD")
+    parser.add_argument("--report-wings", action="store_true",
+                        help="With --surface: break down MAE into ATM vs OTM-wing buckets")
     args = parser.parse_args()
+
+    # ── surface-only early exit ────────────────────────────────────────────────
+    if args.surface:
+        if not args.period:
+            print(red("ERROR: --surface requires --period YYYY-MM-DD:YYYY-MM-DD"))
+            return 1
+        if not HAS_QUANTLIB:
+            print(red("ERROR: QuantLib is required. Install with: pip install QuantLib"))
+            return 1
+        return validate_surface(args.surface, args.period, args.report_wings)
 
     if not HAS_QUANTLIB:
         print(red("ERROR: QuantLib is required. Install with: pip install QuantLib"))
@@ -755,6 +1026,8 @@ def main() -> int:
         tips.append(f"{bold('--rust')} to include live Rust computed prices")
     if not args.speed:
         tips.append(f"{bold('--speed')} for head-to-head speed comparison vs QuantLib")
+    if not args.surface:
+        tips.append(f"{bold('--surface <csv>')} for out-of-sample surface MAE validation")
     if tips:
         print(f"  Tip: re-run with {' and '.join(tips)}.")
     print(bold("=" * 100))
