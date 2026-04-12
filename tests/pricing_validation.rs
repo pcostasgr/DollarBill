@@ -2185,14 +2185,14 @@ fn run_full_year_variant(
     enable_loss_stop: bool,
     half_spread_frac: f64,
     // Only open a new condor when net_credit / wing_premium > this ratio.
-    // Set to 0.0 to disable the filter.
     entry_credit_filter: f64,
-    // When true, use `decision.should_flatten` (now P&L-aware: DD>8% + vega_util>60%)
-    // as dynamic exit signal instead of the fixed 12% loss-stop.
+    // When true, use the P&L-aware hybrid dynamic stop from the pipeline.
     use_dynamic_stop: bool,
-    // When true, tighten short strikes to ~7% OTM (~20-25 delta) in HighVol regime
-    // so the condor collects fatter credits to absorb slippage.
+    // When true, use 13% OTM short strikes in HighVol instead of 10%.
     wide_wings_in_highvol: bool,
+    // When true, completely suppress new condor entries when regime = HighVol or Trending.
+    // Delegates to `PositionSizer::should_enter` via `decision.allow_entry`.
+    suppress_highvol_entry: bool,
 ) {
     use dollarbill::backtesting::RegimePipeline;
     use dollarbill::analysis::advanced_classifier::MarketRegime;
@@ -2225,10 +2225,11 @@ fn run_full_year_variant(
     let mut max_dd    = 0.0_f64;
     let mut daily_returns: Vec<f64> = Vec::with_capacity(chron.len());
     let mut prev_equity = 1.0_f64;
-    let mut auto_derisk_count  = 0usize;
-    let mut days_since_roll    = 22usize;
-    let mut crash_credit_sum   = 0.0_f64;
-    let mut crash_credit_count = 0usize;
+    let mut auto_derisk_count       = 0usize;
+    let mut days_since_roll          = 22usize;
+    let mut crash_credit_sum         = 0.0_f64;
+    let mut crash_credit_count       = 0usize;
+    let mut entry_suppressed_count   = 0usize;
 
     for (i, day) in chron.iter().enumerate() {
         let spot = day.close;
@@ -2317,7 +2318,11 @@ fn run_full_year_variant(
             // Entry quality filter: skip if net credit is a thin fraction of wing premium
             let wing_premium = (ep_w + ec_w).max(1e-9);
             let quality_ok = entry_credit_filter <= 0.0 || (condor_credit / wing_premium) > entry_credit_filter;
-            if condor_credit > 0.001 && quality_ok {
+            // Entry gate: skip if regime suppresses entries (Variant G)
+            let entry_allowed = !suppress_highvol_entry || decision.allow_entry;
+            if !entry_allowed {
+                entry_suppressed_count += 1;
+            } else if condor_credit > 0.001 && quality_ok {
                 // Track credits opened during the crash window (Feb–Mar)
                 if date.as_str() >= "2025-02-01" && date.as_str() <= "2025-03-31" {
                     crash_credit_sum   += condor_credit;
@@ -2363,6 +2368,7 @@ fn run_full_year_variant(
     println!("  Entry filter     : {}", if entry_credit_filter > 0.0 { format!("credit/wing > {entry_credit_filter:.2}") } else { "disabled".into() });
     println!("  Dynamic stop     : {use_dynamic_stop}");
     println!("  Wide wings HiVol : {wide_wings_in_highvol}");
+    println!("  No entry HiVol   : {suppress_highvol_entry}  ({entry_suppressed_count} slots suppressed)");
     println!("  Avg mult Feb-Mar : {}", crash_mult.map_or("N/A".into(), |m| format!("{m:.3}")));
     println!("  Avg mult rest    : {}", rest_mult.map_or("N/A".into(),  |m| format!("{m:.3}")));
     let avg_crash_credit = if crash_credit_count > 0 {
@@ -2386,11 +2392,7 @@ fn run_full_year_variant(
 fn variant_a_no_auto_derisk() {
     run_full_year_variant(
         "VARIANT A – Regime sizing, NO auto-derisk",
-        false,   // loss-stop disabled
-        0.0,     // no slippage
-        0.0,     // entry filter disabled
-        false,   // dynamic stop disabled
-        false,   // wide wings disabled
+        false, 0.0, 0.0, false, false, false,
     );
 }
 
@@ -2407,11 +2409,7 @@ fn variant_a_no_auto_derisk() {
 fn variant_b_realistic_slippage() {
     run_full_year_variant(
         "VARIANT B – Regime sizing + 10% half-spread + OCC fees",
-        true,    // loss-stop enabled (same as Kill 16)
-        0.10,    // 10 % half-spread per leg mid-price
-        0.0,     // entry filter disabled
-        false,   // dynamic stop disabled
-        false,   // wide wings disabled
+        true, 0.10, 0.0, false, false, false,
     );
 }
 
@@ -2425,11 +2423,7 @@ fn variant_b_realistic_slippage() {
 fn variant_c_entry_quality_filter() {
     run_full_year_variant(
         "VARIANT C – Entry quality filter (credit/wing > 0.35)",
-        true,    // loss-stop enabled
-        0.0,     // no slippage (isolate the filter effect)
-        0.35,    // entry filter: credit must be > 35% of wing cost
-        false,   // dynamic stop disabled
-        false,   // wide wings disabled
+        true, 0.0, 0.35, false, false, false,
     );
 }
 
@@ -2448,11 +2442,7 @@ fn variant_c_entry_quality_filter() {
 fn variant_d_full_stack() {
     run_full_year_variant(
         "VARIANT D – Entry filter + dynamic stop + 10% slippage",
-        false,   // fixed loss-stop disabled (dynamic stop takes over)
-        0.10,    // 10% half-spread
-        0.25,    // entry filter enabled
-        true,    // dynamic stop: use should_flatten from Greeks pipeline
-        false,   // wide wings disabled
+        false, 0.10, 0.25, true, false, false,
     );
 }
 
@@ -2469,11 +2459,7 @@ fn variant_d_full_stack() {
 fn variant_e_pnl_aware_dynamic_stop() {
     run_full_year_variant(
         "VARIANT E – P&L-aware hybrid stop + wider OTM shorts (HighVol)",
-        false,   // fixed 12% stop disabled
-        0.10,    // 10% half-spread
-        0.35,    // entry filter: credit/wing > 0.35
-        true,    // hybrid dynamic stop
-        true,    // wider OTM shorts in HighVol regime
+        false, 0.10, 0.35, true, true, false,
     );
 }
 
@@ -2494,10 +2480,32 @@ fn variant_e_pnl_aware_dynamic_stop() {
 fn variant_f_wider_wings_highvol() {
     run_full_year_variant(
         "VARIANT F – P&L hybrid stop + 13% OTM shorts in HighVol",
+        false, 0.10, 0.35, true, true, false,
+    );
+}
+
+// ─── Variant G: suppress entry in HighVol / Trending ────────────────────
+
+/// The kill test: zero new iron condor entries when regime = HighVol or Trending.
+///
+/// Logic lives in `PositionSizer::should_enter` → `PreTradeDecision::allow_entry`.
+/// The skip reason is logged to the audit trail:
+///   "2025-03-02 | Regime: HighVol | Action: SKIPPED | Reason: vol-of-vol too high"
+///
+/// Existing positions can still be held to expiry or stopped by the dynamic
+/// P&L trigger; the suppression only gates *new* entries.
+///
+/// Hypothesis: removing 3–4 losing HighVol/Trending condors per year is
+/// enough to cut max DD below 14% even with realistic 10% slippage.
+#[test]
+fn variant_g_no_entry_in_highvol() {
+    run_full_year_variant(
+        "VARIANT G – No entry in HighVol/Trending + 10% slippage",
         false,   // fixed 12% stop disabled
         0.10,    // 10% half-spread
-        0.35,    // entry filter enabled
-        true,    // hybrid dynamic stop
-        true,    // 13% OTM short strikes in HighVol
+        0.35,    // entry quality filter
+        true,    // hybrid P&L dynamic stop
+        true,    // 13% OTM shorts when HighVol does open
+        true,    // <── suppress new entries in HighVol + Trending
     );
 }

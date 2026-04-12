@@ -98,6 +98,32 @@ impl PositionSizer {
         ((base as f64 * mult).floor() as i32).max(0)
     }
 
+    /// Decide whether a new position should be opened at all given the current regime.
+    ///
+    /// Returns `(allowed, skip_reason)`.
+    ///
+    /// Rules (in order):
+    /// 1. `HighVol` regime → **never open**.  High-vol crash environments make
+    ///    short-premium structures (iron condors, short strangles) statistically
+    ///    loss-making after friction.  Regime multiplier 0.35× does not save you;
+    ///    it just makes you lose 65% less than you otherwise would.
+    /// 2. `Trending` regime → **never open** a symmetric structure.  A strong
+    ///    directional move will breach one side of the condor reliably.
+    /// 3. All other regimes → **allowed**.
+    pub fn should_enter(&self, regime: &MarketRegime) -> (bool, Option<String>) {
+        match regime {
+            MarketRegime::HighVol => (
+                false,
+                Some(format!("HighVol regime: vol-of-vol too high for short-premium")),
+            ),
+            MarketRegime::Trending => (
+                false,
+                Some(format!("Trending regime: directional move will breach condor")),
+            ),
+            _ => (true, None),
+        }
+    }
+
     /// Fixed fractional position sizing
     fn fixed_fractional(&self, pct: f64, option_price: f64) -> i32 {
         let position_value = self.account_value * (pct / 100.0);

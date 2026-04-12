@@ -53,6 +53,12 @@ pub struct PreTradeDecision {
     pub greeks: PortfolioGreeks,
     /// `true` when a limit breach requires auto-flatten / hedging.
     pub should_flatten: bool,
+    /// `false` when the regime prohibits opening a new position.
+    /// Existing positions are unaffected — this only gates new entries.
+    pub allow_entry: bool,
+    /// Human-readable reason when `allow_entry` is `false`, e.g.
+    /// `"HighVol regime: vol-of-vol too high for short-premium"`.
+    pub skip_reason: Option<String>,
 }
 
 // ─── Pipeline ────────────────────────────────────────────────────────────────
@@ -128,16 +134,12 @@ impl RegimePipeline {
         };
         let multiplier = RegimeDetector::sizing_multiplier(&regime);
 
-        // ── 3. Regime-aware position sizing ───────────────────────────────────
+        // ── 3. Regime-aware position sizing + entry gate ───────────────────────
         let contracts = self.sizer.calculate_size_with_regime(
-            sizing_method,
-            base_option_price,
-            base_volatility,
-            None,
-            None,
-            None,
-            &regime,
+            sizing_method, base_option_price, base_volatility,
+            None, None, None, &regime,
         );
+        let (allow_entry, skip_reason) = self.sizer.should_enter(&regime);
 
         // ── 4. Limit check + P&L-aware trigger ─────────────────────────────────
         let breaches = check_limits(&greeks, &self.limits, equity);
@@ -169,6 +171,7 @@ impl RegimePipeline {
             equity,
             auto_derisk:        should_flatten,
             projected_max_dd_pct,
+            skip_reason:        skip_reason.clone(),
         };
         self.audit_log.record(entry);
 
@@ -178,6 +181,8 @@ impl RegimePipeline {
             multiplier,
             greeks,
             should_flatten,
+            allow_entry,
+            skip_reason,
         }
     }
 }

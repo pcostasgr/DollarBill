@@ -32,18 +32,26 @@ pub struct RegimeSizingAuditEntry {
     pub auto_derisk: bool,
     /// Heuristic worst-case DD: |net_vega| × Δvol(1 %) / equity, as a %.
     pub projected_max_dd_pct: f64,
+    /// Reason a new entry was suppressed (e.g. `"HighVol regime: no new entries"`).
+    /// `None` when entry was permitted or there was no pending entry.
+    pub skip_reason: Option<String>,
 }
 
 impl RegimeSizingAuditEntry {
     /// One-liner matching the spec format.
     pub fn summary_line(&self) -> String {
+        let skip = match &self.skip_reason {
+            Some(r) => format!(" | Action: SKIPPED | Reason: {r}"),
+            None    => String::new(),
+        };
         format!(
-            "{} | Regime: {:>14} | Multiplier: {:.2} | Portfolio Vega: ${:.0} | Max DD projected: {:.2}%",
+            "{} | Regime: {:>14} | Multiplier: {:.2} | Portfolio Vega: ${:.0} | Max DD projected: {:.2}%{}",
             self.date,
             self.regime,
             self.multiplier,
             self.portfolio_vega,
             self.projected_max_dd_pct,
+            skip,
         )
     }
 }
@@ -95,20 +103,14 @@ impl AuditLog {
     pub fn to_csv(&self) -> String {
         let mut out = String::from(
             "date,regime,multiplier,portfolio_vega,portfolio_delta,\
-             net_contracts,equity,auto_derisk,projected_max_dd_pct\n",
+             net_contracts,equity,auto_derisk,projected_max_dd_pct,skip_reason\n",
         );
         for e in &self.entries {
             out.push_str(&format!(
-                "{},{},{:.4},{:.4},{:.6},{},{:.6},{},{:.4}\n",
-                e.date,
-                e.regime,
-                e.multiplier,
-                e.portfolio_vega,
-                e.portfolio_delta,
-                e.net_contracts,
-                e.equity,
-                e.auto_derisk,
-                e.projected_max_dd_pct,
+                "{},{},{:.4},{:.4},{:.6},{},{:.6},{},{:.4},{}\n",
+                e.date, e.regime, e.multiplier, e.portfolio_vega, e.portfolio_delta,
+                e.net_contracts, e.equity, e.auto_derisk, e.projected_max_dd_pct,
+                e.skip_reason.as_deref().unwrap_or(""),
             ));
         }
         out
@@ -121,7 +123,7 @@ impl AuditLog {
             .iter()
             .map(|e| {
                 format!(
-                    r#"  {{"date":"{d}","regime":"{r}","multiplier":{m:.4},"portfolio_vega":{pv:.4},"portfolio_delta":{pd:.6},"net_contracts":{nc},"equity":{eq:.6},"auto_derisk":{ad},"projected_max_dd_pct":{dd:.4}}}"#,
+                    r#"  {{"date":"{d}","regime":"{r}","multiplier":{m:.4},"portfolio_vega":{pv:.4},"portfolio_delta":{pd:.6},"net_contracts":{nc},"equity":{eq:.6},"auto_derisk":{ad},"projected_max_dd_pct":{dd:.4},"skip_reason":{sk}}}"#,
                     d  = e.date,
                     r  = e.regime,
                     m  = e.multiplier,
@@ -131,6 +133,10 @@ impl AuditLog {
                     eq = e.equity,
                     ad = e.auto_derisk,
                     dd = e.projected_max_dd_pct,
+                    sk = match &e.skip_reason {
+                        Some(s) => format!("\"{}\"", s),
+                        None    => "null".to_string(),
+                    },
                 )
             })
             .collect();
