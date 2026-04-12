@@ -98,6 +98,7 @@ impl RegimePipeline {
     /// | `base_volatility`   | Annualised vol for sizing. |
     /// | `sizing_method`     | Which sizing algorithm to apply. |
     /// | `equity`            | Current portfolio equity (dollars). |
+    /// | `current_dd_frac`   | Current drawdown from equity peak as a fraction (0.0 = at peak). Used for P&L-aware flatten trigger. |
     ///
     /// # Returns
     /// A [`PreTradeDecision`] — also appended to `self.audit_log`.
@@ -112,6 +113,8 @@ impl RegimePipeline {
         base_volatility:   f64,
         sizing_method:     SizingMethod,
         equity:            f64,
+        // Current drawdown from equity peak as a fraction; used for P&L-aware flatten.
+        current_dd_frac:   f64,
     ) -> PreTradeDecision {
         // ── 1. Portfolio Greeks of the current open book ──────────────────────
         let greeks = compute_book_greeks(spot, rate, current_book);
@@ -136,9 +139,12 @@ impl RegimePipeline {
             &regime,
         );
 
-        // ── 4. Limit check — trigger auto-flatten on any breach ───────────────
-        let breaches      = check_limits(&greeks, &self.limits, equity);
-        let should_flatten = !breaches.is_empty();
+        // ── 4. Limit check + P&L-aware trigger ─────────────────────────────────
+        let breaches = check_limits(&greeks, &self.limits, equity);
+        // P&L-aware component: 8% DD from peak + high vega utilisation → flatten
+        let vega_util        = greeks.net_vega.abs() / self.limits.max_vega.max(1.0);
+        let pnl_vega_trigger = current_dd_frac > 0.08 && vega_util > 0.60;
+        let should_flatten   = !breaches.is_empty() || pnl_vega_trigger;
 
         // ── 5. Heuristic projected max-DD: |vega| × 1-vol-pt / equity ─────────
         let projected_max_dd_pct = if equity > 0.0 {

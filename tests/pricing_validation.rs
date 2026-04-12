@@ -1851,7 +1851,7 @@ fn regime_pipeline_wires_greeks_and_sizer() {
     // ── Run 1: small book — should NOT trigger auto-derisk ────────────────────
     let d1 = pipeline.pre_trade_check(
         "2025-02-01", spot, rate, &closes, &small_book,
-        3.50, vol, SizingMethod::VolatilityBased, 100_000.0,
+        3.50, vol, SizingMethod::VolatilityBased, 100_000.0, 0.0,
     );
     println!(
         "Small book: regime={:?}  mult={:.2}  contracts={}  flatten={}  vega={:.2}",
@@ -1861,7 +1861,7 @@ fn regime_pipeline_wires_greeks_and_sizer() {
     // ── Run 2: large book — net_vega > 500 → auto-derisk ─────────────────────
     let d2 = pipeline.pre_trade_check(
         "2025-02-28", spot, rate, &closes, &big_book,
-        3.50, vol, SizingMethod::VolatilityBased, 100_000.0,
+        3.50, vol, SizingMethod::VolatilityBased, 100_000.0, 0.0,
     );
     println!(
         "Big book:   regime={:?}  mult={:.2}  contracts={}  flatten={}  vega={:.2}",
@@ -2014,7 +2014,7 @@ fn full_year_tsla_regime_aware_backtest() {
         let base_price = spot * 0.03_f64.max(vol * (30.0_f64 / 252.0).sqrt() * 0.10);
         let decision = pipeline.pre_trade_check(
             date, spot, R, recent, &book,
-            base_price, vol, SizingMethod::VolatilityBased, equity * 100_000.0,
+            base_price, vol, SizingMethod::VolatilityBased, equity * 100_000.0, 0.0,
         );
 
         // ── Mark open condor ───────────────────────────────────────────────
@@ -2187,11 +2187,15 @@ fn run_full_year_variant(
     // Only open a new condor when net_credit / wing_premium > this ratio.
     // Set to 0.0 to disable the filter.
     entry_credit_filter: f64,
-    // When true, use `decision.should_flatten` from the Greeks pipeline as a
-    // dynamic exit signal in addition to (or instead of) the fixed 12% loss-stop.
+    // When true, use `decision.should_flatten` (now P&L-aware: DD>8% + vega_util>60%)
+    // as dynamic exit signal instead of the fixed 12% loss-stop.
     use_dynamic_stop: bool,
+    // When true, tighten short strikes to ~7% OTM (~20-25 delta) in HighVol regime
+    // so the condor collects fatter credits to absorb slippage.
+    wide_wings_in_highvol: bool,
 ) {
     use dollarbill::backtesting::RegimePipeline;
+    use dollarbill::analysis::advanced_classifier::MarketRegime;
     use dollarbill::analysis::portfolio_greeks::{PortfolioLimits, OptionLeg};
     use dollarbill::portfolio::{PositionSizer, SizingMethod};
 
@@ -2204,7 +2208,11 @@ fn run_full_year_variant(
     }
 
     let sizer  = PositionSizer::new(100_000.0, 2.0, 10.0);
-    let limits = PortfolioLimits { max_delta: 0.50, max_vega: 50_000.0, max_volga: 20_000.0, max_charm: 5_000.0 };
+    // max_vega=5_000: a fresh 30-DTE single condor carries ~3,100 vega (62% of
+    // this limit), putting it above the 60% P&L-trigger threshold as soon as
+    // DD > 8%.  Near-expiry condors (≤10 DTE, vega < 2,000) sit below the
+    // threshold and are let to run / decay naturally.
+    let limits = PortfolioLimits { max_delta: 0.50, max_vega: 5_000.0, max_volga: 20_000.0, max_charm: 5_000.0 };
     let mut pipeline = RegimePipeline::new(sizer, limits);
 
     struct Condor { k_put_s: f64, k_call_s: f64, k_put_wing: f64, k_call_wing: f64,
@@ -2217,8 +2225,10 @@ fn run_full_year_variant(
     let mut max_dd    = 0.0_f64;
     let mut daily_returns: Vec<f64> = Vec::with_capacity(chron.len());
     let mut prev_equity = 1.0_f64;
-    let mut auto_derisk_count = 0usize;
-    let mut days_since_roll   = 22usize;
+    let mut auto_derisk_count  = 0usize;
+    let mut days_since_roll    = 22usize;
+    let mut crash_credit_sum   = 0.0_f64;
+    let mut crash_credit_count = 0usize;
 
     for (i, day) in chron.iter().enumerate() {
         let spot = day.close;
@@ -2244,9 +2254,10 @@ fn run_full_year_variant(
             ]
         } else { vec![] };
 
-        let base_price = spot * 0.03_f64.max(vol * (30.0_f64/252.0).sqrt() * 0.10);
+        let base_price      = spot * 0.03_f64.max(vol * (30.0_f64/252.0).sqrt() * 0.10);
+        let current_dd_frac = if peak_eq > 1e-9 { (peak_eq - equity) / peak_eq } else { 0.0 };
         let decision = pipeline.pre_trade_check(date, spot, R, recent, &book,
-            base_price, vol, SizingMethod::VolatilityBased, equity * 100_000.0);
+            base_price, vol, SizingMethod::VolatilityBased, equity * 100_000.0, current_dd_frac);
 
         let running_pnl = if let Some(ref c) = condor {
             let days_open = i.saturating_sub(c.entry_day);
@@ -2281,11 +2292,14 @@ fn run_full_year_variant(
         }
 
         if condor.is_none() && days_since_roll >= 21 {
-            let entry_t     = 30.0 / 365.0;
-            let k_put_s     = (spot * 0.90 / 5.0).round() * 5.0;
-            let k_call_s    = (spot * 1.10 / 5.0).round() * 5.0;
-            let k_put_wing  = (spot * 0.80 / 5.0).round() * 5.0;
-            let k_call_wing = (spot * 1.20 / 5.0).round() * 5.0;
+            let entry_t = 30.0 / 365.0;
+            // In HighVol, tighten short strikes to ~7% OTM to collect fatter credits
+            let in_highvol = wide_wings_in_highvol && matches!(decision.regime, MarketRegime::HighVol);
+            let (short_pct, wing_pct) = if in_highvol { (0.93_f64, 0.78_f64) } else { (0.90_f64, 0.80_f64) };
+            let k_put_s     = (spot * short_pct / 5.0).round() * 5.0;
+            let k_call_s    = (spot * (2.0 - short_pct) / 5.0).round() * 5.0;
+            let k_put_wing  = (spot * wing_pct / 5.0).round() * 5.0;
+            let k_call_wing = (spot * (2.0 - wing_pct) / 5.0).round() * 5.0;
             let ep_s = black_scholes_merton_put( spot, k_put_s,    entry_t, R, vol, 0.0).price;
             let ec_s = black_scholes_merton_call(spot, k_call_s,   entry_t, R, vol, 0.0).price;
             let ep_w = black_scholes_merton_put( spot, k_put_wing, entry_t, R, vol, 0.0).price;
@@ -2298,6 +2312,11 @@ fn run_full_year_variant(
             let wing_premium = (ep_w + ec_w).max(1e-9);
             let quality_ok = entry_credit_filter <= 0.0 || (condor_credit / wing_premium) > entry_credit_filter;
             if condor_credit > 0.001 && quality_ok {
+                // Track credits opened during the crash window (Feb–Mar)
+                if date.as_str() >= "2025-02-01" && date.as_str() <= "2025-03-31" {
+                    crash_credit_sum   += condor_credit;
+                    crash_credit_count += 1;
+                }
                 let base_size     = if strangle_credit > 0.0 { 0.03 / strangle_credit } else { 0.001 };
                 let position_size = base_size * decision.multiplier;
                 condor = Some(Condor { k_put_s, k_call_s, k_put_wing, k_call_wing,
@@ -2337,8 +2356,15 @@ fn run_full_year_variant(
     println!("  Half-spread frac : {:.1}%  OCC fee: ${occ_fee_per_condor:.2}/condor", half_spread_frac * 100.0);
     println!("  Entry filter     : {}", if entry_credit_filter > 0.0 { format!("credit/wing > {entry_credit_filter:.2}") } else { "disabled".into() });
     println!("  Dynamic stop     : {use_dynamic_stop}");
+    println!("  Wide wings HiVol : {wide_wings_in_highvol}");
     println!("  Avg mult Feb-Mar : {}", crash_mult.map_or("N/A".into(), |m| format!("{m:.3}")));
     println!("  Avg mult rest    : {}", rest_mult.map_or("N/A".into(),  |m| format!("{m:.3}")));
+    let avg_crash_credit = if crash_credit_count > 0 {
+        format!("${:.4} ({crash_credit_count} condors in window)", crash_credit_sum / crash_credit_count as f64)
+    } else {
+        "N/A (no condors opened Feb-Mar)".into()
+    };
+    println!("  Avg crash credit : {avg_crash_credit}");
 }
 
 // ─── Variant A: de-risk disabled ─────────────────────────────────────────────
@@ -2358,6 +2384,7 @@ fn variant_a_no_auto_derisk() {
         0.0,     // no slippage
         0.0,     // entry filter disabled
         false,   // dynamic stop disabled
+        false,   // wide wings disabled
     );
 }
 
@@ -2378,26 +2405,25 @@ fn variant_b_realistic_slippage() {
         0.10,    // 10 % half-spread per leg mid-price
         0.0,     // entry filter disabled
         false,   // dynamic stop disabled
+        false,   // wide wings disabled
     );
 }
 
 // ─── Variant C: entry quality filter ────────────────────────────────────────
 
 /// Adds a credit-quality gate: only open the iron condor when
-///   net_credit / wing_premium > 0.25
-/// This skips thin-credit trades that are most hurt by slippage and still
-/// keeps the fixed 12% loss-stop active.
-///
-/// Expected: fewer trades opened but better average quality; max DD should
-/// drop relative to baseline (12.77%).
+///   net_credit / wing_premium > 0.35
+/// Raised from 0.25 (which was structurally inactive) to a level that
+/// actually rejects thin-credit setups. No slippage to isolate filter effect.
 #[test]
 fn variant_c_entry_quality_filter() {
     run_full_year_variant(
-        "VARIANT C – Entry quality filter (credit/wing > 0.25)",
+        "VARIANT C – Entry quality filter (credit/wing > 0.35)",
         true,    // loss-stop enabled
         0.0,     // no slippage (isolate the filter effect)
-        0.25,    // entry filter: credit must be > 25% of wing cost
+        0.35,    // entry filter: credit must be > 35% of wing cost
         false,   // dynamic stop disabled
+        false,   // wide wings disabled
     );
 }
 
@@ -2420,5 +2446,53 @@ fn variant_d_full_stack() {
         0.10,    // 10% half-spread
         0.25,    // entry filter enabled
         true,    // dynamic stop: use should_flatten from Greeks pipeline
+        false,   // wide wings disabled
+    );
+}
+
+// ─── Variant E: P&L-aware dynamic stop + realistic slippage ────────────────
+
+/// Full stack with the P&L-aware dynamic stop in `RegimePipeline::pre_trade_check`.
+///
+/// Flatten fires when:
+///   1. Any Greek limit breach (delta / vega / volga / charm), OR
+///   2. Drawdown > 8% from equity peak AND portfolio_vega_util > 60% of limit
+///
+/// No fixed 12% floor — regime sizing + Greeks + combined P&L trigger only.
+/// Target: max DD < 14% even with 10% slippage.
+#[test]
+fn variant_e_pnl_aware_dynamic_stop() {
+    run_full_year_variant(
+        "VARIANT E – P&L-aware dynamic stop + 10% slippage",
+        false,   // fixed 12% stop disabled
+        0.10,    // 10% half-spread
+        0.35,    // entry filter: credit/wing > 0.35
+        true,    // dynamic stop (P&L-aware: DD>8% + vega_util>60%)
+        false,   // standard wing placement
+    );
+}
+
+// ─── Variant F: P&L-aware stop + wider wings in HighVol ──────────────────
+
+/// Same as Variant E but in HighVol regime the short strikes are tightened to
+/// ~7% OTM (approximately 20-25 delta) instead of the default 10% OTM (~10 delta).
+///
+/// Tighter short strikes = more per-condor premium → fatter credits to absorb
+/// slippage. Long wings held wide at ~22% OTM for defined-risk protection.
+///
+///   Standard HighVol : 90/80 put side, 110/120 call side
+///   Variant F HighVol: 93/78 put side, 107/122 call side
+///
+/// Expected: avg crash-regime credit per condor higher than Variant E;
+/// max DD should not regress (wider spread provides more buffer).
+#[test]
+fn variant_f_wider_wings_highvol() {
+    run_full_year_variant(
+        "VARIANT F – P&L-aware stop + wider wings in HighVol",
+        false,   // fixed 12% stop disabled
+        0.10,    // 10% half-spread
+        0.35,    // entry filter enabled
+        true,    // dynamic stop enabled
+        true,    // widen short strikes to ~7% OTM in HighVol
     );
 }
