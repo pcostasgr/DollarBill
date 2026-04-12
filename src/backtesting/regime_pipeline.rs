@@ -141,9 +141,14 @@ impl RegimePipeline {
 
         // ── 4. Limit check + P&L-aware trigger ─────────────────────────────────
         let breaches = check_limits(&greeks, &self.limits, equity);
-        // P&L-aware component: 8% DD from peak + high vega utilisation → flatten
+        // Hybrid P&L-aware trigger (two paths):
+        //   Path A – slow bleed:  DD > 6% from peak  AND  vega_util > 45%
+        //            (any open condor carries ~46% util, so this fires on any
+        //             position that has started bleeding)
+        //   Path B – hard backstop: DD > 10% regardless of vega level
         let vega_util        = greeks.net_vega.abs() / self.limits.max_vega.max(1.0);
-        let pnl_vega_trigger = current_dd_frac > 0.08 && vega_util > 0.60;
+        let pnl_vega_trigger = (current_dd_frac > 0.06 && vega_util > 0.45)
+                             || current_dd_frac > 0.10;
         let should_flatten   = !breaches.is_empty() || pnl_vega_trigger;
 
         // ── 5. Heuristic projected max-DD: |vega| × 1-vol-pt / equity ─────────
