@@ -180,7 +180,7 @@ impl PerformanceMetrics {
             .sum::<f64>() / n;
         let std_dev = variance.sqrt();
 
-        if std_dev > 0.0 {
+        if std_dev > 1e-10 {
             mean_excess / std_dev * (252.0_f64).sqrt()
         } else {
             0.0

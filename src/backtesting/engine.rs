@@ -330,9 +330,9 @@ impl BacktestEngine {
         }
         
         // Safety: the empty-data guard above guarantees at least one element.
-        let start_date = historical_data.last()
+        let start_date = historical_data.first()
             .expect("non-empty after guard").date.clone();
-        let end_date = historical_data.first()
+        let end_date = historical_data.last()
             .expect("non-empty after guard").date.clone();
         
         // Calculate historical volatility for each day
@@ -394,9 +394,9 @@ impl BacktestEngine {
         }
         
         // Safety: the empty-data guard above guarantees at least one element.
-        let start_date = historical_data.last()
+        let start_date = historical_data.first()
             .expect("non-empty after guard").date.clone();
-        let end_date = historical_data.first()
+        let end_date = historical_data.last()
             .expect("non-empty after guard").date.clone();
         
         let hist_vols = self.calculate_rolling_volatility(&historical_data, 20);
