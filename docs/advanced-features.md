@@ -145,15 +145,24 @@ Confidence-based position sizing with market regime awareness
 
 **How to use:**
 ```bash
-# Run personality-driven pipeline
+# Run personality-driven pipeline (all platforms)
 cargo run --example personality_driven_pipeline
+```
 
+*Windows:*
+```powershell
 # Personality-based live trading bot
 .\target\release\dollarbill.exe trade --dry-run   # Test without trading
 .\target\release\dollarbill.exe trade --live       # Live stream + continuous trading
 
-# Full pipeline with personality optimization
-.\scripts\run_full_pipeline.ps1
+.\scripts\run_full_pipeline.ps1   # Full pipeline with personality optimisation
+```
+*Linux / macOS:*
+```bash
+./target/release/dollarbill trade --dry-run
+./target/release/dollarbill trade --live
+
+bash scripts/run_full_pipeline.sh   # Full pipeline with personality optimisation
 ```
 
 ### 5. Heston Stochastic Volatility Backtesting ⭐ NEW

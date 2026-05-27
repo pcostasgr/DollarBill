@@ -19,12 +19,25 @@ cargo build --release
 ```
 
 ### 3. Install Python (Optional, for data fetching)
-```bash
+
+**Windows:**
+```powershell
 # One-command Python setup (Recommended)
 cmd /c ".\scripts\setup_python.bat"
+```
 
-# Or manual installation
-pip install pandas plotly yfinance
+**Linux / macOS:**
+```bash
+# One-command Python setup
+bash scripts/setup_python.sh
+```
+This creates a `.venv`, installs `yfinance pandas plotly`, and prints activation instructions.
+
+```bash
+# Or manually
+python3 -m venv .venv
+source .venv/bin/activate
+pip install yfinance pandas plotly
 ```
 
 **✅ Python Environment Fixed**: Automated setup resolves all dependency issues!
@@ -56,11 +69,12 @@ Options:
 
 ### Quick CLI examples
 
+**Windows (PowerShell):**
 ```powershell
 # Interactive pricing demo with TSLA data
 .\target\release\dollarbill.exe demo --symbol TSLA
 
-# Price an AAPL 200-strike call expiring in 3 months (PowerShell)
+# Price an AAPL 200-strike call expiring in 3 months
 .\target\release\dollarbill.exe price AAPL 200 --dte 0.25
 
 # Run backtests on all configured symbols and save the results
@@ -90,20 +104,47 @@ $env:ALPACA_API_SECRET = "your-paper-api-secret"
 .\target\release\dollarbill.exe trade --live
 ```
 
-Run any subcommand with `--help` for its full option list:
-```powershell
-.\target\release\dollarbill.exe trade --help
+**Linux / macOS:**
+```bash
+# Interactive pricing demo with TSLA data
+./target/release/dollarbill demo --symbol TSLA
+
+# Price an AAPL 200-strike call expiring in 3 months
+./target/release/dollarbill price AAPL 200 --dte 0.25
+
+./target/release/dollarbill backtest --save
+./target/release/dollarbill backtest --symbol NVDA
+./target/release/dollarbill signals
+./target/release/dollarbill signals --symbol NVDA
+./target/release/dollarbill signals --live
+./target/release/dollarbill calibrate TSLA
+./target/release/dollarbill trade --dry-run
+
+export ALPACA_API_KEY="your-paper-api-key"
+export ALPACA_API_SECRET="your-paper-api-secret"
+./target/release/dollarbill trade --live
 ```
 
-### `dashboard.exe` — Live TUI Monitor
+Run any subcommand with `--help` for its full option list:
+```bash
+./target/release/dollarbill trade --help   # Linux/macOS
+.\target\release\dollarbill.exe trade --help   # Windows
+```
 
-Run in a second terminal while `dollarbill.exe trade --live` is active:
+### `dashboard` — Live TUI Monitor
+
+Run in a second terminal while the bot is active:
+
+**Windows:**
 ```powershell
-# Default — reads data/trades.db
 .\target\release\dashboard.exe
+.\target\release\dashboard.exe path\to\trades.db   # custom DB path
+```
 
-# Custom DB path (if you changed the default)
-.\target\release\dashboard.exe path\to\trades.db
+**Linux / macOS:**
+```bash
+./target/release/dashboard
+./target/release/dashboard path/to/trades.db   # custom DB path
 ```
 
 | Key | Action |
@@ -118,13 +159,15 @@ The dashboard auto-refreshes every 1 second. It shows nothing useful until the b
 ### Fast Track: Personality Trading (7 minutes)
 
 **Quick setup combining steps 2-4:**
+
+**Windows:**
 ```powershell
-# One-command preparation (PowerShell)
 .\scripts\heston_preparation.ps1
 ```
-```batch
-# Or use batch version
-.\scripts\heston_preparation.bat
+
+**Linux / macOS:**
+```bash
+bash scripts/heston_preparation.sh
 ```
 
 This script automatically:
@@ -150,35 +193,52 @@ Edit `config/stocks.json` to choose your stocks:
 #### Step 2: Fetch Market Data (2 minutes)
 
 **Option 1: Automated Pipeline (Recommended)**
-```bash
-# Complete data collection pipeline - handles everything automatically
+
+*Windows:*
+```powershell
 cmd /c ".\scripts\collect_data_fixed.bat"
+```
+*Linux / macOS:*
+```bash
+# Activate venv first
+source .venv/bin/activate
+python py/fetch_multi_stocks.py
+python py/fetch_multi_options.py
 ```
 
 **Option 2: Manual Python Scripts**
 ```bash
-# Get historical stock data
+# Works on all platforms (activate venv first on Linux/macOS)
 python py/fetch_multi_stocks.py
-
-# Get live options data
 python py/fetch_multi_options.py
 ```
 
-**Troubleshooting**: If Python issues occur:
-```bash
-# Test and diagnose Python environment
-cmd /c ".\scripts\test_python.bat"
+**Troubleshooting Python issues:**
 
-# Fix Python environment from scratch
-cmd /c ".\scripts\setup_python.bat"
+*Windows:*
+```powershell
+cmd /c ".\scripts\test_python.bat"   # diagnose
+cmd /c ".\scripts\setup_python.bat"  # fix from scratch
+```
+*Linux / macOS:*
+```bash
+bash scripts/setup_python.sh   # create venv + install packages
 ```
 
 #### Step 3: Run Heston Backtesting (2 minutes)
+
+**Windows:**
 ```powershell
 # CRITICAL: Build accurate performance data for live trading
 .\scripts\run_heston_backtest.ps1
 ```
+**Linux / macOS:**
+```bash
+bash scripts/run_heston_backtest.sh
+```
 This calibrates Heston parameters to live market data and builds the performance matrix that the bot uses for trading decisions. **Essential for realistic results!**
+
+> **Config**: The calibration step reads `config/signals_config.json` for liquidity filters (min volume, max spread %) and the risk-free rate. This file is included in the repo with sensible defaults (5% min volume, 5% max spread, 4.25% rate). Edit it before running if you want to tune the liquidity filter.
 
 > **🆕 Gauss-Laguerre pricing**: DollarBill now uses pure Rust Gauss-Laguerre quadrature (64 nodes by default) with the Lord-Kahl characteristic function. This is **14× faster** than the legacy Carr-Madan path and matches QuantLib v1.41 to 6 significant figures. Configure in `config/vol_surface_config.json` with `"integration_method": "GaussLaguerre"` and `"gauss_laguerre_nodes": 64`.
 
@@ -216,42 +276,102 @@ Testing TSLA with aggressive iron condor...
 **Integration**: These strategies work seamlessly with the personality bot (Step 6). The bot automatically selects optimal strategies based on stock personality and market conditions.
 
 #### Step 4: Train Enhanced Personality Models (3 minutes)
-```bash
-# Quick enhanced personality analysis (batch script)
+
+**Windows:**
+```powershell
 cmd /c ".\scripts\run_enhanced_personality.bat"
-
-# Or run manually with detailed output
+```
+**Linux / macOS:**
+```bash
+# Run manually (no batch equivalent needed)
 cargo run --example enhanced_personality_analysis
-
-# Run the complete personality pipeline with advanced features
 cargo run --example personality_driven_pipeline
 ```
 This analyzes stock behaviors using advanced multi-dimensional features, detects market regimes, and matches optimal strategies with confidence scoring.
 
-#### Step 5: Test Live Trading (2 minutes)
+#### Step 5: Dry-Run Test (< 1 minute)
+
+**Windows:**
 ```powershell
-# Test without real trades — prints orders but submits nothing
 .\target\release\dollarbill.exe trade --dry-run
 ```
+**Linux / macOS:**
+```bash
+./target/release/dollarbill trade --dry-run
+```
 
-#### Step 6: Go Live (2 minutes)
-Set up Alpaca paper trading:
+#### Step 6: Start Paper Trading (2 minutes)
+Use the `.env` file approach (recommended — persists credentials across sessions):
+
+**Windows:**
 ```powershell
-# Set your Alpaca credentials (PowerShell)
+# Copy the template and fill in your Alpaca *paper* API keys
+Copy-Item .env.example .env
+# Open .env: set ALPACA_API_KEY + ALPACA_API_SECRET
+# Leave APCA_LIVE commented out — paper keys connect to fake-money paper endpoint
+
+.\scripts\start_bot.ps1 -DryRun   # validate without placing orders
+.\scripts\start_bot.ps1           # paper trade (no real money)
+```
+
+**Linux / macOS:**
+```bash
+cp .env.example .env
+# Edit .env: set ALPACA_API_KEY + ALPACA_API_SECRET
+
+bash scripts/start_bot.sh --dry-run   # validate without placing orders
+bash scripts/start_bot.sh            # paper trade (no real money)
+```
+
+Or set credentials inline (current session only):
+
+*Windows:*
+```powershell
 $env:ALPACA_API_KEY   = "your-paper-api-key"
 $env:ALPACA_API_SECRET = "your-paper-api-secret"
-
-# Dry-run first — prints orders but submits nothing
-.\target\release\dollarbill.exe trade --dry-run
-
-# Start the live paper-trading bot with Alpaca WebSocket stream
 .\target\release\dollarbill.exe trade --live
 ```
+*Linux / macOS:*
+```bash
+export ALPACA_API_KEY="your-paper-api-key"
+export ALPACA_API_SECRET="your-paper-api-secret"
+./target/release/dollarbill trade --live
+```
 
-#### Step 7: Monitor with the Live Dashboard (optional)
+> **Note**: `--live` connects to Alpaca's **paper** endpoint by default. No real money is ever at risk here.
+
+#### Step 7: Go Live — Real Money ⚠️ (when ready)
+Once you are satisfied with paper trading results, switch to live credentials:
+
+**Windows:**
+```powershell
+# In .env — replace paper keys with your Alpaca *live* keys, then uncomment:
+# APCA_LIVE=1
+.\scripts\start_bot.ps1   # routes to live.alpaca.markets — real orders placed
+```
+**Linux / macOS:**
+```bash
+# In .env — replace paper keys with your Alpaca *live* keys, then uncomment:
+# APCA_LIVE=1
+bash scripts/start_bot.sh   # routes to live.alpaca.markets — real orders placed
+```
+
+> **⚠️ Caution**: Real money. Before flipping the switch:
+> - Run paper trading for at least a week and review `trade_audit.csv`
+> - Lower `position_size_shares` from the default 100 to 5–10 in `config/trading_bot_config.json`
+> - Raise `min_confidence` from the default 0.30 to 0.60 (it's in the `bot_runtime` block, not `trading`)
+> - Confirm `max_daily_loss_pct` is set to a safe value (default 0.05 = 5%)
+
+#### Step 8: Monitor with the Live Dashboard (optional)
 Open a **second terminal** while the bot is running:
+
+**Windows:**
 ```powershell
 .\target\release\dashboard.exe
+```
+**Linux / macOS:**
+```bash
+./target/release/dashboard
 ```
 
 The dashboard reads `data/bot_status.json` (written by the bot after every tick) and `data/trades.db` (SQLite) and auto-refreshes every second.
@@ -308,8 +428,14 @@ Edit the `"alerts"` block in `config/trading_bot_config.json`:
 }
 ```
 Then supply your password via environment variable — **never put it in the JSON file**:
+
+*Windows:*
 ```powershell
 $env:DOLLARBILL_SMTP_PASSWORD = "your-gmail-app-password"
+```
+*Linux / macOS:*
+```bash
+export DOLLARBILL_SMTP_PASSWORD="your-gmail-app-password"
 ```
 > **Gmail users**: create an App Password at Google Account → Security → 2-Step Verification → App passwords.
 
@@ -323,14 +449,16 @@ $env:DOLLARBILL_SMTP_PASSWORD = "your-gmail-app-password"
 | `on_fill` | Alert on every order fill (off by default — noisy) |
 
 ### Bot Settings
-Edit `config/trading_bot_config.json`:
+Edit `config/trading_bot_config.json` — note which top-level key each setting lives under:
 ```json
-{
-  "trading": {
-    "position_size_shares": 5,    // Small position size to start
-    "max_positions": 3,           // Limit concurrent positions
-    "min_confidence": 0.6         // Only high-confidence trades
-  }
+"bot_runtime": {
+  "min_confidence":       0.60,   // raise from default 0.30 — filters low-quality signals
+  "signal_cooldown_secs": 300,   // seconds between signals per symbol
+  "max_daily_loss_pct":   0.05   // 5% daily-loss circuit breaker
+},
+"trading": {
+  "position_size_shares": 5,     // ⚠️ default is 100 — lower this before any live trading
+  "max_positions": 3             // limit concurrent open positions
 }
 ```
 
@@ -372,9 +500,11 @@ Edit `config/trading_bot_config.json`:
 
 ### ⚠️ Critical: Heston Backtesting Required
 **Before live trading, always run Heston backtesting first:**
-```powershell
-.\scripts\run_heston_backtest.ps1
-```
+
+*Windows:* ``.\scripts\run_heston_backtest.ps1``
+
+*Linux / macOS:* ``bash scripts/run_heston_backtest.sh``
+
 This builds accurate performance data. **Skipping this step means trading with potentially unreliable strategy performance data!**
 
 ### Start Small
@@ -397,15 +527,25 @@ This builds accurate performance data. **Skipping this step means trading with p
 ## 🔄 Daily Workflow
 
 ### Morning (5 minutes)
+
+**Windows:**
 ```powershell
-# Terminal 1 — start the live bot (include alert password if alerts are enabled)
-$env:ALPACA_API_KEY            = "your-paper-api-key"
-$env:ALPACA_API_SECRET         = "your-paper-api-secret"
+# Terminal 1 — start the live bot
 $env:DOLLARBILL_SMTP_PASSWORD  = "your-gmail-app-password"   # omit if alerts disabled
-.\target\release\dollarbill.exe trade --live
+.\scripts\start_bot.ps1   # loads .env credentials automatically
 
 # Terminal 2 — open the live dashboard alongside it
 .\target\release\dashboard.exe
+```
+
+**Linux / macOS:**
+```bash
+# Terminal 1 — start the live bot
+export DOLLARBILL_SMTP_PASSWORD="your-gmail-app-password"   # omit if alerts disabled
+bash scripts/start_bot.sh   # loads .env credentials automatically
+
+# Terminal 2 — open the live dashboard alongside it
+./target/release/dashboard
 ```
 
 ### Evening (2 minutes)
@@ -415,17 +555,20 @@ $env:DOLLARBILL_SMTP_PASSWORD  = "your-gmail-app-password"   # omit if alerts di
 
 ### Weekly (10 minutes)
 ```bash
-# Review enhanced personality analysis with latest data
+# Review enhanced personality analysis with latest data (all platforms)
 cargo run --example enhanced_personality_analysis
-
-# Update models with new market data
 cargo run --example personality_driven_pipeline
+```
 
-# Refresh Heston calibration for current market conditions
-.\scripts\run_heston_backtest.ps1
-
-# Test updated strategies with confidence scoring
-.\target\release\dollarbill.exe trade --dry-run
+**Windows:**
+```powershell
+.\scripts\run_heston_backtest.ps1          # refresh Heston calibration
+.\target\release\dollarbill.exe trade --dry-run   # test updated strategies
+```
+**Linux / macOS:**
+```bash
+bash scripts/run_heston_backtest.sh
+./target/release/dollarbill trade --dry-run
 ```
 
 ## 🎯 Next Steps

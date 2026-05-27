@@ -1,0 +1,22 @@
+{
+  "analysis": {
+    "risk_free_rate": 0.0425,
+    "liquidity_filters": {
+      "min_volume": 5,
+      "max_spread_pct": 5.0
+    },
+    "edge_thresholds": {
+      "min_edge_dollars": 0.15,
+      "min_delta": 0.10
+    }
+  },
+  "calibration": {
+    "tolerance": 1e-6,
+    "max_iterations": 1000
+  },
+  "options": {
+    "default_time_to_expiry_days": 30,
+    "min_time_to_expiry_days": 7,
+    "max_time_to_expiry_days": 90
+  }
+}

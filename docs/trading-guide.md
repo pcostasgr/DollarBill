@@ -38,12 +38,18 @@ Ensemble strategy combines:
 Run once to check signals and execute trades.
 
 ```powershell
-# Set your Alpaca API keys
+# Set your Alpaca API keys (PowerShell)
 $env:ALPACA_API_KEY   = "your-key"
 $env:ALPACA_API_SECRET = "your-secret"
 
 # Dry-run: prints orders but submits nothing
 .\target\release\dollarbill.exe trade --dry-run
+```
+```bash
+# Linux / macOS
+export ALPACA_API_KEY="your-key"
+export ALPACA_API_SECRET="your-secret"
+./target/release/dollarbill trade --dry-run
 ```
 
 **What it does:**
@@ -92,10 +98,18 @@ Runs continuously, scanning every N minutes.
 # Dry-run first — prints orders, submits nothing
 .\target\release\dollarbill.exe trade --dry-run
 
-# Live mode — Alpaca WebSocket stream + continuous trading
+# Live mode — Alpaca WebSocket stream + continuous trading (PowerShell)
 $env:ALPACA_API_KEY   = "your-key"
 $env:ALPACA_API_SECRET = "your-secret"
 .\target\release\dollarbill.exe trade --live
+```
+```bash
+# Linux / macOS
+./target/release/dollarbill trade --dry-run
+
+export ALPACA_API_KEY="your-key"
+export ALPACA_API_SECRET="your-secret"
+./target/release/dollarbill trade --live
 ```
 
 **What it does:**
@@ -130,12 +144,16 @@ $env:ALPACA_API_SECRET = "your-secret"
 Advanced options strategies using stochastic volatility pricing.
 
 **Backtesting First:**
-```powershell
-# Calibrate Heston parameters to live market
-.\target\release\dollarbill.exe calibrate TSLA
 
-# Backtest Heston strategies and save the performance matrix
+*Windows:*
+```powershell
+.\target\release\dollarbill.exe calibrate TSLA
 .\target\release\dollarbill.exe backtest --save
+```
+*Linux / macOS:*
+```bash
+./target/release/dollarbill calibrate TSLA
+./target/release/dollarbill backtest --save
 ```
 
 **What makes Heston special:**
@@ -148,7 +166,7 @@ Advanced options strategies using stochastic volatility pricing.
 
 ### 4. **Live IV Feed, Background Recalibration & Greeks Alerts** ⭐ NEW
 
-Three Phase 3 enhancements baked into `.\target\release\dollarbill.exe trade`:
+Three Phase 3 enhancements baked into `dollarbill trade` (`dollarbill.exe` on Windows):
 
 **Live ATM IV Feed (`LiveIvCache` — 15-min TTL)**
 The bot maintains a TTL-cached ATM implied-vol feed sourced from live Yahoo options chains. Newton-Raphson IV solves are done on near-ATM strikes (|K/S − 1| ≤ 5%); the median IV is stored and returned for subsequent ticks without extra network calls. Falls back to the 30-min recalibration value, then to the boot-time Heston JSON if cache is empty.
@@ -165,8 +183,14 @@ After every filled order the bot logs aggregate portfolio Greeks and fires a `�
 ```
 
 No extra CLI flags are needed — all three features activate automatically when you run:
+
+*Windows:*
 ```powershell
 .\target\release\dollarbill.exe trade --live
+```
+*Linux / macOS:*
+```bash
+./target/release/dollarbill trade --live
 ```
 
 ---
@@ -176,8 +200,14 @@ No extra CLI flags are needed — all three features activate automatically when
 A separate `ratatui` terminal UI that monitors the bot in real time.
 
 **Start in a second terminal:**
+
+*Windows:*
 ```powershell
 .\target\release\dashboard.exe
+```
+*Linux / macOS:*
+```bash
+./target/release/dashboard
 ```
 
 **Panel layout:**
@@ -192,8 +222,8 @@ A separate `ratatui` terminal UI that monitors the bot in real time.
 | Footer | Keybindings + age of last bot write |
 
 **How it works:**
-- `dollarbill.exe trade --live` writes `data/bot_status.json` atomically (tmp→rename) after every price tick
-- `dashboard.exe` reads that file + `data/trades.db` every second
+- `dollarbill trade --live` writes `data/bot_status.json` atomically (tmp→rename) after every price tick
+- `dashboard` (`dashboard.exe` on Windows) reads that file + `data/trades.db` every second
 - No network, no shared memory — just files
 
 **Keybindings:** `q` / `Esc` quit · `r` force-refresh
@@ -284,8 +314,14 @@ The bot sends email notifications for critical events — no polling required.
 ```
 
 **Supply the password via env var (never hard-code it):**
+
+*PowerShell:*
 ```powershell
 $env:DOLLARBILL_SMTP_PASSWORD = "your-gmail-app-password"
+```
+*Linux / macOS:*
+```bash
+export DOLLARBILL_SMTP_PASSWORD="your-gmail-app-password"
 ```
 
 > **Gmail**: Google Account → Security → 2-Step Verification → App passwords.
@@ -393,8 +429,12 @@ limit_price: Some(current_price * 0.99),  // Buy 1% below market
 
 ### 1. Test with dry-run (Day 1-3)
 ```powershell
-# Run a few times during market hours
+# Run a few times during market hours (Windows)
 .\target\release\dollarbill.exe trade --dry-run
+```
+```bash
+# Linux / macOS
+./target/release/dollarbill trade --dry-run
 ```
 - Verify signals make sense
 - Check order execution
@@ -402,11 +442,18 @@ limit_price: Some(current_price * 0.99),  // Buy 1% below market
 
 ### 2. Run live bot during market hours (Week 1-2)
 ```powershell
-# 9:30 AM - 4:00 PM ET
+# PowerShell
 $env:ALPACA_API_KEY            = "your-key"
 $env:ALPACA_API_SECRET         = "your-secret"
 $env:DOLLARBILL_SMTP_PASSWORD  = "your-app-password"   # omit if alerts disabled
 .\target\release\dollarbill.exe trade --live
+```
+```bash
+# Linux / macOS
+export ALPACA_API_KEY="your-key"
+export ALPACA_API_SECRET="your-secret"
+export DOLLARBILL_SMTP_PASSWORD="your-app-password"   # omit if alerts disabled
+./target/release/dollarbill trade --live
 ```
 - Let it trade for a week
 - Track performance daily

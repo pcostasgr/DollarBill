@@ -197,7 +197,7 @@ The PersonalityBasedBot loads pre-trained personality models and uses them for l
 ### Usage
 
 ```powershell
-# Test strategy matching without trading
+# Test strategy matching without trading (Windows)
 .\target\release\dollarbill.exe trade --dry-run
 
 # Live paper-trading bot with Alpaca WebSocket stream
@@ -205,8 +205,14 @@ $env:ALPACA_API_KEY   = "your-paper-api-key"
 $env:ALPACA_API_SECRET = "your-paper-api-secret"
 .\target\release\dollarbill.exe trade --live
 ```
+```bash
+# Linux / macOS
+./target/release/dollarbill trade --dry-run
 
-### Configuration
+export ALPACA_API_KEY="your-paper-api-key"
+export ALPACA_API_SECRET="your-paper-api-secret"
+./target/release/dollarbill trade --live
+```
 
 **File:** `config/personality_bot_config.json`
 ```json
@@ -428,7 +434,7 @@ Monitor these metrics during backtesting:
 
 ### Quick Start
 ```powershell
-# 1. Test the models (no trading)
+# 1. Test the models (no trading, Windows)
 .\target\release\dollarbill.exe trade --dry-run
 
 # 2. Start live paper-trading bot with Alpaca stream
@@ -436,8 +442,14 @@ $env:ALPACA_API_KEY   = "your-paper-api-key"
 $env:ALPACA_API_SECRET = "your-paper-api-secret"
 .\target\release\dollarbill.exe trade --live
 ```
+```bash
+# Linux / macOS
+./target/release/dollarbill trade --dry-run
 
-### Monitoring
+export ALPACA_API_KEY="your-paper-api-key"
+export ALPACA_API_SECRET="your-paper-api-secret"
+./target/release/dollarbill trade --live
+```
 - Check account balance and positions in real-time
 - Monitor confidence scores and strategy assignments
 - Review performance metrics after each trading session

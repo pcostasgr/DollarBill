@@ -1,0 +1,3 @@
+# Ensure shell scripts are always LF line endings and executable on Unix
+scripts/*.sh  text eol=lf
+py/*.py       text eol=lf
