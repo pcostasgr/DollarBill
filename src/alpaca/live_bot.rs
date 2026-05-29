@@ -10,7 +10,6 @@ use crate::config;
 use crate::market_data::csv_loader::load_csv_closes;
 use crate::market_data::options_feed::LiveIvCache;
 use crate::market_data::real_option_data_yahoo::fetch_liquid_options;
-use crate::market_data::real_market_data::fetch_latest_price;
 use crate::models::bs_mod::compute_historical_vol;
 use crate::models::heston::heston_start;
 use crate::persistence;
@@ -300,13 +299,14 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
     {
         let syms_bg    = symbols.clone();
         let params_bg  = Arc::clone(&live_params);
+        let client_bg  = client.clone();
         tokio::spawn(async move {
             let calib_interval = tokio::time::Duration::from_secs(30 * 60);
             loop {
                 tokio::time::sleep(calib_interval).await;
                 for sym in &syms_bg {
-                    let spot = match fetch_latest_price(sym).await {
-                        Ok(s) => s,
+                    let spot = match client_bg.get_latest_trade(sym).await {
+                        Ok(t) => t.price,
                         Err(e) => { warn!("BG calib price fetch failed for {}: {}", sym, e); continue; }
                     };
                     let opts = match fetch_liquid_options(sym, 0, 10, 25.0).await {

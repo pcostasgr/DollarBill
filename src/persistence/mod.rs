@@ -5,6 +5,7 @@
 // schema manually.
 
 use sqlx::{Row, SqlitePool};
+use sqlx::sqlite::SqliteConnectOptions;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -118,9 +119,22 @@ pub struct TradeStore {
 impl TradeStore {
     /// Open (or create) `db_path` and run schema migrations.
     pub async fn new(db_path: &str) -> Result<Self, sqlx::Error> {
-        // `mode=rwc` creates the file if it does not exist.
-        let url = format!("sqlite:{}?mode=rwc", db_path);
-        let pool = SqlitePool::connect(&url).await?;
+        // Ensure the parent directory exists so SQLite can create the file.
+        if let Some(parent) = std::path::Path::new(db_path).parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    sqlx::Error::Io(std::io::Error::new(
+                        e.kind(),
+                        format!("Cannot create database directory '{}': {}", parent.display(), e),
+                    ))
+                })?;
+            }
+        }
+        // Use SqliteConnectOptions so create_if_missing is honoured on all platforms.
+        let opts = SqliteConnectOptions::new()
+            .filename(db_path)
+            .create_if_missing(true);
+        let pool = SqlitePool::connect_with(opts).await?;
         Self::migrate(&pool).await?;
         Ok(Self { pool })
     }

@@ -502,7 +502,13 @@ async fn cmd_trade(dry_run: bool, live: bool) {
 
         let store = match persistence::TradeStore::new("data/trades.db").await {
             Ok(s) => s,
-            Err(e) => { eprintln!("Failed to open trade database: {}", e); return; }
+            Err(e) => {
+                let cwd = std::env::current_dir()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| "?".into());
+                eprintln!("Failed to open trade database (cwd={}): {}", cwd, e);
+                return;
+            }
         };
         let persisted = store.get_open_positions().await.unwrap_or_default();
 

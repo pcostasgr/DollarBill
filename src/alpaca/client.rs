@@ -31,6 +31,7 @@ fn is_transient(status: StatusCode) -> bool {
     )
 }
 
+#[derive(Clone)]
 pub struct AlpacaClient {
     client: Client,
     api_key: String,
@@ -146,7 +147,7 @@ impl AlpacaClient {
         T: DeserializeOwned,
         F: Fn() -> reqwest::RequestBuilder,
     {
-        let mut last_err: Option<Box<dyn Error>> = None;
+        let mut last_err: Option<String> = None;
 
         for attempt in 0..=MAX_RETRIES {
             let result = build().send().await;
@@ -164,7 +165,7 @@ impl AlpacaClient {
                             status, attempt + 1, MAX_RETRIES, error_text);
                         let delay_ms = 500 * 2u64.pow(attempt);
                         tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-                        last_err = Some(format!("API error {}: {}", status, error_text).into());
+                        last_err = Some(format!("API error {}: {}", status, error_text));
                         continue;
                     }
                     let error_text = response.text().await?;
@@ -177,7 +178,7 @@ impl AlpacaClient {
                             attempt + 1, MAX_RETRIES, e);
                         let delay_ms = 500 * 2u64.pow(attempt);
                         tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-                        last_err = Some(e.into());
+                        last_err = Some(e.to_string());
                         continue;
                     }
                     return Err(e.into());
@@ -185,7 +186,7 @@ impl AlpacaClient {
             }
         }
 
-        Err(last_err.unwrap_or_else(|| "Request failed after retries".into()))
+        Err(last_err.unwrap_or_else(|| "Request failed after retries".to_string()).into())
     }
 
     // ============ Account / Clock Methods ============
