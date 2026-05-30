@@ -149,6 +149,26 @@ impl VolSurfaceConfigFile {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
+// Spot price connector config
+// ═════════════════════════════════════════════════════════════════════════
+
+/// Which data provider to use when fetching spot price during background
+/// Heston recalibration.
+///
+/// Add a new variant here (and a corresponding fetch implementation in
+/// `market_data/spot_price.rs`) to extend the list of supported connectors.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum SpotPriceSource {
+    /// Alpaca Market Data REST API (`/v2/stocks/{symbol}/trades/latest`).
+    /// Requires valid Alpaca API credentials.
+    #[default]
+    Alpaca,
+    /// Yahoo Finance chart API (free, no credentials needed, rate-limited).
+    Yahoo,
+}
+
+// ═════════════════════════════════════════════════════════════════════════
 // Live-trading bot runtime config  (config/trading_bot_config.json)
 // ═════════════════════════════════════════════════════════════════════════
 
@@ -205,6 +225,11 @@ pub struct BotRuntimeConfig {
     /// bot stops rolling and lets the ITM-proximity close handle it.
     #[serde(default = "BotRuntimeConfig::default_max_rolls")]
     pub max_rolls: u32,
+    /// Which connector to use for fetching spot price during background
+    /// Heston recalibration.  Defaults to `"alpaca"`.
+    /// Set to `"yahoo"` to use Yahoo Finance (no API key required).
+    #[serde(default)]
+    pub spot_price_source: SpotPriceSource,
 }
 
 impl BotRuntimeConfig {
@@ -239,6 +264,7 @@ impl Default for BotRuntimeConfig {
             roll_trigger_pct:     Self::default_roll_trigger_pct(),
             roll_dte_days:        Self::default_roll_dte_days(),
             max_rolls:            Self::default_max_rolls(),
+            spot_price_source:    SpotPriceSource::default(),
         }
     }
 }

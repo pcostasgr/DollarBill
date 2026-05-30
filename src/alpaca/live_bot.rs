@@ -10,6 +10,7 @@ use crate::config;
 use crate::market_data::csv_loader::load_csv_closes;
 use crate::market_data::options_feed::LiveIvCache;
 use crate::market_data::real_option_data_yahoo::fetch_liquid_options;
+use crate::market_data::spot_price::fetch_spot;
 use crate::models::bs_mod::compute_historical_vol;
 use crate::models::heston::heston_start;
 use crate::persistence;
@@ -188,6 +189,7 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
     // roll_dte_days, and max_rolls are passed into PositionMonitorConfig below.
     let max_rolls             = bot_cfg.max_rolls;   // still used in log messages
     let min_vol_percentile    = bot_cfg.min_vol_percentile;
+    let spot_price_source     = bot_cfg.spot_price_source.clone();
     let max_daily_loss        = equity * bot_cfg.max_daily_loss_pct;
     let mut estimated_daily_loss = 0.0_f64;
     let mut circuit_broken       = false;
@@ -300,13 +302,20 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
         let syms_bg    = symbols.clone();
         let params_bg  = Arc::clone(&live_params);
         let client_bg  = client.clone();
+        let source_bg  = spot_price_source.clone();
         tokio::spawn(async move {
             let calib_interval = tokio::time::Duration::from_secs(30 * 60);
             loop {
                 tokio::time::sleep(calib_interval).await;
                 for sym in &syms_bg {
-                    let spot = match client_bg.get_latest_trade(sym).await {
-                        Ok(t) => t.price,
+                    let spot = match fetch_spot(&source_bg, sym, || {
+                        let c = client_bg.clone();
+                        let s = sym.clone();
+                        async move {
+                            c.get_latest_trade(&s).await.map(|t| t.price)
+                        }
+                    }).await {
+                        Ok(p) => p,
                         Err(e) => { warn!("BG calib price fetch failed for {}: {}", sym, e); continue; }
                     };
                     let opts = match fetch_liquid_options(sym, 0, 10, 25.0).await {

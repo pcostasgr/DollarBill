@@ -5,3 +5,4 @@ pub mod real_option_data_yahoo;
 pub mod options_json_loader;
 pub mod options_feed;
 pub mod symbols;
+pub mod spot_price;

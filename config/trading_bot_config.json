@@ -12,7 +12,8 @@
     "itm_proximity_pct":    0.03,
     "roll_trigger_pct":     0.05,
     "roll_dte_days":        30,
-    "max_rolls":            2
+    "max_rolls":            2,
+    "spot_price_source":    "alpaca"
   },
   "alerts": {
     "enabled":               false,
