@@ -24,8 +24,9 @@ where
     Fut: std::future::Future<Output = Result<f64, Box<dyn Error>>>,
 {
     match source {
-        SpotPriceSource::Alpaca => alpaca_fetch().await,
-        SpotPriceSource::Yahoo  => fetch_spot_yahoo(symbol).await,
+        SpotPriceSource::Alpaca  => alpaca_fetch().await,
+        SpotPriceSource::Yahoo   => fetch_spot_yahoo(symbol).await,
+        SpotPriceSource::Finnhub => fetch_spot_finnhub(symbol).await,
     }
 }
 
@@ -59,6 +60,45 @@ pub async fn fetch_spot_yahoo(
         .as_f64()
         .ok_or_else(|| -> Box<dyn Error> {
             "Yahoo spot: regularMarketPrice field missing or null".into()
+        })?;
+
+    Ok(price)
+}
+
+// ── Finnhub connector ────────────────────────────────────────────────────
+
+/// Fetch spot price via Finnhub quote API (free tier, real-time during
+/// market hours, 60 calls/min).
+///
+/// Reads the API key from the `DOLLARBILL_FINNHUB_KEY` environment variable.
+pub async fn fetch_spot_finnhub(
+    symbol: &str,
+) -> Result<f64, Box<dyn Error>> {
+    let key = std::env::var("DOLLARBILL_FINNHUB_KEY")
+        .map_err(|_| -> Box<dyn Error> {
+            "DOLLARBILL_FINNHUB_KEY env var not set".into()
+        })?;
+
+    let url = format!(
+        "https://finnhub.io/api/v1/quote?symbol={}&token={}",
+        symbol, key
+    );
+
+    let client = reqwest::Client::new();
+    let json: serde_json::Value = client
+        .get(&url)
+        .header("User-Agent", "Mozilla/5.0")
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    // Finnhub returns { "c": <current>, "h": ..., "l": ..., "o": ..., "pc": ..., "t": ... }
+    let price = json["c"]
+        .as_f64()
+        .filter(|&p| p > 0.0)
+        .ok_or_else(|| -> Box<dyn Error> {
+            format!("Finnhub: current price ('c') missing or zero for {}", symbol).into()
         })?;
 
     Ok(price)

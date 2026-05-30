@@ -166,6 +166,9 @@ pub enum SpotPriceSource {
     Alpaca,
     /// Yahoo Finance chart API (free, no credentials needed, rate-limited).
     Yahoo,
+    /// Finnhub quote API (free tier: 60 calls/min, real-time during market hours).
+    /// Requires `DOLLARBILL_FINNHUB_KEY` environment variable.
+    Finnhub,
 }
 
 // ═════════════════════════════════════════════════════════════════════════
