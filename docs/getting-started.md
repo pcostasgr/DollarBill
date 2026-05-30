@@ -454,13 +454,48 @@ Edit `config/trading_bot_config.json` — note which top-level key each setting 
 "bot_runtime": {
   "min_confidence":       0.60,   // raise from default 0.30 — filters low-quality signals
   "signal_cooldown_secs": 300,   // seconds between signals per symbol
-  "max_daily_loss_pct":   0.05   // 5% daily-loss circuit breaker
+  "max_daily_loss_pct":   0.05,  // 5% daily-loss circuit breaker
+  "spot_price_source":    "alpaca" // "alpaca" | "yahoo" | "finnhub"
 },
 "trading": {
   "position_size_shares": 5,     // ⚠️ default is 100 — lower this before any live trading
   "max_positions": 3             // limit concurrent open positions
 }
 ```
+
+### Spot Price Source
+The bot fetches a live spot price every 30 minutes to re-run Heston calibration in the background.  Three connectors are available — set `"spot_price_source"` in the `"bot_runtime"` block:
+
+| Value | Provider | Credentials required |
+|---|---|---|
+| `"alpaca"` (default) | Alpaca Market Data REST API | `ALPACA_API_KEY` + `ALPACA_API_SECRET` |
+| `"yahoo"` | Yahoo Finance chart API (free) | None |
+| `"finnhub"` | Finnhub quote API (free tier) | `DOLLARBILL_FINNHUB_KEY` |
+
+**Using Finnhub:**
+1. Register for a free account at [finnhub.io](https://finnhub.io) and copy your API key.
+2. Set `"spot_price_source": "finnhub"` in `config/trading_bot_config.json`.
+3. Export the key before starting the bot:
+
+*Windows:*
+```powershell
+$env:DOLLARBILL_FINNHUB_KEY = "your-finnhub-api-key"
+```
+*Linux / macOS:*
+```bash
+export DOLLARBILL_FINNHUB_KEY="your-finnhub-api-key"
+```
+Or add it to `.env` (the `.env` file is loaded automatically by `scripts/start_bot.ps1` / `start_bot.sh`):
+```
+DOLLARBILL_FINNHUB_KEY=your-finnhub-api-key
+```
+> **Finnhub free tier**: 60 API calls/min, real-time quotes during US market hours.  Well within the 30-minute recalibration cadence even for large watchlists.
+
+**Using Yahoo (no API key):**
+```json
+"spot_price_source": "yahoo"
+```
+No extra credentials needed — useful for quick testing or when you don't have an Alpaca or Finnhub key available.
 
 ### Risk Controls
 - **Position Size**: Start small (5 shares)

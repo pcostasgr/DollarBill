@@ -26,7 +26,7 @@ No traditional programming sessions. Just prompts, iterations, and Rust. 🚀
 - **Production-Hardened Trading Bot**: Fully safety-gated personality bot with market-hours enforcement, PDT protection, circuit breakers, fill confirmation, audit logging, and crash recovery
 - **Live Options Pricer**: `live_pricer` wires Yahoo live feed → TTL-cached Heston calibration → per-option edge signals with Greeks in a configurable polling loop
 - **Live IV Feed**: `LiveIvCache` (15-min TTL) fetches ATM implied vol from Yahoo options via Newton-Raphson solve; wired into trade bot as the primary IV source with graceful fallback to background-calibrated params
-- **Background Heston Recalibration**: Trade bot spawns a 30-min async recalibration loop; updated `CalibParams` shared via `Arc<RwLock<>>` and seeded from `data/{symbol}_heston_params.json` at boot
+- **Background Heston Recalibration**: Trade bot spawns a 30-min async recalibration loop; updated `CalibParams` shared via `Arc<RwLock<>>` and seeded from `data/{symbol}_heston_params.json` at boot; spot price fetched via configurable provider (`"alpaca"` default · `"yahoo"` · `"finnhub"` — set `spot_price_source` in `config/trading_bot_config.json → bot_runtime`; Finnhub requires `DOLLARBILL_FINNHUB_KEY` env var, free key at [finnhub.io](https://finnhub.io))
 - **Greeks Hedging Alerts**: After every fill the bot logs portfolio Δ/Γ/Vega/Θ and emits `⚠️ DELTA HEDGE ALERT` when `|total_delta| > equity × 0.30%`
 - **Live TUI Dashboard**: `dashboard.exe` — a separate `ratatui` terminal UI that reads `data/bot_status.json` + `data/trades.db` and displays live P&L, circuit-breaker state, open positions, last signals per symbol, aggregate Greeks, and recent orders; auto-refreshes every second
 - **Email Alerts**: `lettre`-powered SMTP alerts — circuit-breaker trips, daily-loss warnings (configurable threshold, default 80%), order fills, and stream disconnects; STARTTLS/SMTPS support; password via `DOLLARBILL_SMTP_PASSWORD` env var
@@ -406,6 +406,8 @@ sudo tee /etc/dollarbill/secrets.env <<'EOF'
 ALPACA_API_KEY=your-key
 ALPACA_API_SECRET=your-secret
 DOLLARBILL_SMTP_PASSWORD=your-app-password
+# Optional: use Finnhub for background spot-price fetches instead of Alpaca
+# DOLLARBILL_FINNHUB_KEY=your-finnhub-api-key
 EOF
 sudo chmod 600 /etc/dollarbill/secrets.env
 

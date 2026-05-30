@@ -214,6 +214,16 @@ export ALPACA_API_SECRET="your-paper-api-secret"
 ./target/release/dollarbill trade --live
 ```
 
+> **Spot price source** — the bot fetches a live spot price every 30 minutes for background Heston recalibration. You can use Alpaca (default), Yahoo Finance (free, no key), or **Finnhub** (free, real-time, 60 req/min). Set `"spot_price_source"` in `config/trading_bot_config.json → bot_runtime` and, if using Finnhub, supply the API key:
+>
+> ```
+> # Windows
+> $env:DOLLARBILL_FINNHUB_KEY = "your-finnhub-api-key"
+> # Linux / macOS
+> export DOLLARBILL_FINNHUB_KEY="your-finnhub-api-key"
+> ```
+> Get a free key at [finnhub.io](https://finnhub.io). To avoid any API key setup, set `"spot_price_source": "yahoo"` instead.
+
 **File:** `config/personality_bot_config.json`
 ```json
 {

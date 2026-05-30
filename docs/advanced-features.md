@@ -801,6 +801,21 @@ if let Some(iv) = iv_cache.get_cached_iv("TSLA") {
 
 **Why 30 minutes?** Heston calibration (Nelder-Mead over 15-symbol yahoo data) takes ~2–8 s per symbol. A 30-min cadence keeps model parameters market-fresh without saturating the data feed.
 
+**Spot price provider** — the background task fetches one live spot price per symbol per cycle. Three connectors are available via `"spot_price_source"` in `config/trading_bot_config.json → bot_runtime`:
+
+| Value | Provider | Env var required |
+|---|---|---|
+| `"alpaca"` (default) | Alpaca Market Data REST | `ALPACA_API_KEY` + `ALPACA_API_SECRET` |
+| `"yahoo"` | Yahoo Finance chart API (free, no key) | — |
+| `"finnhub"` | Finnhub quote API (free tier, 60 req/min, real-time) | `DOLLARBILL_FINNHUB_KEY` |
+
+To switch to Finnhub: set `"spot_price_source": "finnhub"` in the config and export the key:
+```bash
+export DOLLARBILL_FINNHUB_KEY="your-finnhub-api-key"   # Linux / macOS
+$env:DOLLARBILL_FINNHUB_KEY = "your-finnhub-api-key"   # Windows
+```
+Get a free API key at [finnhub.io](https://finnhub.io). The 60 req/min free-tier limit is well within the 30-minute recalibration cadence for any realistic watchlist size.
+
 ---
 
 ### P3.3 — Greeks Logging & Delta Hedge Alerts

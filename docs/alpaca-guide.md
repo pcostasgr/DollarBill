@@ -197,7 +197,39 @@ See `examples/paper_trading.rs` for a complete example that:
 - **Rate Limits**: 200 requests per minute
 - **Data Feed**: Free tier has 15-minute delayed data (real-time requires paid plan)
 
-## 🔗 Resources
+## � Spot Price Providers
+
+The live bot fetches spot prices every 30 minutes for background Heston recalibration. Alpaca is the default, but two free alternatives require no Alpaca credentials:
+
+| `spot_price_source` | Provider | Credentials |
+|---|---|---|
+| `"alpaca"` (default) | Alpaca Market Data REST | `ALPACA_API_KEY` + `ALPACA_API_SECRET` |
+| `"yahoo"` | Yahoo Finance chart API | None |
+| `"finnhub"` | Finnhub quote API (60 req/min, real-time) | `DOLLARBILL_FINNHUB_KEY` |
+
+Set in `config/trading_bot_config.json` under `"bot_runtime"`:
+```json
+"bot_runtime": {
+  "spot_price_source": "finnhub"
+}
+```
+
+**Getting a Finnhub API key (free):**
+1. Sign up at [finnhub.io](https://finnhub.io) — no credit card required.
+2. Copy the API key from the dashboard.
+3. Set the environment variable before starting the bot:
+
+```powershell
+# Windows
+$env:DOLLARBILL_FINNHUB_KEY = "your-finnhub-api-key"
+```
+```bash
+# Linux / macOS
+export DOLLARBILL_FINNHUB_KEY="your-finnhub-api-key"
+```
+Or add `DOLLARBILL_FINNHUB_KEY=your-finnhub-api-key` to the `.env` file — it is loaded automatically by `scripts/start_bot.ps1` / `start_bot.sh`.
+
+## �🔗 Resources
 
 - [Alpaca Dashboard](https://app.alpaca.markets/paper/dashboard)
 - [Alpaca API Docs](https://alpaca.markets/docs/)

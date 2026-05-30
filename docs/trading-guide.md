@@ -174,6 +174,26 @@ The bot maintains a TTL-cached ATM implied-vol feed sourced from live Yahoo opti
 **Background 30-Min Heston Recalibration**
 At startup, the bot seeds a shared `Arc<RwLock<HashMap<String, CalibParams>>>` from `data/{symbol}_heston_params.json`, then spawns an async background task that re-runs full Nelder-Mead Heston calibration (fetch price + liquid options → optimise) for every configured symbol every 30 minutes. The tick loop always reads the freshest available parameters.
 
+The spot price used for recalibration is fetched from the provider specified by `"spot_price_source"` in `config/trading_bot_config.json → bot_runtime`:
+
+| Value | Provider | Env var required |
+|---|---|---|
+| `"alpaca"` (default) | Alpaca Market Data REST | `ALPACA_API_KEY` + `ALPACA_API_SECRET` |
+| `"yahoo"` | Yahoo Finance chart API | — |
+| `"finnhub"` | Finnhub quote API (free, 60 req/min) | `DOLLARBILL_FINNHUB_KEY` |
+
+To switch to Finnhub, update the config and set the key:
+```json
+"bot_runtime": { "spot_price_source": "finnhub" }
+```
+```bash
+# Linux / macOS
+export DOLLARBILL_FINNHUB_KEY="your-finnhub-api-key"
+# Windows
+$env:DOLLARBILL_FINNHUB_KEY = "your-finnhub-api-key"
+```
+Get a free key at [finnhub.io](https://finnhub.io). To use Yahoo Finance instead (no credentials), set `"spot_price_source": "yahoo"`.
+
 **Greeks Logging & Delta Hedge Alert**
 After every filled order the bot logs aggregate portfolio Greeks and fires a `⚠️ DELTA HEDGE ALERT` when net delta exceeds the 30%-of-equity threshold:
 
