@@ -604,6 +604,7 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                             println!("    ✅ {} closed ({})", sym, close_sym);
                                         }
                                         Err(e) => {
+                                            let is_not_found = e.to_string().contains("404") || e.to_string().contains("position not found");
                                             if occ_opt.is_none() {
                                                 warn!("Direct close failed for {} — trying leg lookup: {}", sym, e);
                                                 let results = client.close_positions_for_underlying(&sym).await;
@@ -614,11 +615,26 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                                     open_positions.remove(&sym);
                                                     cooldown.record_close(&sym);
                                                     println!("    ✅ {} legs closed via lookup", sym);
+                                                } else if results.is_empty() {
+                                                    // No matching positions in Alpaca — expired or closed externally.
+                                                    // Clean up the stale local record so we stop retrying.
+                                                    warn!("No open positions for {} found in Alpaca — removing stale local record", sym);
+                                                    let _ = store.close_position(&sym).await;
+                                                    open_syms.remove(&sym);
+                                                    open_positions.remove(&sym);
+                                                    println!("    🗑️  {} removed (not found in Alpaca — likely expired)", sym);
                                                 } else {
                                                     error!("close leg lookup also failed for {}: {:?}", sym,
                                                         results.iter().map(|r| r.as_ref().err().map(|e| e.to_string())).collect::<Vec<_>>());
                                                     eprintln!("    ⚠️  All close attempts failed for {}", sym);
                                                 }
+                                            } else if is_not_found {
+                                                // Single-leg OCC no longer exists in Alpaca (expired/exercised).
+                                                warn!("Position {} ({}) not found in Alpaca — removing stale local record", sym, close_sym);
+                                                let _ = store.close_position(&sym).await;
+                                                open_syms.remove(&sym);
+                                                open_positions.remove(&sym);
+                                                println!("    🗑️  {} ({}) removed (not found in Alpaca — likely expired)", sym, close_sym);
                                             } else {
                                                 error!("close_position failed for {} ({}): {}", sym, close_sym, e);
                                                 eprintln!("    ⚠️  Close failed for {} ({}): {}", sym, close_sym, e);
@@ -792,9 +808,16 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                     // Store the OCC symbol from the confirmed fill so
                                     // close logic can target the exact contract.
                                     // Single-leg: filled.symbol is the OCC (>10 chars).
-                                    // Multi-leg:  filled.symbol may be empty/short; use None.
+                                    // Multi-leg:  extract leg symbols from filled.legs and
+                                    //             store them comma-joined for diagnostics.
                                     let occ = if filled.symbol.len() > 10 {
                                         Some(filled.symbol.clone())
+                                    } else if let Some(ref legs) = filled.legs {
+                                        let syms: Vec<&str> = legs.iter()
+                                            .filter(|l| l.symbol.len() > 10)
+                                            .map(|l| l.symbol.as_str())
+                                            .collect();
+                                        if syms.is_empty() { None } else { Some(syms.join(",")) }
                                     } else {
                                         None
                                     };
