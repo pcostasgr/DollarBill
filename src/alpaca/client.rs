@@ -722,14 +722,18 @@ impl AlpacaClient {
                 days_to_expiry,
             } => {
                 let (yy, mm, dd) = Self::expiry_from_dte(*days_to_expiry);
+                let scs = Self::round_to_standard_strike(*sell_call_strike);
+                let bcs = Self::round_to_standard_strike(*buy_call_strike);
+                let sps = Self::round_to_standard_strike(*sell_put_strike);
+                let bps = Self::round_to_standard_strike(*buy_put_strike);
                 Ok(vec![
-                    (Self::occ_symbol(underlying, yy, mm, dd, true,  *sell_call_strike),
+                    (Self::occ_symbol(underlying, yy, mm, dd, true,  scs),
                      OrderSide::Sell, "sell_to_open"),
-                    (Self::occ_symbol(underlying, yy, mm, dd, true,  *buy_call_strike),
+                    (Self::occ_symbol(underlying, yy, mm, dd, true,  bcs),
                      OrderSide::Buy,  "buy_to_open"),
-                    (Self::occ_symbol(underlying, yy, mm, dd, false, *sell_put_strike),
+                    (Self::occ_symbol(underlying, yy, mm, dd, false, sps),
                      OrderSide::Sell, "sell_to_open"),
-                    (Self::occ_symbol(underlying, yy, mm, dd, false, *buy_put_strike),
+                    (Self::occ_symbol(underlying, yy, mm, dd, false, bps),
                      OrderSide::Buy,  "buy_to_open"),
                 ])
             }
@@ -758,14 +762,17 @@ impl AlpacaClient {
             }
             SignalAction::IronButterfly { center_strike, wing_width, days_to_expiry } => {
                 let (yy, mm, dd) = Self::expiry_from_dte(*days_to_expiry);
+                let c = Self::round_to_standard_strike(*center_strike);
+                let upper = Self::round_to_standard_strike(*center_strike + *wing_width);
+                let lower = Self::round_to_standard_strike((*center_strike - *wing_width).max(0.01));
                 Ok(vec![
-                    (Self::occ_symbol(underlying, yy, mm, dd, true,  *center_strike),
+                    (Self::occ_symbol(underlying, yy, mm, dd, true,  c),
                      OrderSide::Sell, "sell_to_open"),
-                    (Self::occ_symbol(underlying, yy, mm, dd, true,  *center_strike + *wing_width),
+                    (Self::occ_symbol(underlying, yy, mm, dd, true,  upper),
                      OrderSide::Buy,  "buy_to_open"),
-                    (Self::occ_symbol(underlying, yy, mm, dd, false, *center_strike),
+                    (Self::occ_symbol(underlying, yy, mm, dd, false, c),
                      OrderSide::Sell, "sell_to_open"),
-                    (Self::occ_symbol(underlying, yy, mm, dd, false, (*center_strike - *wing_width).max(0.01)),
+                    (Self::occ_symbol(underlying, yy, mm, dd, false, lower),
                      OrderSide::Buy,  "buy_to_open"),
                 ])
             }

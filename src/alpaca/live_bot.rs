@@ -747,6 +747,15 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                 }
                                 order.symbol = Some(resolved);
                             }
+                            // For multi-leg orders (mleg) resolve each leg's OCC symbol to
+                            // the nearest actually-listed contract. order.symbol is None for
+                            // mleg orders so the block above is a no-op for them.
+                            if let Some(ref mut legs) = order.legs {
+                                for leg in legs.iter_mut() {
+                                    let raw = leg.symbol.clone();
+                                    leg.symbol = client.resolve_single_leg_occ(&raw).await;
+                                }
+                            }
                             match client.submit_options_order(&order).await {
                                 Ok(filled) => {
                                     info!("Order submitted: id={} sym={} status={} strategy={}",
