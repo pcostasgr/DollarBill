@@ -1,4 +1,5 @@
 // Cash-Secured Put Strategy
+use log::debug;
 use super::{TradingStrategy, TradeSignal, SignalAction, RiskParams};
 
 #[derive(Clone)]
@@ -77,10 +78,9 @@ impl TradingStrategy for CashSecuredPuts {
                 strategy_name: self.name().to_string(),
             });
         } else {
-            println!("\n⚪ NO SIGNAL: {} - Cash-Secured Puts", symbol);
-            println!("   Market IV: {:.1}%, Model IV: {:.1}%, Edge: {:.1}%",
-                     market_iv * 100.0, model_iv * 100.0, iv_edge * 100.0);
-            println!("   Est. Premium: {:.1}% (min: {:.1}%)",
+            debug!("NO SIGNAL: {} - Cash-Secured Puts  IV={:.1}%  edge={:.1}%  premium={:.1}% (min {:.1}%)",
+                     symbol,
+                     market_iv * 100.0, iv_edge * 100.0,
                      estimated_premium_pct * 100.0, self.premium_threshold * 100.0);
         }
 

@@ -772,6 +772,19 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                     leg.symbol = client.resolve_single_leg_occ(&raw).await;
                                 }
                             }
+                            // Pre-flight circuit breaker: reject before submitting if
+                            // this order would push estimated daily spend over the limit.
+                            let order_cost = rough_premium * qty as f64 * 100.0;
+                            if estimated_daily_loss + order_cost >= max_daily_loss {
+                                circuit_broken = true;
+                                error!("CIRCUIT BREAKER (pre-flight): skipping {} — projected spend ${:.2} >= limit ${:.2}",
+                                    sym, estimated_daily_loss + order_cost, max_daily_loss);
+                                eprintln!("    🚫 Circuit breaker: would exceed daily limit — order cancelled");
+                                let a = alerter.clone();
+                                let (edl, mdl) = (estimated_daily_loss + order_cost, max_daily_loss);
+                                tokio::spawn(async move { a.circuit_breaker(edl, mdl).await; });
+                                continue;
+                            }
                             match client.submit_options_order(&order).await {
                                 Ok(filled) => {
                                     info!("Order submitted: id={} sym={} status={} strategy={}",

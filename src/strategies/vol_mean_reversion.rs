@@ -1,4 +1,5 @@
 // Volatility Mean Reversion Strategy
+use log::debug;
 use super::{TradingStrategy, TradeSignal, SignalAction, RiskParams};
 
 #[derive(Clone)]
@@ -79,7 +80,7 @@ impl TradingStrategy for VolMeanReversion {
                 strategy_name: self.name().to_string(),
             });
         } else {
-            println!("\n⚪ NO SIGNAL: {} - Vol Mean Reversion", symbol);
+            debug!("NO SIGNAL: {} - Vol Mean Reversion", symbol);
             println!("   Market IV: {:.1}%, Model IV: {:.1}%, Z-score: {:.2}", 
                      market_iv * 100.0, model_iv * 100.0, zscore);
         }
