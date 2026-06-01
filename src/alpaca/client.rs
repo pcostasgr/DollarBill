@@ -662,7 +662,7 @@ impl AlpacaClient {
                 order_class: Some("mleg".to_string()),
                 legs: Some(legs.into_iter().map(|(sym, side, intent)| OptionsLeg {
                     symbol: sym,
-                    ratio_qty: contracts,
+                    ratio_qty: 1,
                     side,
                     position_intent: intent.to_string(),
                 }).collect()),
