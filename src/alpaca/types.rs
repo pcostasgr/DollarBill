@@ -140,30 +140,46 @@ pub struct Bar {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Quote {
+    #[serde(default)]
     pub symbol: String,
+    #[serde(rename = "bp")]
     pub bid: f64,
+    #[serde(rename = "ap")]
     pub ask: f64,
+    #[serde(rename = "bs")]
     pub bid_size: i32,
+    #[serde(rename = "as")]
     pub ask_size: i32,
+    #[serde(rename = "t")]
     pub timestamp: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Trade {
+    #[serde(default)]
     pub symbol: String,
+    #[serde(rename = "p")]
     pub price: f64,
+    #[serde(rename = "s")]
     pub size: i32,
+    #[serde(rename = "t")]
     pub timestamp: String,
+    #[serde(rename = "x", default)]
     pub exchange: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Snapshot {
     pub symbol: String,
+    #[serde(rename = "latestTrade")]
     pub latest_trade: Option<Trade>,
+    #[serde(rename = "latestQuote")]
     pub latest_quote: Option<Quote>,
+    #[serde(rename = "minuteBar")]
     pub minute_bar: Option<Bar>,
+    #[serde(rename = "dailyBar")]
     pub daily_bar: Option<Bar>,
+    #[serde(rename = "prevDailyBar")]
     pub prev_daily_bar: Option<Bar>,
 }
 
