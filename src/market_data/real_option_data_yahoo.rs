@@ -1,96 +1,113 @@
 // Scrape live options data from Yahoo Finance
 // Uses undocumented Yahoo API endpoint (free but unofficial)
+// Yahoo Finance requires a crumb token (obtained via cookie handshake) since ~2024.
 
 use crate::calibration::market_option::{MarketOption, OptionType};
 use serde_json::Value;
 use std::error::Error;
 
-/// Fetch options chain from Yahoo Finance for a given symbol
-/// 
+const YAHOO_UA: &str =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+     (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+/// Build a reqwest client with a persistent cookie store (required for crumb auth).
+fn build_yahoo_client() -> Result<reqwest::Client, Box<dyn Error>> {
+    Ok(reqwest::Client::builder()
+        .cookie_store(true)
+        .user_agent(YAHOO_UA)
+        .build()?)
+}
+
+/// Obtain a Yahoo Finance crumb token.
+///
+/// Yahoo requires:
+///   1. A GET to `https://fc.yahoo.com` to set session cookies.
+///   2. A GET to the getcrumb endpoint which returns the crumb as plain text.
+///
+/// The crumb must be appended as `?crumb=<crumb>` on every subsequent API call.
+async fn get_yahoo_crumb(client: &reqwest::Client) -> Result<String, Box<dyn Error>> {
+    // Step 1 – seed the cookie jar
+    let _ = client.get("https://fc.yahoo.com").send().await;
+
+    // Step 2 – fetch crumb (try query1 then query2)
+    for host in &["query1", "query2"] {
+        let url = format!("https://{}.finance.yahoo.com/v1/test/getcrumb", host);
+        if let Ok(resp) = client.get(&url).send().await {
+            if let Ok(text) = resp.text().await {
+                let trimmed = text.trim().to_string();
+                if !trimmed.is_empty() && !trimmed.starts_with('<') {
+                    return Ok(trimmed);
+                }
+            }
+        }
+    }
+    Err("Failed to obtain Yahoo Finance crumb (rate-limited or consent wall)".into())
+}
+
+/// Fetch options chain from Yahoo Finance for a given symbol.
+///
 /// # Arguments
 /// * `symbol` - Stock ticker (e.g., "TSLA", "AAPL")
 /// * `expiration_index` - Which expiration to fetch (0 = nearest, 1 = next, etc.)
-/// 
+///
 /// # Returns
 /// Vec<MarketOption> containing both calls and puts for the selected expiration
 pub async fn fetch_yahoo_options(
     symbol: &str,
     expiration_index: usize,
 ) -> Result<Vec<MarketOption>, Box<dyn Error>> {
-    // Yahoo Finance options endpoint
-    let url = format!(
-        "https://query1.finance.yahoo.com/v7/finance/options/{}",
-        symbol
-    );
-    
-    println!("Fetching options from Yahoo Finance for {}...", symbol);
-    
-    // Build request with proper headers (Yahoo requires User-Agent)
-    let client = reqwest::Client::new();
-    let response_text = client
-        .get(&url)
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        .send()
-        .await?
-        .text()
-        .await?;
-    
-    // Parse JSON response
-    let response: Value = serde_json::from_str(&response_text)
-        .map_err(|e| format!("JSON parse error: {}. Response: {}", e, &response_text[..200.min(response_text.len())]))?;
-    
-    // Navigate JSON structure
-    let option_chain = &response["optionChain"]["result"][0];
-    
+    let client = build_yahoo_client()?;
+    let crumb = get_yahoo_crumb(&client).await?;
+
+    // First request – get expiration list (try query1, fall back to query2)
+    let option_chain_json = fetch_option_chain_json(&client, symbol, None, &crumb).await?;
+    let option_chain = &option_chain_json["optionChain"]["result"][0];
+
     // Get available expiration dates
     let expirations = option_chain["expirationDates"]
         .as_array()
-        .ok_or("No expiration dates found")?;
-    
+        .filter(|a| !a.is_empty())
+        .ok_or_else(|| {
+            // Surface the raw response snippet to aid future debugging
+            let snippet = serde_json::to_string(&option_chain_json["optionChain"]["result"])
+                .unwrap_or_default();
+            format!(
+                "No expiration dates found for {}. Result snippet: {}",
+                symbol,
+                &snippet[..snippet.len().min(300)]
+            )
+        })?;
+
     if expiration_index >= expirations.len() {
         return Err(format!(
             "Expiration index {} out of range (available: {})",
             expiration_index,
             expirations.len()
-        ).into());
+        )
+        .into());
     }
-    
+
     let expiration_timestamp = expirations[expiration_index]
         .as_i64()
         .ok_or("Invalid expiration timestamp")?;
-    
-    // Fetch specific expiration
-    let url_with_date = format!(
-        "https://query1.finance.yahoo.com/v7/finance/options/{}?date={}",
-        symbol, expiration_timestamp
-    );
-    
-    let response_text = client
-        .get(&url_with_date)
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        .send()
-        .await?
-        .text()
-        .await?;
-    
-    let response: Value = serde_json::from_str(&response_text)?;
-    
-    let options_data = &response["optionChain"]["result"][0]["options"][0];
-    
-    // Get spot price and current time for TTM calculation
+
+    // Second request – fetch the actual chain for the chosen date
+    let dated_json =
+        fetch_option_chain_json(&client, symbol, Some(expiration_timestamp), &crumb).await?;
+    let options_data = &dated_json["optionChain"]["result"][0]["options"][0];
+
     let spot = option_chain["quote"]["regularMarketPrice"]
         .as_f64()
         .unwrap_or(0.0);
-    
+
     let current_time = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs() as i64;
-    
+
     let time_to_expiry = ((expiration_timestamp - current_time) as f64) / 86400.0 / 365.0;
-    
+
     let mut market_options = Vec::new();
-    
-    // Parse calls
+
     if let Some(calls) = options_data["calls"].as_array() {
         for call in calls {
             if let Some(option) = parse_option_contract(call, OptionType::Call, time_to_expiry) {
@@ -98,8 +115,6 @@ pub async fn fetch_yahoo_options(
             }
         }
     }
-    
-    // Parse puts
     if let Some(puts) = options_data["puts"].as_array() {
         for put in puts {
             if let Some(option) = parse_option_contract(put, OptionType::Put, time_to_expiry) {
@@ -107,15 +122,59 @@ pub async fn fetch_yahoo_options(
             }
         }
     }
-    
+
     println!(
-        "✓ Fetched {} options (spot: ${:.2}, TTM: {:.3} years)",
+        "✓ Fetched {} options for {} (spot: ${:.2}, TTM: {:.3} years)",
         market_options.len(),
+        symbol,
         spot,
         time_to_expiry
     );
-    
+
     Ok(market_options)
+}
+
+/// Low-level helper: GET the Yahoo options JSON, trying query1 then query2.
+async fn fetch_option_chain_json(
+    client: &reqwest::Client,
+    symbol: &str,
+    date: Option<i64>,
+    crumb: &str,
+) -> Result<Value, Box<dyn Error>> {
+    for host in &["query1", "query2"] {
+        let url = match date {
+            None => format!(
+                "https://{}.finance.yahoo.com/v7/finance/options/{}?crumb={}",
+                host, symbol, crumb
+            ),
+            Some(ts) => format!(
+                "https://{}.finance.yahoo.com/v7/finance/options/{}?date={}&crumb={}",
+                host, symbol, ts, crumb
+            ),
+        };
+
+        let resp = client.get(&url).send().await;
+        let text = match resp {
+            Ok(r) => match r.text().await {
+                Ok(t) => t,
+                Err(_) => continue,
+            },
+            Err(_) => continue,
+        };
+
+        match serde_json::from_str::<Value>(&text) {
+            Ok(v) if v["optionChain"]["result"].is_array() => return Ok(v),
+            Ok(v) => {
+                // Log Yahoo-level error if present
+                if let Some(err) = v.pointer("/optionChain/error") {
+                    return Err(format!("Yahoo API error for {}: {}", symbol, err).into());
+                }
+                continue;
+            }
+            Err(_) => continue,
+        }
+    }
+    Err(format!("All Yahoo Finance hosts failed for symbol {}", symbol).into())
 }
 
 /// Parse a single option contract from Yahoo JSON
@@ -148,32 +207,14 @@ fn parse_option_contract(
 
 /// Get list of available expiration dates for a symbol
 pub async fn get_available_expirations(symbol: &str) -> Result<Vec<String>, Box<dyn Error>> {
-    let url = format!(
-        "https://query1.finance.yahoo.com/v7/finance/options/{}",
-        symbol
-    );
-    
-    let client = reqwest::Client::new();
-    let response_text = client
-        .get(&url)
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        .send()
-        .await?
-        .text()
-        .await?;
-    
-    let response: Value = serde_json::from_str(&response_text)?;
-    
-    // Debug: print response structure
-    if let Some(error) = response.get("finance").and_then(|f| f.get("error")) {
-        return Err(format!("Yahoo API error: {:?}", error).into());
-    }
-    
+    let client = build_yahoo_client()?;
+    let crumb = get_yahoo_crumb(&client).await?;
+    let response = fetch_option_chain_json(&client, symbol, None, &crumb).await?;
+
     let expirations = response["optionChain"]["result"][0]["expirationDates"]
         .as_array()
-        .ok_or_else(|| format!("No expirations found. Response structure: {:?}", 
-            response.get("optionChain").and_then(|o| o.get("result"))))?;
-    
+        .ok_or_else(|| format!("No expirations found for {}", symbol))?;
+
     let dates: Vec<String> = expirations
         .iter()
         .filter_map(|ts| {
@@ -182,7 +223,7 @@ pub async fn get_available_expirations(symbol: &str) -> Result<Vec<String>, Box<
             Some(datetime.format("%Y-%m-%d").to_string())
         })
         .collect();
-    
+
     Ok(dates)
 }
 
