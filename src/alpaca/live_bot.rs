@@ -37,13 +37,16 @@ use std::time::Instant;
 /// Parse expiry date from an OCC symbol string.
 /// OCC format: ROOT(6) YYMMDD(6) C|P(1) STRIKE(8)  — e.g. "QCOM260508P00120000"
 /// Returns `Some("2026-05-08")` or `None` if parsing fails.
-/// Conservative per-contract margin estimate for a given signal action.
+/// Conservative per-contract margin/cost estimate for a given signal action.
 /// Used as a pre-flight buying-power guard before submitting options orders.
 /// For iron butterflies Alpaca charges margin on BOTH wings (not just the wider one),
 /// so the estimate is 2 × wing_width × qty × 100.
-fn estimate_margin(action: &SignalAction, qty: u32) -> f64 {
+/// For debit strategies (buy call/put/straddle) the cost is the premium paid, estimated
+/// from `rough_premium` (BSM ATM price proxy computed in the tick loop).
+fn estimate_margin(action: &SignalAction, qty: u32, rough_premium: f64) -> f64 {
     let q = qty as f64;
     match action {
+        // ── Credit strategies: margin requirement ──────────────────────────
         SignalAction::IronButterfly { wing_width, .. } => 2.0 * wing_width * q * 100.0,
         SignalAction::IronCondor {
             sell_call_strike, buy_call_strike,
@@ -59,7 +62,11 @@ fn estimate_margin(action: &SignalAction, qty: u32) -> f64 {
         | SignalAction::CreditPutSpread { sell_strike, buy_strike, .. } => {
             (sell_strike - buy_strike).abs() * q * 100.0
         }
-        // Debit strategies and catch-all: no explicit margin beyond the premium.
+        // ── Debit strategies: premium paid (actual cash outflow) ───────────
+        // BuyStraddle = long call + long put, so 2× single-leg premium.
+        SignalAction::BuyStraddle { .. } => 2.0 * rough_premium * q * 100.0,
+        SignalAction::BuyCall { .. } | SignalAction::BuyPut { .. } => rough_premium * q * 100.0,
+        // Catch-all (NoAction, ClosePosition, etc.)
         _ => 0.0,
     }
 }
@@ -814,7 +821,7 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                             }
                             // Pre-flight buying-power check: skip if estimated margin
                             // exceeds remaining options buying power.
-                            let estimated_margin = estimate_margin(&sig.action, qty);
+                            let estimated_margin = estimate_margin(&sig.action, qty, rough_premium);
                             if estimated_margin > 0.0 && estimated_margin > remaining_buy_pwr {
                                 warn!("Buying power check: skipping {} — estimated margin ${:.2} > remaining ${:.2}",
                                     sym, estimated_margin, remaining_buy_pwr);
@@ -909,7 +916,7 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                         open_positions.insert(sym.clone(), pos);
                                         // Deduct estimated margin so subsequent pre-flight
                                         // checks see the reduced available buying power.
-                                        remaining_buy_pwr -= estimated_margin;
+                                        remaining_buy_pwr -= estimate_margin(&sig.action, qty, rough_premium);
                                         // Fill alert
                                         let a = alerter.clone();
                                         let sym_c  = sym.clone();
