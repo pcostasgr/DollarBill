@@ -76,8 +76,17 @@ pub async fn run_live_bot(
     println!("\n🔄 Reconciling positions with Alpaca…");
     match client.get_positions().await {
         Ok(alpaca_pos) => {
-            let alpaca_syms: HashSet<String> =
-                alpaca_pos.iter().map(|p| p.symbol.clone()).collect();
+            // For options, Alpaca stores the full OCC symbol (e.g. "GLD260626P00405000")
+            // but SQLite tracks the root symbol ("GLD").  Build alpaca_syms using the
+            // same root key so the stale-removal check doesn't falsely evict open option
+            // positions every time the bot restarts.
+            let alpaca_syms: HashSet<String> = alpaca_pos.iter().map(|p| {
+                if p.asset_class == "us_option" && p.symbol.len() >= 18 {
+                    p.symbol[..6].trim().to_string()
+                } else {
+                    p.symbol.clone()
+                }
+            }).collect();
             // Remove SQLite records absent from Alpaca (must have closed/expired)
             for p in &persisted {
                 if !alpaca_syms.contains(&p.symbol) {
@@ -773,8 +782,13 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                 }
                             }
                             // Pre-flight circuit breaker: reject before submitting if
-                            // this order would push estimated daily spend over the limit.
-                            let order_cost = rough_premium * qty as f64 * 100.0;
+                            // this order would push estimated 1-day risk over the limit.
+                            // Use 1-day 1σ VaR (price × daily_vol × notional) rather than
+                            // the BSM option premium.  For credit strategies the premium is
+                            // income, not a cost, so comparing it against a loss limit is
+                            // inverted and blocks valid trades (e.g. CSP on high-IV stocks).
+                            let daily_vol = sigma / (252.0_f64).sqrt();
+                            let order_cost = price * daily_vol * qty as f64 * 100.0;
                             if estimated_daily_loss + order_cost >= max_daily_loss {
                                 circuit_broken = true;
                                 error!("CIRCUIT BREAKER (pre-flight): skipping {} — projected spend ${:.2} >= limit ${:.2}",
@@ -790,7 +804,8 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                     info!("Order submitted: id={} sym={} status={} strategy={}",
                                         filled.id, sym, filled.status, sig.strategy_name);
                                     println!("    Submitted: {} ({})", filled.id, filled.status);
-                                    estimated_daily_loss += rough_premium * qty as f64 * 100.0;
+                                    let daily_vol_post = sigma / (252.0_f64).sqrt();
+                                    estimated_daily_loss += price * daily_vol_post * qty as f64 * 100.0;
 
                                     // Daily-loss warning at configurable threshold (default 80%)
                                     if !daily_loss_warned
@@ -857,6 +872,9 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                         let strat_c = sig.strategy_name.clone();
                                         let (qty_c, price_c) = (qty, price);
                                         tokio::spawn(async move { a.fill(&sym_c, &strat_c, qty_c, price_c).await; });
+                                        // Position recorded — stop processing further signals for
+                                        // this symbol on this tick to prevent duplicate entries.
+                                        break;
                                     }
 
                                     // ── P3.3 Greeks / portfolio-risk alert ────────────
