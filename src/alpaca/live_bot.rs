@@ -37,6 +37,33 @@ use std::time::Instant;
 /// Parse expiry date from an OCC symbol string.
 /// OCC format: ROOT(6) YYMMDD(6) C|P(1) STRIKE(8)  — e.g. "QCOM260508P00120000"
 /// Returns `Some("2026-05-08")` or `None` if parsing fails.
+/// Conservative per-contract margin estimate for a given signal action.
+/// Used as a pre-flight buying-power guard before submitting options orders.
+/// For iron butterflies Alpaca charges margin on BOTH wings (not just the wider one),
+/// so the estimate is 2 × wing_width × qty × 100.
+fn estimate_margin(action: &SignalAction, qty: u32) -> f64 {
+    let q = qty as f64;
+    match action {
+        SignalAction::IronButterfly { wing_width, .. } => 2.0 * wing_width * q * 100.0,
+        SignalAction::IronCondor {
+            sell_call_strike, buy_call_strike,
+            sell_put_strike,  buy_put_strike, ..
+        } => {
+            let call_wing = (buy_call_strike - sell_call_strike).abs();
+            let put_wing  = (sell_put_strike  - buy_put_strike).abs();
+            call_wing.max(put_wing) * q * 100.0
+        }
+        SignalAction::CashSecuredPut { strike, .. }
+        | SignalAction::SellPut { strike, .. } => strike * q * 100.0,
+        SignalAction::CreditCallSpread { sell_strike, buy_strike, .. }
+        | SignalAction::CreditPutSpread { sell_strike, buy_strike, .. } => {
+            (sell_strike - buy_strike).abs() * q * 100.0
+        }
+        // Debit strategies and catch-all: no explicit margin beyond the premium.
+        _ => 0.0,
+    }
+}
+
 fn parse_occ_expiry(occ: &str) -> Option<String> {
     if occ.len() < 15 { return None; }
     let yy: u32 = occ[6..8].parse().ok()?;
@@ -202,6 +229,10 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
     let max_daily_loss        = equity * bot_cfg.max_daily_loss_pct;
     let mut estimated_daily_loss = 0.0_f64;
     let mut circuit_broken       = false;
+    // Tracks remaining options buying power so we can reject orders that would
+    // exceed it before they reach Alpaca (avoiding 403 insufficient-buying-power).
+    // Decremented after each fill; not incremented on close (conservative).
+    let mut remaining_buy_pwr: f64 = buy_pwr;
 
     // ── Email alerting (P4.2) ─────────────────────────────────────────────
     let alert_cfg = config::TradingBotConfigFile::load_alerts();
@@ -781,6 +812,16 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                     leg.symbol = client.resolve_single_leg_occ(&raw).await;
                                 }
                             }
+                            // Pre-flight buying-power check: skip if estimated margin
+                            // exceeds remaining options buying power.
+                            let estimated_margin = estimate_margin(&sig.action, qty);
+                            if estimated_margin > 0.0 && estimated_margin > remaining_buy_pwr {
+                                warn!("Buying power check: skipping {} — estimated margin ${:.2} > remaining ${:.2}",
+                                    sym, estimated_margin, remaining_buy_pwr);
+                                println!("    ⚠️  Insufficient buying power: need ${:.2}, have ${:.2} — skipping",
+                                    estimated_margin, remaining_buy_pwr);
+                                continue;
+                            }
                             // Pre-flight circuit breaker: reject before submitting if
                             // this order would push estimated 1-day risk over the limit.
                             // Use 1-day 1σ VaR (price × daily_vol × notional) rather than
@@ -866,6 +907,9 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                     } else {
                                         open_syms.insert(sym.clone());
                                         open_positions.insert(sym.clone(), pos);
+                                        // Deduct estimated margin so subsequent pre-flight
+                                        // checks see the reduced available buying power.
+                                        remaining_buy_pwr -= estimated_margin;
                                         // Fill alert
                                         let a = alerter.clone();
                                         let sym_c  = sym.clone();
