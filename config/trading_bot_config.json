@@ -1,18 +1,18 @@
 {
   "bot_runtime": {
-    "min_confidence":       0.30,
-    "max_daily_loss_pct":   0.05,
-    "signal_cooldown_secs": 30,
-    "max_price_buf":        50,
-    "min_prices_for_hv":    22,
-    "profit_target_pct":    0.50,
-    "stop_loss_pct":        2.00,
-    "max_position_days":    21,
-    "min_vol_percentile":   0.10,
-    "itm_proximity_pct":    0.03,
-    "roll_trigger_pct":     0.05,
-    "roll_dte_days":        30,
-    "max_rolls":            2,
+    "min_confidence":       0.20,
+    "max_daily_loss_pct":   0.15,
+    "signal_cooldown_secs": 10,
+    "max_price_buf":        100,
+    "min_prices_for_hv":    15,
+    "profit_target_pct":    0.75,
+    "stop_loss_pct":        5.00,
+    "max_position_days":    45,
+    "min_vol_percentile":   0.05,
+    "itm_proximity_pct":    0.05,
+    "roll_trigger_pct":     0.10,
+    "roll_dte_days":        21,
+    "max_rolls":            4,
     "spot_price_source":    "alpaca"
   },
   "alerts": {
@@ -31,12 +31,12 @@
     "daily_loss_alert_pct":  0.80
   },
   "trading": {
-    "position_size_shares": 100,
-    "max_positions": 3,
+    "position_size_shares": 500,
+    "max_positions": 10,
     "risk_management": {
-      "stop_loss_pct": 20.0,
-      "take_profit_pct": 50.0,
-      "max_daily_trades": 5
+      "stop_loss_pct": 50.0,
+      "take_profit_pct": 120.0,
+      "max_daily_trades": 20
     }
   },
   "signals": {

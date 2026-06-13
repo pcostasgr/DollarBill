@@ -1,39 +1,39 @@
 {
   "backtest": {
-    "commission_per_trade": 1.0,
+    "commission_per_trade": 0.65,
     "risk_free_rate": 0.05,
-    "max_positions": 5,
-    "position_size_pct": 0.15,
-    "stop_loss_pct": 25.0,
-    "take_profit_pct": 75.0
+    "max_positions": 10,
+    "position_size_pct": 0.30,
+    "stop_loss_pct": 60.0,
+    "take_profit_pct": 150.0
   },
   "strategies": {
     "short_term": {
       "initial_capital": 100000.0,
-      "days_to_expiry": 14,
-      "max_days_hold": 10,
-      "vol_threshold_high_vol": 0.4,
-      "vol_threshold_medium_vol": 0.32,
-      "vol_threshold_low_vol": 0.28,
-      "momentum_threshold": 0.03
+      "days_to_expiry": 7,
+      "max_days_hold": 5,
+      "vol_threshold_high_vol": 0.3,
+      "vol_threshold_medium_vol": 0.22,
+      "vol_threshold_low_vol": 0.18,
+      "momentum_threshold": 0.015
     },
     "medium_term": {
       "initial_capital": 100000.0,
-      "days_to_expiry": 30,
-      "max_days_hold": 21,
-      "rsi_oversold": 40.0,
-      "rsi_overbought": 60.0,
-      "momentum_threshold": 0.01,
+      "days_to_expiry": 21,
+      "max_days_hold": 14,
+      "rsi_oversold": 45.0,
+      "rsi_overbought": 55.0,
+      "momentum_threshold": 0.005,
       "vol_zscore_lookback": 20,
       "strike_offsets": {
-        "call_otm_pct": 1.05,
-        "put_otm_pct": 0.95
+        "call_otm_pct": 1.03,
+        "put_otm_pct": 0.97
       },
       "momentum_breakout": {
-        "momentum_threshold": 0.04,
-        "vol_zscore_threshold": 0.5,
-        "call_otm_pct": 1.05,
-        "put_otm_pct": 0.95
+        "momentum_threshold": 0.02,
+        "vol_zscore_threshold": 0.3,
+        "call_otm_pct": 1.03,
+        "put_otm_pct": 0.97
       }
     },
     "long_term": {

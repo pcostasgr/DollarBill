@@ -1,10 +1,10 @@
 {
   "trading": {
-    "position_size_shares": 5.0,
-    "max_positions": 3,
+    "position_size_shares": 25.0,
+    "max_positions": 10,
     "risk_management": {
-      "stop_loss_pct": 15.0,
-      "take_profit_pct": 40.0
+      "stop_loss_pct": 50.0,
+      "take_profit_pct": 120.0
     }
   },
   "signals": {
@@ -28,9 +28,9 @@
     }
   },
   "paper_trading": {
-    "initial_balance": 10000.0,
-    "commission_per_trade": 0.0,
-    "data_lookback_days": 60,
-    "simulation_days": 30
+    "initial_balance": 100000.0,
+    "commission_per_trade": 0.65,
+    "data_lookback_days": 90,
+    "simulation_days": 90
   }
 }
