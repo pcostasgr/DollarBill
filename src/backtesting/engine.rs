@@ -1520,6 +1520,7 @@ impl BacktestEngine {
             end_date,
             initial_capital: self.config.initial_capital,
             final_capital: self.current_capital,
+            is_paper: false,
             positions: self.positions.clone(),
             trades: self.trades.clone(),
             equity_curve: self.equity_curve.clone(),

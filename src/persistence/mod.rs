@@ -69,6 +69,16 @@ pub struct TradeRecord {
     pub error_message: Option<String>,
     /// RFC-3339 timestamp
     pub timestamp:     String,
+    /// Underlying spot price at the moment of fill (None for tick/error records).
+    pub spot_price:    Option<f64>,
+    /// Implied / historical volatility (annualised) at fill.
+    pub iv_at_fill:    Option<f64>,
+    /// BSM delta at fill.
+    pub delta_at_fill: Option<f64>,
+    /// BSM vega at fill.
+    pub vega_at_fill:  Option<f64>,
+    /// BSM theta at fill (per-day).
+    pub theta_at_fill: Option<f64>,
 }
 
 /// An open (or recently closed) position.
@@ -193,6 +203,12 @@ impl TradeStore {
             .execute(pool).await;
         let _ = sqlx::query("ALTER TABLE positions ADD COLUMN roll_count INTEGER NOT NULL DEFAULT 0")
             .execute(pool).await;
+        // Fill-time snapshot columns (schema v4)
+        let _ = sqlx::query("ALTER TABLE trades ADD COLUMN spot_price    REAL").execute(pool).await;
+        let _ = sqlx::query("ALTER TABLE trades ADD COLUMN iv_at_fill    REAL").execute(pool).await;
+        let _ = sqlx::query("ALTER TABLE trades ADD COLUMN delta_at_fill REAL").execute(pool).await;
+        let _ = sqlx::query("ALTER TABLE trades ADD COLUMN vega_at_fill  REAL").execute(pool).await;
+        let _ = sqlx::query("ALTER TABLE trades ADD COLUMN theta_at_fill REAL").execute(pool).await;
 
         // ── Indexes ────────────────────────────────────────────────
         sqlx::query(
@@ -217,8 +233,9 @@ impl TradeStore {
     pub async fn insert_trade(&self, r: &TradeRecord) -> Result<(), sqlx::Error> {
         sqlx::query(
             "INSERT INTO trades
-             (symbol, action, quantity, price, order_id, fill_status, strategy, error_message, timestamp)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+             (symbol, action, quantity, price, order_id, fill_status, strategy, error_message,
+              timestamp, spot_price, iv_at_fill, delta_at_fill, vega_at_fill, theta_at_fill)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         )
         .bind(&r.symbol)
         .bind(&r.action)
@@ -229,6 +246,11 @@ impl TradeStore {
         .bind(&r.strategy)
         .bind(&r.error_message)
         .bind(&r.timestamp)
+        .bind(r.spot_price)
+        .bind(r.iv_at_fill)
+        .bind(r.delta_at_fill)
+        .bind(r.vega_at_fill)
+        .bind(r.theta_at_fill)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -294,7 +316,8 @@ impl TradeStore {
         limit: u32,
     ) -> Result<Vec<TradeRecord>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT symbol, action, quantity, price, order_id, fill_status, strategy, error_message, timestamp
+            "SELECT symbol, action, quantity, price, order_id, fill_status, strategy, error_message,
+                    timestamp, spot_price, iv_at_fill, delta_at_fill, vega_at_fill, theta_at_fill
              FROM trades
              ORDER BY id DESC
              LIMIT ?1",
@@ -315,6 +338,11 @@ impl TradeStore {
                 strategy:      row.get("strategy"),
                 error_message: row.get("error_message"),
                 timestamp:     row.get("timestamp"),
+                spot_price:    row.get("spot_price"),
+                iv_at_fill:    row.get("iv_at_fill"),
+                delta_at_fill: row.get("delta_at_fill"),
+                vega_at_fill:  row.get("vega_at_fill"),
+                theta_at_fill: row.get("theta_at_fill"),
             })
             .collect())
     }

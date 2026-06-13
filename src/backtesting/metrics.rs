@@ -251,6 +251,8 @@ pub struct BacktestResult {
     pub end_date: String,
     pub initial_capital: f64,
     pub final_capital: f64,
+    /// True when results come from paper/simulated trading, false for live.
+    pub is_paper: bool,
     pub positions: Vec<Position>,
     pub trades: Vec<Trade>,
     pub equity_curve: EquityCurve,
@@ -331,5 +333,106 @@ impl BacktestResult {
                      pos.roi(),
                      result);
         }
+    }
+
+    /// Serialize the result to a pretty-printed JSON string.
+    /// Suitable for writing to a report file.
+    pub fn to_json(&self) -> String {
+        use serde_json::json;
+        let trades: Vec<_> = self.positions.iter()
+            .filter(|p| matches!(p.status,
+                crate::backtesting::position::PositionStatus::Closed |
+                crate::backtesting::position::PositionStatus::Expired))
+            .map(|p| {
+                let option_type = match p.option_type {
+                    crate::backtesting::position::OptionType::Call => "call",
+                    crate::backtesting::position::OptionType::Put  => "put",
+                };
+                json!({
+                    "id":          p.id,
+                    "symbol":      p.symbol,
+                    "option_type": option_type,
+                    "strike":      p.strike,
+                    "entry_date":  p.entry_date,
+                    "exit_date":   p.exit_date,
+                    "entry_price": p.entry_price,
+                    "exit_price":  p.exit_price,
+                    "days_held":   p.days_held,
+                    "realized_pnl":p.realized_pnl,
+                    "roi_pct":     p.roi(),
+                    "result":      if p.is_winner() { "win" } else { "loss" },
+                })
+            })
+            .collect();
+
+        let v = json!({
+            "symbol":          self.symbol,
+            "start_date":      self.start_date,
+            "end_date":        self.end_date,
+            "is_paper":        self.is_paper,
+            "initial_capital": self.initial_capital,
+            "final_capital":   self.final_capital,
+            "metrics": {
+                "total_trades":      self.metrics.total_trades,
+                "winning_trades":    self.metrics.winning_trades,
+                "losing_trades":     self.metrics.losing_trades,
+                "win_rate":          self.metrics.win_rate,
+                "total_pnl":         self.metrics.total_pnl,
+                "total_return_pct":  self.metrics.total_return_pct,
+                "avg_win":           self.metrics.avg_win,
+                "avg_loss":          self.metrics.avg_loss,
+                "largest_win":       self.metrics.largest_win,
+                "largest_loss":      self.metrics.largest_loss,
+                "profit_factor":     self.metrics.profit_factor,
+                "sharpe_ratio":      self.metrics.sharpe_ratio,
+                "sortino_ratio":     self.metrics.sortino_ratio,
+                "max_drawdown":      self.metrics.max_drawdown,
+                "max_drawdown_pct":  self.metrics.max_drawdown_pct,
+                "avg_days_held":     self.metrics.avg_days_held,
+                "total_commissions": self.metrics.total_commissions,
+                "total_slippage":    self.metrics.total_slippage,
+            },
+            "trades": trades,
+        });
+        serde_json::to_string_pretty(&v).unwrap_or_default()
+    }
+
+    /// Serialize closed positions to CSV.
+    /// Header: id,symbol,option_type,strike,entry_date,exit_date,entry_price,exit_price,days_held,realized_pnl,roi_pct,result
+    pub fn to_csv(&self) -> String {
+        use std::fmt::Write as _;
+        let mut out = String::from(
+            "id,symbol,option_type,strike,entry_date,exit_date,\
+             entry_price,exit_price,days_held,realized_pnl,roi_pct,result\n",
+        );
+        let mut closed: Vec<&Position> = self.positions.iter()
+            .filter(|p| matches!(p.status,
+                crate::backtesting::position::PositionStatus::Closed |
+                crate::backtesting::position::PositionStatus::Expired))
+            .collect();
+        closed.sort_by_key(|p| p.id);
+        for p in closed {
+            let opt = match p.option_type {
+                crate::backtesting::position::OptionType::Call => "call",
+                crate::backtesting::position::OptionType::Put  => "put",
+            };
+            let _ = writeln!(
+                out,
+                "{},{},{},{:.2},{},{},{:.4},{:.4},{},{:.2},{:.2},{}",
+                p.id,
+                p.symbol,
+                opt,
+                p.strike,
+                p.entry_date,
+                p.exit_date.as_deref().unwrap_or(""),
+                p.entry_price,
+                p.exit_price.unwrap_or(0.0),
+                p.days_held,
+                p.realized_pnl,
+                p.roi(),
+                if p.is_winner() { "win" } else { "loss" },
+            );
+        }
+        out
     }
 }

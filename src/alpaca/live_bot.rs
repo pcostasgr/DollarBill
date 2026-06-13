@@ -11,7 +11,7 @@ use crate::market_data::csv_loader::load_csv_closes;
 use crate::market_data::options_feed::LiveIvCache;
 use crate::market_data::real_option_data_yahoo::fetch_liquid_options;
 use crate::market_data::spot_price::fetch_spot;
-use crate::models::bs_mod::compute_historical_vol;
+use crate::models::bs_mod::{compute_historical_vol, black_scholes_call, black_scholes_put};
 use crate::models::heston::heston_start;
 use crate::persistence;
 use crate::portfolio::{PortfolioManager, PortfolioConfig};
@@ -457,6 +457,11 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                     strategy:      None,
                     error_message: None,
                     timestamp:     ts.clone(),
+                    spot_price:    None,
+                    iv_at_fill:    None,
+                    delta_at_fill: None,
+                    vega_at_fill:  None,
+                    theta_at_fill: None,
                 };
                 if let Err(e) = store.insert_trade(&rec).await {
                     eprintln!("DB write error: {}", e);
@@ -923,6 +928,37 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                         let strat_c = sig.strategy_name.clone();
                                         let (qty_c, price_c) = (qty, price);
                                         tokio::spawn(async move { a.fill(&sym_c, &strat_c, qty_c, price_c).await; });
+                                        // ── Fill-time snapshot: log Greeks + IV to trades table ──
+                                        let dte_years = (sig.expiry_days as f64 / 365.0).max(1.0 / 365.0);
+                                        let fill_greeks = match &sig.action {
+                                            crate::strategies::SignalAction::BuyCall { strike, .. }
+                                            | crate::strategies::SignalAction::SellCall { strike, .. } =>
+                                                Some(black_scholes_call(price, *strike, dte_years, 0.05, sigma)),
+                                            crate::strategies::SignalAction::BuyPut { strike, .. }
+                                            | crate::strategies::SignalAction::SellPut { strike, .. }
+                                            | crate::strategies::SignalAction::CashSecuredPut { strike, .. } =>
+                                                Some(black_scholes_put(price, *strike, dte_years, 0.05, sigma)),
+                                            _ => None,
+                                        };
+                                        let fill_rec = persistence::TradeRecord {
+                                            symbol:        sym.clone(),
+                                            action:        format!("{:?}", sig.action),
+                                            quantity:      qty as f64,
+                                            price,
+                                            order_id:      Some(filled.id.clone()),
+                                            fill_status:   Some("filled".to_string()),
+                                            strategy:      Some(sig.strategy_name.clone()),
+                                            error_message: None,
+                                            timestamp:     ts.clone(),
+                                            spot_price:    Some(price),
+                                            iv_at_fill:    Some(sigma),
+                                            delta_at_fill: fill_greeks.map(|g| g.delta),
+                                            vega_at_fill:  fill_greeks.map(|g| g.vega),
+                                            theta_at_fill: fill_greeks.map(|g| g.theta),
+                                        };
+                                        if let Err(e) = store.insert_trade(&fill_rec).await {
+                                            error!("Fill record DB write failed: {}", e);
+                                        }
                                         // Position recorded — stop processing further signals for
                                         // this symbol on this tick to prevent duplicate entries.
                                         break;
@@ -963,6 +999,11 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                         strategy:      Some(sig.strategy_name.clone()),
                                         error_message: Some(e.to_string()),
                                         timestamp:     ts.clone(),
+                                        spot_price:    None,
+                                        iv_at_fill:    None,
+                                        delta_at_fill: None,
+                                        vega_at_fill:  None,
+                                        theta_at_fill: None,
                                     };
                                     let _ = store.insert_trade(&fail_rec).await;
                                 }
