@@ -373,6 +373,47 @@ impl AlpacaClient {
         self.get(&endpoint).await
     }
 
+    /// Retrieve up to `limit` orders across all statuses, sorted oldest-first.
+    ///
+    /// Uses `status=all` which includes open, filled, canceled, and expired orders.
+    /// `limit` is capped at 500 by the Alpaca API.
+    pub async fn get_all_orders(&self, limit: usize) -> Result<Vec<Order>, Box<dyn Error>> {
+        let limit = limit.min(500);
+        let endpoint = format!("/v2/orders?status=all&limit={}&direction=asc", limit);
+        self.get(&endpoint).await
+    }
+
+    /// Portfolio equity/P&L history.
+    ///
+    /// * `period`    — lookback window: `"1D"`, `"1W"`, `"1M"`, `"3M"`, `"6M"`, `"1A"`, `"all"`.
+    ///                 Defaults to `"1M"` when `None`.
+    /// * `timeframe` — bar size: `"1Min"`, `"5Min"`, `"15Min"`, `"1H"`, `"1D"`.
+    ///                 Defaults to `"1D"` when `None`.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = dollarbill::alpaca::AlpacaClient::from_env()?;
+    /// let history = client.get_portfolio_history(Some("3M"), Some("1D")).await?;
+    /// println!("Max drawdown: {:.1}%", history.max_drawdown_pct() * 100.0);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn get_portfolio_history(
+        &self,
+        period: Option<&str>,
+        timeframe: Option<&str>,
+    ) -> Result<PortfolioHistory, Box<dyn Error>> {
+        let period = period.unwrap_or("1M");
+        let timeframe = timeframe.unwrap_or("1D");
+        let endpoint = format!(
+            "/v2/account/portfolio/history?period={}&timeframe={}&extended_hours=false",
+            period, timeframe
+        );
+        self.get(&endpoint).await
+    }
+
     /// Get a specific order by ID
     pub async fn get_order(&self, order_id: &str) -> Result<Order, Box<dyn Error>> {
         self.get(&format!("/v2/orders/{}", order_id)).await

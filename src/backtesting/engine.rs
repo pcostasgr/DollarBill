@@ -10,6 +10,7 @@ use crate::models::bs_mod::{black_scholes_merton_call, black_scholes_merton_put}
 use crate::market_data::csv_loader::HistoricalDay;
 use crate::portfolio::{PortfolioManager, PortfolioConfig, SizingMethod, AllocationMethod, RiskLimits};
 use crate::strategies::SignalAction;
+use crate::risk::{DailyRiskLimits, GuardAction, check_all as risk_check_all};
 
 /// How the bid-ask spread (and market impact) scales beyond a flat percentage.
 ///
@@ -232,6 +233,15 @@ pub struct BacktestConfig {
     /// CRR binomial tree when pricing American options so early-exercise is
     /// correctly penalised for high-dividend stocks.  Default 0.0 (no dividends).
     pub dividend_yield: f64,
+    /// Intra-day risk guards: daily drawdown circuit breaker and max-daily-trades cap.
+    /// These mirror the same limits enforced by the live bot, so backtested results
+    /// reflect what the live bot would actually have been allowed to do.
+    /// `Default::default()` applies a 5% daily drawdown breaker with no trade cap.
+    pub daily_risk_limits: DailyRiskLimits,
+    /// Maximum notional value of a single new position as a fraction of current
+    /// total equity (e.g. `0.20` = 20%).  Mirrors the Alpaca buying-power check
+    /// done in the live bot.  `None` disables the check (original behaviour).
+    pub max_position_notional_pct: Option<f64>,
 }
 
 impl Default for BacktestConfig {
@@ -251,6 +261,8 @@ impl Default for BacktestConfig {
             short_stop_loss_pct: Some(200.0),  // Stop short when option reaches 3× entry
             use_portfolio_management: false,  // Disabled by default for backward compatibility
             dividend_yield: 0.0,
+            daily_risk_limits: DailyRiskLimits::default(),
+            max_position_notional_pct: None,
         }
     }
 }
@@ -265,6 +277,12 @@ pub struct BacktestEngine {
     /// Exact-precision accounting ledger (parallel to `current_capital`).
     pub ledger: Ledger,
     position_counter: usize,
+    /// Equity recorded at the start of each simulated calendar day (for drawdown guard).
+    start_of_day_equity: f64,
+    /// Number of entries opened on the current simulated calendar day (for trade-cap guard).
+    daily_trades_taken: usize,
+    /// The calendar date of the last simulated day (YYYY-MM-DD string).
+    current_sim_date: String,
 }
 
 impl BacktestEngine {
@@ -291,30 +309,60 @@ impl BacktestEngine {
             None
         };
         
+        let initial = config.initial_capital;
         Self {
-            current_capital: config.initial_capital,
-            ledger: Ledger::new(config.initial_capital),
+            current_capital: initial,
+            ledger: Ledger::new(initial),
             config,
             portfolio_manager,
             positions: Vec::new(),
             trades: Vec::new(),
             equity_curve: EquityCurve::new(),
             position_counter: 0,
+            start_of_day_equity: initial,
+            daily_trades_taken: 0,
+            current_sim_date: String::new(),
         }
     }
     
     /// Create a new backtest engine with custom portfolio configuration
     pub fn new_with_portfolio(config: BacktestConfig, portfolio_config: PortfolioConfig) -> Self {
+        let initial = config.initial_capital;
         Self {
-            current_capital: config.initial_capital,
-            ledger: Ledger::new(config.initial_capital),
+            current_capital: initial,
+            ledger: Ledger::new(initial),
             config,
             portfolio_manager: Some(PortfolioManager::new(portfolio_config)),
             positions: Vec::new(),
             trades: Vec::new(),
             equity_curve: EquityCurve::new(),
             position_counter: 0,
+            start_of_day_equity: initial,
+            daily_trades_taken: 0,
+            current_sim_date: String::new(),
         }
+    }
+
+    /// Advance the simulated calendar to `date`.  Resets per-day counters when
+    /// the date changes — mirrors the live bot's daily-reset logic.
+    fn advance_sim_day(&mut self, date: &str) {
+        if self.current_sim_date != date {
+            self.current_sim_date = date.to_string();
+            let total_equity = self.current_capital + self.unrealized_pnl();
+            self.start_of_day_equity = total_equity;
+            self.daily_trades_taken = 0;
+        }
+    }
+
+    /// Check all intra-day risk guards.  Returns `true` if new entries are allowed.
+    fn risk_guards_allow_entry(&self) -> bool {
+        let total_equity = self.current_capital + self.unrealized_pnl();
+        risk_check_all(
+            self.start_of_day_equity,
+            total_equity,
+            self.daily_trades_taken,
+            &self.config.daily_risk_limits,
+        ).allows_entry()
     }
     
     /// Run backtest on historical data with a simple volatility strategy
@@ -345,7 +393,10 @@ impl BacktestEngine {
             // Don't open new positions if we're too close to the end of backtest
             let days_remaining = historical_data.len().saturating_sub(day_idx + 1);
             let can_trade = days_remaining >= self.config.max_days_hold;
-            
+
+            // Advance simulated day (resets daily counters on date change)
+            self.advance_sim_day(&day.date);
+
             // Update equity curve
             self.update_open_positions(&day.date, spot, &hist_vols, day_idx);
             let total_equity = self.current_capital + self.unrealized_pnl();
@@ -354,7 +405,9 @@ impl BacktestEngine {
             // Generate signals based on volatility
             if let Some(&hist_vol) = hist_vols.get(day_idx) {
                 // Strategy: Buy ATM calls when vol is below threshold
-                if can_trade && hist_vol < volatility_threshold && self.can_open_position() {
+                if can_trade && hist_vol < volatility_threshold
+                    && self.can_open_position()
+                    && self.risk_guards_allow_entry() {
                     self.open_call_position(
                         symbol,
                         spot,
@@ -408,7 +461,10 @@ impl BacktestEngine {
             // (not enough remaining data to properly manage the position)
             let days_remaining = historical_data.len().saturating_sub(day_idx + 1);
             let can_trade = days_remaining >= self.config.max_days_hold;
-            
+
+            // Advance simulated day (resets daily counters on date change)
+            self.advance_sim_day(&day.date);
+
             // Update positions and equity
             self.update_open_positions(&day.date, spot, &hist_vols, day_idx);
             let total_equity = self.current_capital + self.unrealized_pnl();
@@ -420,7 +476,7 @@ impl BacktestEngine {
             // Execute signals
             let current_vol = hist_vols.get(day_idx).copied().unwrap_or(0.25);
             for signal in signals {
-                if can_trade && self.can_open_position() {
+                if can_trade && self.can_open_position() && self.risk_guards_allow_entry() {
                     match signal {
                         SignalAction::BuyCall { strike, days_to_expiry, volatility } => {
                             self.open_call_position(symbol, spot, strike, days_to_expiry, volatility, &day.date, ExerciseStyle::European);
@@ -588,6 +644,7 @@ impl BacktestEngine {
         self.positions.push(position);
         self.trades.push(trade);
         self.position_counter += 1;
+        self.daily_trades_taken += 1;
     }
     
     fn open_put_position(
@@ -681,6 +738,7 @@ impl BacktestEngine {
         self.positions.push(position);
         self.trades.push(trade);
         self.position_counter += 1;
+        self.daily_trades_taken += 1;
     }
     
     fn open_short_call_position(
@@ -764,6 +822,7 @@ impl BacktestEngine {
         self.positions.push(position);
         self.trades.push(trade);
         self.position_counter += 1;
+        self.daily_trades_taken += 1;
     }
     
     fn open_short_put_position(
@@ -848,6 +907,7 @@ impl BacktestEngine {
         self.positions.push(position);
         self.trades.push(trade);
         self.position_counter += 1;
+        self.daily_trades_taken += 1;
     }
     
     // Phase 6: Multi-leg spread position methods
@@ -1051,6 +1111,7 @@ impl BacktestEngine {
         self.positions.push(position);
         self.trades.push(trade);
         self.position_counter += 1;
+        self.daily_trades_taken += 1;
     }
     
     /// Open a stock position (for covered calls)
@@ -1089,6 +1150,7 @@ impl BacktestEngine {
         self.positions.push(position);
         self.trades.push(trade);
         self.position_counter += 1;
+        self.daily_trades_taken += 1;
     }
     
     /// Calculate position size for spreads based on max loss
@@ -1415,7 +1477,17 @@ impl BacktestEngine {
         if !self.can_open_position() {
             return false;
         }
-        
+
+        // ── Buying-power / notional cap (mirrors live bot's order_cost > buying_power check) ──
+        if let Some(max_pct) = self.config.max_position_notional_pct {
+            let total_equity = self.current_capital + self.unrealized_pnl();
+            let order_notional = option_price * contracts.abs() as f64 * 100.0;
+            let allowed_notional = total_equity * max_pct;
+            if order_notional > allowed_notional {
+                return false;
+            }
+        }
+
         // If portfolio management enabled, check risk limits
         if let Some(ref manager) = self.portfolio_manager {
             let decision = manager.can_take_position(symbol, option_price, volatility, contracts);

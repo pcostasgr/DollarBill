@@ -3,9 +3,11 @@
 
 use dollarbill::backtesting::{BacktestEngine, BacktestConfig, SignalAction, TradingCosts, SlippageModel, PartialFillModel};
 use dollarbill::market_data::csv_loader::load_csv_closes;
+use dollarbill::strategies::matching::StrategyMatcher;
 use serde::Deserialize;
 use std::error::Error;
 use std::fs;
+use std::sync::Arc;
 
 // Configuration structures
 #[derive(Debug, Deserialize)]
@@ -538,69 +540,160 @@ fn backtest_symbol(symbol: &str, config: &StrategyConfig) -> Result<(), Box<dyn 
     
     result3.print_summary();
     result3.print_trades(10);
-    
+
+    // ── Strategy 4: Personality-Matched (StrategyMatcher) ────────────────────────
+    // This strategy uses the same classification + signal-generation path as the
+    // live bot (personality_based_bot.rs), closing the backtest-vs-live gap (Fix 2.1).
+    println!("\n\n📊 STRATEGY 4: Personality-Matched (StrategyMatcher — same path as live bot)");
+    let config_personality = BacktestConfig {
+        initial_capital: config.strategies.medium_term.initial_capital,
+        trading_costs: TradingCosts {
+            commission_per_contract: config.backtest.commission_per_trade,
+            bid_ask_spread_percent: 0.5,
+            slippage_model: SlippageModel::Fixed,
+            ..TradingCosts::default()
+        },
+        risk_free_rate: config.backtest.risk_free_rate,
+        max_positions: config.backtest.max_positions,
+        position_size_pct: config.backtest.position_size_pct,
+        days_to_expiry: config.strategies.medium_term.days_to_expiry,
+        max_days_hold: config.strategies.medium_term.max_days_hold,
+        stop_loss_pct: Some(config.backtest.stop_loss_pct),
+        take_profit_pct: Some(config.backtest.take_profit_pct),
+        use_portfolio_management: false,
+        ..BacktestConfig::default()
+    };
+
+    // Classify the symbol once (uses full history — appropriate for a stable
+    // per-symbol personality label, not a per-bar look-ahead indicator).
+    let strategy4_arc: Option<Arc<Box<dyn dollarbill::strategies::TradingStrategy>>> =
+        match StrategyMatcher::build_from_backtests(&[symbol.to_string()]) {
+            Ok(mut matcher) => {
+                match matcher.get_optimal_strategy(symbol) {
+                    Ok(strat) => {
+                        println!("  🧠 Personality-matched strategy: {}", strat.name());
+                        Some(Arc::new(strat))
+                    }
+                    Err(e) => {
+                        println!("  ⚠️  Could not get optimal strategy for {}: {}", symbol, e);
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                println!("  ⚠️  StrategyMatcher classification failed for {}: {}", symbol, e);
+                None
+            }
+        };
+
+    let result4 = if let Some(strat) = strategy4_arc {
+        let mut engine4 = BacktestEngine::new(config_personality);
+        let historical_data_clone4 = historical_data.clone();
+        engine4.run_with_signals(
+            symbol,
+            historical_data.clone(),
+            move |sym, spot, day_idx, hist_vols| {
+                if day_idx < 20 {
+                    return vec![];
+                }
+                // Use rolling 20-day hist vol as a proxy for both market IV and model IV.
+                // The strategy's IV-edge logic (market_iv - model_iv) will be near-zero,
+                // so only regime/momentum signals fire — mirroring the live bot's
+                // behaviour when Heston recalibration hasn't diverged from hist vol.
+                let hist_vol = hist_vols.get(day_idx).copied().unwrap_or(0.25);
+                // Compute a shorter 5-day average vol as a rough "model IV" proxy
+                // so vol-edge strategies (e.g. CashSecuredPuts) can fire.
+                let short_vol: f64 = if day_idx >= 5 {
+                    let start = day_idx - 5;
+                    let slice = &hist_vols[start..=day_idx];
+                    slice.iter().copied().sum::<f64>() / slice.len() as f64
+                } else { hist_vol };
+                let _ = &historical_data_clone4[..=day_idx];
+                let raw_signals = strat.generate_signals(sym, spot, hist_vol, short_vol, hist_vol);
+                raw_signals.into_iter().map(|ts| ts.action).collect()
+            },
+        )
+    } else {
+        // Fallback: empty result (classification failed)
+        BacktestEngine::new(BacktestConfig { initial_capital: config.strategies.medium_term.initial_capital, ..BacktestConfig::default() })
+            .run_with_signals(symbol, vec![], |_, _, _, _| vec![])
+    };
+
+    result4.print_summary();
+    result4.print_trades(10);
+
     // Compare strategies
-    println!("\n\n📈 HOLDING PERIOD COMPARISON - {}", symbol);
-    println!("{}", "=".repeat(80));
-    println!("{:<30} {:>15} {:>15} {:>15}",
-             "Metric", "Short (14d)", "Medium (30d)", "Long (60d)");
-    println!("{}", "-".repeat(80));
+    println!("\n\n📈 STRATEGY COMPARISON — {}", symbol);
+    println!("{}", "=".repeat(100));
+    println!("{:<30} {:>13} {:>13} {:>13} {:>20}",
+             "Metric", "Short (14d)", "Medium (30d)", "Long (60d)", "Personality-Matched");
+    println!("{}", "-".repeat(100));
     
-    println!("{:<30} {:>14.2}% {:>14.2}% {:>14.2}%",
+    println!("{:<30} {:>12.2}% {:>12.2}% {:>12.2}% {:>19.2}%",
              "Total Return",
              result.metrics.total_return_pct,
              result2.metrics.total_return_pct,
-             result3.metrics.total_return_pct);
-    
-    println!("{:<30} {:>15.2} {:>15.2} {:>15.2}",
+             result3.metrics.total_return_pct,
+             result4.metrics.total_return_pct);
+
+    println!("{:<30} {:>13.2} {:>13.2} {:>13.2} {:>20.2}",
              "Sharpe Ratio",
              result.metrics.sharpe_ratio,
              result2.metrics.sharpe_ratio,
-             result3.metrics.sharpe_ratio);
-    
-    println!("{:<30} {:>14.2}% {:>14.2}% {:>14.2}%",
+             result3.metrics.sharpe_ratio,
+             result4.metrics.sharpe_ratio);
+
+    println!("{:<30} {:>12.2}% {:>12.2}% {:>12.2}% {:>19.2}%",
              "Win Rate",
              result.metrics.win_rate,
              result2.metrics.win_rate,
-             result3.metrics.win_rate);
-    
-    println!("{:<30} {:>14.2}% {:>14.2}% {:>14.2}%",
+             result3.metrics.win_rate,
+             result4.metrics.win_rate);
+
+    println!("{:<30} {:>12.2}% {:>12.2}% {:>12.2}% {:>19.2}%",
              "Max Drawdown",
              result.metrics.max_drawdown_pct,
              result2.metrics.max_drawdown_pct,
-             result3.metrics.max_drawdown_pct);
-    
-    println!("{:<30} {:>15} {:>15} {:>15}",
+             result3.metrics.max_drawdown_pct,
+             result4.metrics.max_drawdown_pct);
+
+    println!("{:<30} {:>13} {:>13} {:>13} {:>20}",
              "Total Trades",
              result.metrics.total_trades,
              result2.metrics.total_trades,
-             result3.metrics.total_trades);
-    
-    println!("{:<30} {:>15.2} {:>15.2} {:>15.2}",
+             result3.metrics.total_trades,
+             result4.metrics.total_trades);
+
+    println!("{:<30} {:>13.2} {:>13.2} {:>13.2} {:>20.2}",
              "Avg Days Held",
              result.metrics.avg_days_held,
              result2.metrics.avg_days_held,
-             result3.metrics.avg_days_held);
-    
-    println!("{:<30} {:>15.2} {:>15.2} {:>15.2}",
+             result3.metrics.avg_days_held,
+             result4.metrics.avg_days_held);
+
+    println!("{:<30} {:>13.2} {:>13.2} {:>13.2} {:>20.2}",
              "Profit Factor",
              result.metrics.profit_factor,
              result2.metrics.profit_factor,
-             result3.metrics.profit_factor);
-    
-    println!("{}", "=".repeat(80));
-    
-    // Determine best holding period
+             result3.metrics.profit_factor,
+             result4.metrics.profit_factor);
+
+    println!("{}", "=".repeat(100));
+
+    // Determine best strategy
     let best_sharpe = result.metrics.sharpe_ratio
         .max(result2.metrics.sharpe_ratio)
-        .max(result3.metrics.sharpe_ratio);
-    
+        .max(result3.metrics.sharpe_ratio)
+        .max(result4.metrics.sharpe_ratio);
+
     if result.metrics.sharpe_ratio == best_sharpe {
         println!("🏆 WINNER: Short-Term (14-day) - Best Sharpe Ratio: {:.2}", best_sharpe);
     } else if result2.metrics.sharpe_ratio == best_sharpe {
         println!("🏆 WINNER: Medium-Term (30-day) - Best Sharpe Ratio: {:.2}", best_sharpe);
-    } else {
+    } else if result3.metrics.sharpe_ratio == best_sharpe {
         println!("🏆 WINNER: Long-Term (60-day) - Best Sharpe Ratio: {:.2}", best_sharpe);
+    } else {
+        println!("🏆 WINNER: Personality-Matched - Best Sharpe Ratio: {:.2}", best_sharpe);
     }
     
     Ok(())

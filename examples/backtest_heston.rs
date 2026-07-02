@@ -65,7 +65,7 @@ struct LongTermConfig {
 }
 
 // Heston parameters structure
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 struct HestonParamsLocal {
     kappa: f64,
     theta: f64,
@@ -152,12 +152,127 @@ fn calculate_historical_volatility(prices: &[HistoricalDay]) -> f64 {
     daily_vol * (252.0_f64).sqrt() * 100.0  // Return as percentage
 }
 
-// Load Heston parameters for a symbol
+// Load Heston parameters for a symbol — used only for initial guess / fallback.
 fn load_heston_params(symbol: &str) -> Result<HestonCalibrationData, Box<dyn Error>> {
     let filename = format!("data/{}_heston_params.json", symbol.to_lowercase());
     let content = fs::read_to_string(&filename)?;
     let params: HestonCalibrationData = serde_json::from_str(&content)?;
     Ok(params)
+}
+
+/// Estimate Heston-like parameters from a rolling window of price history ending at
+/// `prices[..=up_to_index]`.  Only data that would be available at the simulated
+/// trade date is used — **no look-ahead**.
+///
+/// Method: moment-matching on the realized variance series.
+/// - `v0`    = short-window (21-day) realised variance
+/// - `theta` = long-window (252-day) realised variance  
+/// - `kappa` = Yule-Walker AR(1) mean-reversion speed of the 21-day rolling variance
+/// - `sigma` = standard deviation of the 21-day rolling variance series (vol-of-vol)
+/// - `rho`   = Pearson correlation between daily returns and daily |return| changes
+///             (proxy for the spot-vol correlation)
+///
+/// Falls back to `fallback` when there is insufficient history.
+fn estimate_rolling_heston_params(
+    prices: &[HistoricalDay],
+    up_to_index: usize,
+    fallback: &HestonParamsLocal,
+) -> HestonParamsLocal {
+    const SHORT_WIN: usize = 21;
+    const LONG_WIN: usize = 252;
+    const VAR_WIN: usize = 63; // 3-month window for kappa/sigma estimation
+
+    let end = up_to_index + 1; // exclusive upper bound
+    if end < SHORT_WIN + 2 {
+        return fallback.clone();
+    }
+
+    let slice = &prices[..end];
+
+    // Daily log-returns
+    let returns: Vec<f64> = slice
+        .windows(2)
+        .map(|w| (w[1].close / w[0].close).ln())
+        .collect();
+
+    if returns.len() < SHORT_WIN {
+        return fallback.clone();
+    }
+
+    // ── v0: short-window realised variance ──────────────────────────────
+    let short_slice = &returns[returns.len().saturating_sub(SHORT_WIN)..];
+    let short_mean = short_slice.iter().sum::<f64>() / short_slice.len() as f64;
+    let v0 = (short_slice.iter().map(|r| (r - short_mean).powi(2)).sum::<f64>()
+        / short_slice.len() as f64)
+        * 252.0; // annualise
+    let v0 = v0.max(1e-6);
+
+    // ── theta: long-window realised variance ────────────────────────────
+    let long_slice = &returns[returns.len().saturating_sub(LONG_WIN)..];
+    let long_mean = long_slice.iter().sum::<f64>() / long_slice.len() as f64;
+    let theta = (long_slice.iter().map(|r| (r - long_mean).powi(2)).sum::<f64>()
+        / long_slice.len() as f64)
+        * 252.0;
+    let theta = theta.max(1e-6);
+
+    // ── Rolling 21-day variance series (for kappa and sigma) ────────────
+    let var_end = returns.len();
+    let var_start = var_end.saturating_sub(VAR_WIN + SHORT_WIN);
+    let mut var_series: Vec<f64> = Vec::new();
+    for j in (var_start + SHORT_WIN)..=var_end {
+        let w = &returns[j.saturating_sub(SHORT_WIN)..j];
+        let m = w.iter().sum::<f64>() / w.len() as f64;
+        let v = (w.iter().map(|r| (r - m).powi(2)).sum::<f64>() / w.len() as f64) * 252.0;
+        var_series.push(v.max(1e-6));
+    }
+
+    // ── kappa: Yule-Walker AR(1) on the variance series ─────────────────
+    let kappa = if var_series.len() >= 4 {
+        let n = var_series.len() as f64;
+        let var_mean = var_series.iter().sum::<f64>() / n;
+        let gamma0: f64 = var_series.iter().map(|v| (v - var_mean).powi(2)).sum::<f64>() / n;
+        let gamma1: f64 = var_series
+            .windows(2)
+            .map(|w| (w[0] - var_mean) * (w[1] - var_mean))
+            .sum::<f64>()
+            / (n - 1.0);
+        // AR(1) coefficient φ; then kappa ≈ -ln(φ) * 252 (daily → annual)
+        let phi = if gamma0 > 1e-12 { (gamma1 / gamma0).clamp(-0.9999, 0.9999) } else { 0.5 };
+        (-phi.ln() * 252.0).clamp(0.1, 20.0)
+    } else {
+        fallback.kappa
+    };
+
+    // ── sigma: annualised std-dev of the rolling variance series ─────────
+    let sigma = if var_series.len() >= 4 {
+        let n = var_series.len() as f64;
+        let vm = var_series.iter().sum::<f64>() / n;
+        let vv = (var_series.iter().map(|v| (v - vm).powi(2)).sum::<f64>() / n).sqrt();
+        // Scale to vol-of-vol units: σ in the Heston SDE is the std dev of √v
+        // Approximation: σ_Heston ≈ std(Δ√v) * √252 / √(θ)
+        (vv * (252.0_f64).sqrt() / theta.sqrt()).clamp(0.05, 3.0)
+    } else {
+        fallback.sigma
+    };
+
+    // ── rho: spot-return vs Δ|return| correlation ────────────────────────
+    let rho = if returns.len() >= SHORT_WIN * 2 {
+        let r_slice = &returns[returns.len().saturating_sub(SHORT_WIN * 2)..];
+        let abs_ret: Vec<f64> = r_slice.iter().map(|r| r.abs()).collect();
+        let d_abs: Vec<f64> = abs_ret.windows(2).map(|w| w[1] - w[0]).collect();
+        let rets_trim = &r_slice[1..]; // align with d_abs
+        let n = d_abs.len() as f64;
+        let mr = rets_trim.iter().sum::<f64>() / n;
+        let md = d_abs.iter().sum::<f64>() / n;
+        let cov: f64 = rets_trim.iter().zip(d_abs.iter()).map(|(r, d)| (r - mr) * (d - md)).sum::<f64>() / n;
+        let sr = (rets_trim.iter().map(|r| (r - mr).powi(2)).sum::<f64>() / n).sqrt();
+        let sd = (d_abs.iter().map(|d| (d - md).powi(2)).sum::<f64>() / n).sqrt();
+        if sr > 1e-12 && sd > 1e-12 { (cov / (sr * sd)).clamp(-0.9999, 0.9999) } else { fallback.rho }
+    } else {
+        fallback.rho
+    };
+
+    HestonParamsLocal { kappa, theta, sigma, rho, v0 }
 }
 
 // Price option using Heston model
@@ -202,12 +317,13 @@ fn backtest_symbol_with_heston(
     historical_data.reverse();
 
     println!("  Loaded {} days of historical data", historical_data.len());
-    println!("  Using Heston parameters: κ={:.4}, θ={:.4}, σ={:.4}, ρ={:.4}, v₀={:.4}",
+    println!("  Heston fallback params (used only when history < 23 days): κ={:.4}, θ={:.4}, σ={:.4}, ρ={:.4}, v₀={:.4}",
              heston_params.heston_params.kappa,
              heston_params.heston_params.theta,
              heston_params.heston_params.sigma,
              heston_params.heston_params.rho,
              heston_params.heston_params.v0);
+    println!("  ⚡ Rolling calibration active — params re-estimated per trade date from trailing price history");
 
     // Measure historical volatility to select appropriate strategy
     let hist_vol = calculate_historical_volatility(&historical_data);
@@ -336,14 +452,19 @@ where
 
             // Check exit conditions
             if days_held >= pos.max_hold_days as f64 {
-                // Exit position using Heston pricing
+                // Exit position: reprice with rolling params as of exit date
+                let rolling_exit_params = estimate_rolling_heston_params(
+                    historical_data,
+                    i,
+                    &heston_params.heston_params,
+                );
                 let time_to_expiry = (pos.expiry_days as f64 - days_held) / 365.0;
                 let exit_price = price_option_with_heston(
                     current_price,
                     pos.strike,
                     time_to_expiry.max(0.01),
                     config.backtest.risk_free_rate,
-                    &heston_params.heston_params,
+                    &rolling_exit_params,
                     pos.is_call,
                 );
 
@@ -375,14 +496,22 @@ where
         // Check for new signals (halt new entries if 20% portfolio drawdown reached)
         if positions.len() < config.backtest.max_positions && capital >= initial_cap * 0.80 {
             if let Some(signal) = generate_signal(historical_data, i, lookback_period, &heston_params.symbol) {
-                // Calculate option price using Heston
+                // ── Rolling calibration: only use data up to today ──────────────
+                // This mirrors the lagged information a live trader would have and
+                // eliminates the look-ahead bias from full-period pre-calibrated params.
+                let rolling_params = estimate_rolling_heston_params(
+                    historical_data,
+                    i,
+                    &heston_params.heston_params,
+                );
+                // Calculate option price using rolling (non-look-ahead) Heston params
                 let time_to_expiry = strategy_config.get_days_to_expiry() as f64 / 365.0;
                 let option_price = price_option_with_heston(
                     current_price,
                     signal.strike,
                     time_to_expiry,
                     config.backtest.risk_free_rate,
-                    &heston_params.heston_params,
+                    &rolling_params,
                     signal.is_call,
                 );
 

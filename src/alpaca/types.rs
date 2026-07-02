@@ -233,6 +233,67 @@ impl Position {
     pub fn change_today_f64(&self) -> Option<f64> { self.change_today.parse().ok() }
 }
 
+/// Alpaca portfolio history response — equity/P&L time series.
+///
+/// Returned by `GET /v2/account/portfolio/history`.
+/// The parallel arrays (`timestamp`, `equity`, `profit_loss`, `profit_loss_pct`)
+/// each have the same length; index *i* corresponds to the same point in time.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PortfolioHistory {
+    /// Unix timestamps (seconds) for each data point.
+    pub timestamp: Vec<i64>,
+    /// Portfolio equity at each timestamp.
+    pub equity: Vec<f64>,
+    /// Cumulative P&L (equity – base_value) at each timestamp.
+    pub profit_loss: Vec<f64>,
+    /// Cumulative P&L as a fraction of base_value (e.g. 0.025 = 2.5%).
+    pub profit_loss_pct: Vec<f64>,
+    /// Starting equity used as the P&L reference point.
+    pub base_value: f64,
+    /// Timeframe string returned by Alpaca (e.g. "1D").
+    pub timeframe: String,
+}
+
+impl PortfolioHistory {
+    /// Number of data points in this history.
+    pub fn len(&self) -> usize { self.timestamp.len() }
+
+    /// True when there are no data points.
+    pub fn is_empty(&self) -> bool { self.timestamp.is_empty() }
+
+    /// Maximum drawdown as a fraction (e.g. 0.05 = 5% drawdown).
+    /// Returns 0.0 if the equity series is empty.
+    pub fn max_drawdown_pct(&self) -> f64 {
+        let mut peak = 0.0f64;
+        let mut max_dd = 0.0f64;
+        for &eq in &self.equity {
+            if eq > peak { peak = eq; }
+            if peak > 0.0 {
+                let dd = (peak - eq) / peak;
+                if dd > max_dd { max_dd = dd; }
+            }
+        }
+        max_dd
+    }
+
+    /// Annualised Sharpe ratio computed from daily P&L changes.
+    /// Uses 0% risk-free rate for simplicity. Returns 0.0 with < 2 points.
+    pub fn sharpe_ratio(&self) -> f64 {
+        if self.equity.len() < 2 { return 0.0; }
+        let returns: Vec<f64> = self.equity
+            .windows(2)
+            .filter(|w| w[0] > 0.0)
+            .map(|w| (w[1] - w[0]) / w[0])
+            .collect();
+        if returns.is_empty() { return 0.0; }
+        let mean = returns.iter().sum::<f64>() / returns.len() as f64;
+        let variance = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / returns.len() as f64;
+        let std_dev = variance.sqrt();
+        if std_dev == 0.0 { return 0.0; }
+        mean / std_dev * (252.0_f64).sqrt()
+    }
+}
+
 /// A single leg of a multi-leg options order.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptionsLeg {

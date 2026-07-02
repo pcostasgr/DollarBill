@@ -7,6 +7,7 @@ use dollarbill::market_data::symbols::load_enabled_stocks;
 use dollarbill::strategies::matching::StrategyMatcher;
 use dollarbill::strategies::SignalAction;
 use dollarbill::portfolio::{PortfolioManager, PortfolioConfig, SizingMethod, AllocationMethod, RiskLimits};
+use dollarbill::risk::{DailyRiskLimits, check_daily_drawdown, check_daily_trade_cap};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
@@ -236,15 +237,18 @@ impl PersonalityBasedBot {
         }
 
         // ── Circuit Breaker: daily drawdown kill switch ──
-        let daily_drawdown = if last_equity > 0.0 {
-            (last_equity - equity) / last_equity
-        } else {
-            0.0
-        };
         let max_dd = self.config.trading.risk_management.max_daily_drawdown_pct;
-        if daily_drawdown >= max_dd {
-            println!("🛑 CIRCUIT BREAKER: Daily drawdown {:.2}% exceeds limit {:.2}% — halting trades",
-                daily_drawdown * 100.0, max_dd * 100.0);
+        let max_daily = self.config.trading.risk_management.max_daily_trades;
+        let daily_drawdown_equity = if last_equity > 0.0 { equity } else { last_equity };
+        let dd_limits = DailyRiskLimits {
+            max_daily_drawdown_pct: Some(max_dd),
+            max_daily_trades: Some(max_daily),
+        };
+        let dd_guard = check_daily_drawdown(last_equity.max(1.0), daily_drawdown_equity, &dd_limits);
+        if dd_guard.is_halt() {
+            if let dollarbill::risk::GuardAction::Halt { reason } = &dd_guard {
+                println!("🛑 CIRCUIT BREAKER: {}", reason);
+            }
             return Ok(());
         }
 
@@ -260,8 +264,8 @@ impl PersonalityBasedBot {
             self.daily_trades_taken = 0;
             BotState { date: today, daily_trades_taken: 0 }.save();
         }
-        let max_daily = self.config.trading.risk_management.max_daily_trades;
-        if self.daily_trades_taken >= max_daily {
+        let tc_guard = check_daily_trade_cap(self.daily_trades_taken, &dd_limits);
+        if tc_guard.is_halt() {
             println!("🛑 DAILY TRADE LIMIT: {}/{} trades used today — skipping new entries",
                 self.daily_trades_taken, max_daily);
             // Still run the SL/TP checks below — just no new entries
@@ -290,8 +294,57 @@ impl PersonalityBasedBot {
             }
         }
 
-        // 🔥 ACTIVE POSITION MANAGEMENT - Check stop-losses and take-profits
-        println!("\n🔍 Checking Position Management (Stop-Loss/Take-Profit)...");
+        // 🔥 ACTIVE POSITION MANAGEMENT - Check stop-losses, take-profits, and expiry
+        println!("\n🔍 Checking Position Management (Stop-Loss/Take-Profit/Expiry)...");
+
+        // ── Option expiry handler ─────────────────────────────────────────────
+        // Mirror the backtester's close_all_positions() at expiry.
+        // OCC symbol format: ROOT(≤6 chars) YYMMDD(6) C|P(1) STRIKE(8)
+        // e.g. "AAPL  260620C00195000" or compact "QCOM260508P00120000"
+        let today_str = chrono::Local::now().format("%y%m%d").to_string(); // YYMMDD
+        let tomorrow_str = {
+            let tomorrow = chrono::Local::now() + chrono::Duration::days(1);
+            tomorrow.format("%y%m%d").to_string()
+        };
+        for pos in &positions {
+            let sym = &pos.symbol;
+            // Detect OCC option symbol: must be ≥15 chars and contain C or P
+            // preceded by a 6-digit date block.
+            if sym.len() < 15 { continue; }
+            // The date block starts at char 6 (0-indexed) for standard OCC symbols.
+            // Try both compact (no padding) and padded variants.
+            let date_block: String = sym.chars().filter(|c| c.is_ascii_digit()).take(6).collect();
+            if date_block.len() != 6 { continue; }
+
+            let is_expiring = date_block == today_str || date_block == tomorrow_str;
+            if !is_expiring { continue; }
+
+            let current_price: f64 = pos.current_price.parse().unwrap_or(0.0);
+            println!("   📅 EXPIRY APPROACHING: {} expires {} | Current: ${:.2}",
+                sym, date_block, current_price);
+
+            // Close the position before expiry to avoid assignment/settlement risk.
+            // This mirrors the backtester's ITM settlement logic — we exit at market
+            // rather than accepting assignment on a short leg.
+            print!("      Closing {} before expiry → ", sym);
+            let close_result = match client.close_position(sym).await {
+                Ok(ord) => Ok(ord),
+                Err(_) => client.close_position(sym).await, // one retry
+            };
+            match close_result {
+                Ok(ord) => {
+                    println!("✅ Closed ({})", ord.id);
+                    audit_log(sym, "EXPIRY_CLOSE", 0.0, current_price, &ord.id,
+                        &ord.status, "expiry ≤1 day — closed to avoid assignment");
+                }
+                Err(e) => {
+                    eprintln!("🚨 CRITICAL: Failed to close expiring option {}: {}", sym, e);
+                    audit_log(sym, "EXPIRY_CLOSE_FAILED", 0.0, current_price,
+                        "", "error", &e.to_string());
+                }
+            }
+        }
+
         for pos in &positions {
             let symbol = &pos.symbol;
             let entry_price: f64 = pos.avg_entry_price.parse().unwrap_or(0.0);
@@ -309,7 +362,7 @@ impl PersonalityBasedBot {
             let _unrealized_pl: f64 = pos.unrealized_pl.parse().unwrap_or(0.0);
             let pl_pct = if entry_price > 0.0 { 
                 (current_price - entry_price) / entry_price 
-            } else { 
+            } else {
                 0.0 
             };
 
@@ -383,7 +436,7 @@ impl PersonalityBasedBot {
             }
 
             // Skip new entries if daily trade limit is reached
-            if self.daily_trades_taken >= max_daily && !position_map.contains_key(symbol) {
+            if tc_guard.is_halt() && !position_map.contains_key(symbol) {
                 continue;
             }
 
