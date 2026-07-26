@@ -401,6 +401,9 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
         roll_dte_days:         bot_cfg.roll_dte_days,
         max_rolls:             bot_cfg.max_rolls,
         reentry_cooldown_secs: 300,
+        credit_target_pct:     0.50,  // close short options at 50% credit captured
+        roll_before_dte:       21,    // roll at 21 DTE
+        risk_free_rate:        0.045, // ~4.5% risk-free rate for BSM repricing
     });
     // Re-entry cooldown: after closing a position, block new entries for 5 min
     let mut cooldown = CooldownTracker::new(300);
@@ -549,6 +552,14 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                             expires_at:    pos.expires_at.clone(),
                             entry_date:    pos.entry_date.clone(),
                             roll_count:    pos.roll_count,
+                            // Derive strike and call/put type from OCC symbol
+                            // so BSM repricing uses the actual contract parameters.
+                            strike: pos.occ_symbol.as_deref().and_then(|occ| {
+                                occ.get(13..21).and_then(|s| s.parse::<f64>().ok()).map(|v| v / 1000.0)
+                            }),
+                            is_call: pos.occ_symbol.as_deref().map(|occ| {
+                                occ.chars().nth(12) == Some('C')
+                            }),
                         };
                         match position_monitor.evaluate(&snapshot, price, sigma) {
                             CloseDecision::Hold => {

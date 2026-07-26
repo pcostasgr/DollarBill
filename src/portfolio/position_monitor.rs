@@ -8,6 +8,7 @@
 //! inline.
 
 use chrono::{NaiveDate, Utc};
+use crate::models::bs_mod::{black_scholes_call, black_scholes_put};
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -31,19 +32,30 @@ pub struct PositionMonitorConfig {
     pub max_rolls: u32,
     /// Seconds to block re-entry after closing a position.
     pub reentry_cooldown_secs: u64,
+    /// Close short options when credit captured ≥ this fraction of entry premium.
+    /// Set to 0.0 to disable. Suggested default: 0.50 (close at 50% profit).
+    pub credit_target_pct: f64,
+    /// Roll or close short options when DTE ≤ this value regardless of P&L.
+    /// Set to 0 to disable. Suggested default: 21 (roll at 21 DTE).
+    pub roll_before_dte: i64,
+    /// Risk-free rate used for BSM option repricing (annualised, e.g. 0.045 = 4.5%).
+    pub risk_free_rate: f64,
 }
 
 impl Default for PositionMonitorConfig {
     fn default() -> Self {
         Self {
-            profit_target_pct:    0.25,
-            stop_loss_pct:        2.0,
-            max_position_days:    45,
-            itm_proximity_pct:    0.03,
-            roll_trigger_pct:     0.05,
-            roll_dte_days:        30,
-            max_rolls:            2,
-            reentry_cooldown_secs: 300,
+            profit_target_pct:      0.25,
+            stop_loss_pct:          2.0,
+            max_position_days:      45,
+            itm_proximity_pct:      0.03,
+            roll_trigger_pct:       0.05,
+            roll_dte_days:          30,
+            max_rolls:              2,
+            reentry_cooldown_secs:  300,
+            credit_target_pct:      0.50,
+            roll_before_dte:        21,
+            risk_free_rate:         0.045,
         }
     }
 }
@@ -69,6 +81,10 @@ pub enum CloseReason {
     StaleRecord,
     /// Max roll count reached and spot is still in the roll zone.
     MaxRollsReached,
+    /// 50% of credit captured (or configured threshold) — standard short-premium exit.
+    CreditTargetReached { pct_captured: f64 },
+    /// DTE has reached the configured early-exit threshold (e.g. 21 DTE).
+    EarlyDteRoll { dte: i64 },
 }
 
 /// Decision produced by [`PositionMonitor::evaluate`].
@@ -101,6 +117,11 @@ pub struct PositionSnapshot {
     pub entry_date: String,
     /// Number of rolls already executed.
     pub roll_count: i32,
+    /// Strike price of this option contract. Used for BSM repricing.
+    /// If `None`, falls back to the ATM proxy heuristic for P&L checks.
+    pub strike: Option<f64>,
+    /// `true` = call, `false` = put. Used together with `strike` for BSM repricing.
+    pub is_call: Option<bool>,
 }
 
 // ── Monitor ───────────────────────────────────────────────────────────────────
@@ -137,12 +158,50 @@ impl PositionMonitor {
                     return CloseDecision::Close(CloseReason::OneDte);
                 }
 
-                // ── 2. P&L check (ATM repricing heuristic) ─────────────────
+                // ── 2. Early-DTE roll (Fix 2.3 — e.g. 21-DTE rule) ─────────
+                if self.config.roll_before_dte > 0 && remaining <= self.config.roll_before_dte {
+                    if pos.roll_count < self.config.max_rolls as i32 {
+                        return CloseDecision::Roll {
+                            new_strike:   pos.strike.unwrap_or(spot),
+                            new_dte_days: self.config.roll_dte_days,
+                            roll_number:  pos.roll_count + 1,
+                        };
+                    } else {
+                        return CloseDecision::Close(CloseReason::EarlyDteRoll { dte: remaining });
+                    }
+                }
+
+                // ── 3. P&L check — BSM repricing when strike is known ───────
                 if let Some(entry_premium) = pos.entry_premium.filter(|&p| p > 0.0) {
                     let remaining_t = (remaining as f64 / 365.0).max(1.0 / 365.0);
-                    // Approximate current mark as ATM intrinsic + time value proxy
-                    let current_val = spot * sigma * remaining_t.sqrt();
+
+                    // Prefer BSM repricing if we have the strike and type.
+                    let current_val = match (pos.strike, pos.is_call) {
+                        (Some(k), Some(is_call)) if k > 0.0 && sigma > 0.0 => {
+                            let greeks = if is_call {
+                                black_scholes_call(spot, k, remaining_t, self.config.risk_free_rate, sigma)
+                            } else {
+                                black_scholes_put(spot, k, remaining_t, self.config.risk_free_rate, sigma)
+                            };
+                            greeks.price
+                        }
+                        // Fallback: ATM proxy heuristic (original code).
+                        _ => spot * sigma * remaining_t.sqrt(),
+                    };
                     let pct = current_val / entry_premium;
+
+                    // Fix 2.3: 50%-credit target (credit captured ≥ credit_target_pct).
+                    // For a short option, current_val < entry_premium means profit.
+                    // pct = current_val / entry_premium; pct < (1 - credit_target_pct) → close.
+                    if self.config.credit_target_pct > 0.0 {
+                        let threshold = 1.0 - self.config.credit_target_pct;
+                        if pct <= threshold {
+                            let pct_captured = 1.0 - pct;
+                            return CloseDecision::Close(CloseReason::CreditTargetReached {
+                                pct_captured,
+                            });
+                        }
+                    }
 
                     if pct <= self.config.profit_target_pct {
                         return CloseDecision::Close(CloseReason::ProfitTarget {
@@ -156,7 +215,7 @@ impl PositionMonitor {
                     }
                 }
 
-                // ── 3. ITM proximity + roll logic ────────────────────────────
+                // ── 4. ITM proximity + roll logic (puts AND calls) ───────────
                 let decision = self.evaluate_roll_or_itm(pos, spot, remaining);
                 if decision != CloseDecision::Hold {
                     return decision;
@@ -181,11 +240,15 @@ impl PositionMonitor {
         CloseDecision::Hold
     }
 
-    /// Evaluate ITM-proximity and roll zone for short puts.
+    /// Evaluate ITM-proximity and roll zone for **both short puts and short calls**.
     ///
-    /// Thresholds are measured above the strike (OTM put approaching K from above):
-    /// - Roll zone:  `K*(1+itm_proximity) < spot ≤ K*(1+roll_trigger)` → Roll, protect while still OTM
-    /// - ITM zone:   `spot ≤ K*(1+itm_proximity)` → emergency Close
+    /// **Short put** (OCC `P`): spot falls toward strike from above.
+    /// - Roll zone:  `K*(1 + roll_trigger) > spot > K*(1 + itm_proximity)` → Roll
+    /// - ITM zone:   `spot ≤ K*(1 + itm_proximity)` → emergency Close
+    ///
+    /// **Short call** (OCC `C`): spot rises toward strike from below.
+    /// - Roll zone:  `K*(1 - roll_trigger) < spot < K*(1 - itm_proximity)` → Roll
+    /// - ITM zone:   `spot ≥ K*(1 - itm_proximity)` → emergency Close
     ///
     /// Returns `CloseDecision::Hold` if no action is needed.
     fn evaluate_roll_or_itm(&self, pos: &PositionSnapshot, spot: f64, _remaining_dte: i64) -> CloseDecision {
@@ -197,33 +260,55 @@ impl PositionMonitor {
         };
 
         // OCC format: ROOT(6) YYMMDD(6) C|P(1) STRIKE(8 digits × 1000)
-        let is_put = occ.len() >= 13 && occ.chars().nth(12) == Some('P');
-        if !is_put { return CloseDecision::Hold; }
+        let opt_char = occ.chars().nth(12).unwrap_or('X');
+        let is_put  = opt_char == 'P';
+        let is_call = opt_char == 'C';
+        if !is_put && !is_call { return CloseDecision::Hold; }
 
         let strike = match occ.get(13..21).and_then(|s| s.parse::<f64>().ok()) {
             Some(v) => v / 1000.0,
             None => return CloseDecision::Hold,
         };
 
-        // Thresholds above strike — the put is OTM when spot > strike.
-        // As spot falls from above, it first crosses roll_threshold, then itm_threshold.
-        let roll_threshold = strike * (1.0 + self.config.roll_trigger_pct);
-        let itm_threshold  = strike * (1.0 + self.config.itm_proximity_pct);
+        if is_put {
+            // Thresholds above strike — the put is OTM when spot > strike.
+            let roll_threshold = strike * (1.0 + self.config.roll_trigger_pct);
+            let itm_threshold  = strike * (1.0 + self.config.itm_proximity_pct);
 
-        if spot <= itm_threshold {
-            // Spot is within itm_proximity of strike — too dangerous to roll
-            return CloseDecision::Close(CloseReason::ItmProximity { spot, strike });
+            if spot <= itm_threshold {
+                return CloseDecision::Close(CloseReason::ItmProximity { spot, strike });
+            }
+            if spot <= roll_threshold {
+                if pos.roll_count >= self.config.max_rolls as i32 {
+                    return CloseDecision::Close(CloseReason::MaxRollsReached);
+                }
+                return CloseDecision::Roll {
+                    new_strike:   strike,
+                    new_dte_days: self.config.roll_dte_days,
+                    roll_number:  pos.roll_count + 1,
+                };
+            }
         }
 
-        if spot <= roll_threshold {
-            if pos.roll_count >= self.config.max_rolls as i32 {
-                return CloseDecision::Close(CloseReason::MaxRollsReached);
+        if is_call {
+            // Thresholds below strike — the call is OTM when spot < strike.
+            // As spot rises from below, it first crosses roll_threshold, then itm_threshold.
+            let roll_threshold = strike * (1.0 - self.config.roll_trigger_pct);
+            let itm_threshold  = strike * (1.0 - self.config.itm_proximity_pct);
+
+            if spot >= itm_threshold {
+                return CloseDecision::Close(CloseReason::ItmProximity { spot, strike });
             }
-            return CloseDecision::Roll {
-                new_strike:   strike,
-                new_dte_days: self.config.roll_dte_days,
-                roll_number:  pos.roll_count + 1,
-            };
+            if spot >= roll_threshold {
+                if pos.roll_count >= self.config.max_rolls as i32 {
+                    return CloseDecision::Close(CloseReason::MaxRollsReached);
+                }
+                return CloseDecision::Roll {
+                    new_strike:   strike,
+                    new_dte_days: self.config.roll_dte_days,
+                    roll_number:  pos.roll_count + 1,
+                };
+            }
         }
 
         CloseDecision::Hold
@@ -341,10 +426,15 @@ mod tests {
             roll_dte_days: 30,
             max_rolls: 2,
             reentry_cooldown_secs: 300,
+            credit_target_pct: 0.0,   // disabled in unit tests to isolate other checks
+            roll_before_dte: 0,        // disabled in unit tests
+            risk_free_rate: 0.045,
         }
     }
 
     fn put_pos(occ: &str, premium: f64, roll_count: i32, expires_at: &str) -> PositionSnapshot {
+        // strike/is_call left as None so the ATM-proxy fallback is used —
+        // these tests are about roll/ITM logic, not BSM repricing.
         PositionSnapshot {
             symbol: "TEST".to_string(),
             occ_symbol: Some(occ.to_string()),
@@ -352,6 +442,8 @@ mod tests {
             expires_at: Some(expires_at.to_string()),
             entry_date: "2025-01-01T00:00:00Z".to_string(),
             roll_count,
+            strike: None,
+            is_call: None,
         }
     }
 
@@ -447,10 +539,12 @@ mod tests {
         let positions = vec![
             PositionSnapshot { symbol: "A".to_string(), occ_symbol: Some("A     251219P00250000".to_string()),
                 entry_premium: Some(REALISTIC_PREMIUM), expires_at: Some(far_expiry.clone()),
-                entry_date: "2025-01-01T00:00:00Z".to_string(), roll_count: 0 },
+                entry_date: "2025-01-01T00:00:00Z".to_string(), roll_count: 0,
+                strike: Some(250.0), is_call: Some(false) },
             PositionSnapshot { symbol: "B".to_string(), occ_symbol: Some("B     251219P00250000".to_string()),
                 entry_premium: Some(REALISTIC_PREMIUM), expires_at: Some(tomorrow.clone()),
-                entry_date: "2025-01-01T00:00:00Z".to_string(), roll_count: 0 },
+                entry_date: "2025-01-01T00:00:00Z".to_string(), roll_count: 0,
+                strike: Some(250.0), is_call: Some(false) },
         ];
         let mut spots = HashMap::new();
         // K=250; roll_threshold=262.5; itm_threshold=257.5

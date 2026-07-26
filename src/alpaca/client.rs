@@ -123,6 +123,7 @@ impl AlpacaClient {
         }).await
     }
 
+    #[allow(dead_code)] // kept for non-order POSTs if needed in future
     async fn post<T: DeserializeOwned>(&self, endpoint: &str, body: &impl serde::Serialize) -> Result<T, Box<dyn Error>> {
         let url = format!("{}{}", self.base_url, endpoint);
         // Serialize body once so we can reuse it across retries
@@ -137,6 +138,82 @@ impl AlpacaClient {
         self.request_with_retry(|| {
             self.client.delete(&url).headers(self.build_headers())
         }).await
+    }
+
+    /// Generate a unique, stable `client_order_id` for idempotent order submission.
+    ///
+    /// Format: `db-<prefix>-<unix_ms>-<nonce_hex>` — unique per submission attempt
+    /// within the same millisecond but deterministic enough for logging/auditing.
+    fn generate_order_id(prefix: &str) -> String {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let ts_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        // Nonce derived from stack address — cheap, collision-resistant at bot scale.
+        let nonce: u64 = (&ts_ms as *const _ as u64).wrapping_mul(0x9e3779b97f4a7c15);
+        format!("db-{}-{}-{:06x}", prefix, ts_ms, nonce & 0xff_ffff)
+    }
+
+    /// Submit a new order with idempotency protection.
+    ///
+    /// Unlike `post()`, this method:
+    /// 1. Always sets `client_order_id` before the first attempt so Alpaca can
+    ///    deduplicate a repeated identical request at the server side.
+    /// 2. Does **not** retry on network timeout — a timeout on `POST /v2/orders`
+    ///    means the order outcome is ambiguous (the request may already have been
+    ///    received by Alpaca). The next iteration's `get_orders("open")` call will
+    ///    surface the order if it landed.
+    /// 3. Still retries Alpaca 429/50x responses (server-side transient errors
+    ///    that guarantee the request never reached the matching engine).
+    async fn post_order_safe(&self, body: serde_json::Value) -> Result<Order, Box<dyn Error>> {
+        let url = format!("{}/v2/orders", self.base_url);
+        let cid = body.get("client_order_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let mut last_err: Option<String> = None;
+
+        for attempt in 0..=MAX_RETRIES {
+            let result = self.client
+                .post(&url)
+                .headers(self.build_headers())
+                .json(&body)
+                .send()
+                .await;
+
+            match result {
+                Ok(response) => {
+                    let status = response.status();
+                    if status.is_success() {
+                        let data: Order = response.json().await?;
+                        return Ok(data);
+                    }
+                    if is_transient(status) && attempt < MAX_RETRIES {
+                        let error_text = response.text().await.unwrap_or_default();
+                        eprintln!("⚠️  Transient order-API error {} (attempt {}/{}): {}",
+                            status, attempt + 1, MAX_RETRIES, error_text);
+                        let delay_ms = 500 * 2u64.pow(attempt);
+                        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                        last_err = Some(format!("API error {}: {}", status, error_text));
+                        continue;
+                    }
+                    let error_text = response.text().await?;
+                    return Err(format!("API error {}: {}", status, error_text).into());
+                }
+                Err(e) if e.is_timeout() || e.is_connect() => {
+                    // Ambiguous outcome — the order may have been received. Do NOT retry.
+                    return Err(format!(
+                        "ORDER_SUBMISSION_TIMEOUT: outcome unknown \
+                         (client_order_id={cid}). \
+                         Check /v2/orders for this client_order_id before resubmitting."
+                    ).into());
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| "Order submission failed after retries".to_string()).into())
     }
 
     /// Execute an HTTP request with exponential-backoff retry for transient errors.
@@ -360,7 +437,12 @@ impl AlpacaClient {
     /// # }
     /// ```
     pub async fn submit_order(&self, order: &OrderRequest) -> Result<Order, Box<dyn Error>> {
-        self.post("/v2/orders", order).await
+        let mut req = order.clone();
+        if req.client_order_id.is_none() {
+            req.client_order_id = Some(Self::generate_order_id("eq"));
+        }
+        let body = serde_json::to_value(&req)?;
+        self.post_order_safe(body).await
     }
 
     /// Get all orders (optionally filtered by status)
@@ -506,7 +588,12 @@ impl AlpacaClient {
     ///
     /// Each leg's `symbol` must use OCC format — see [`occ_symbol`] to build it.
     pub async fn submit_options_order(&self, order: &OptionsOrderRequest) -> Result<Order, Box<dyn Error>> {
-        self.post("/v2/orders", order).await
+        let mut req = order.clone();
+        if req.client_order_id.is_none() {
+            req.client_order_id = Some(Self::generate_order_id("opt"));
+        }
+        let body = serde_json::to_value(&req)?;
+        self.post_order_safe(body).await
     }
 
     /// Parse an OCC symbol, then query Alpaca's live options chain to find the nearest

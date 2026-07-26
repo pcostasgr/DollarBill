@@ -8,7 +8,6 @@ use dollarbill::strategies::matching::StrategyMatcher;
 use dollarbill::strategies::SignalAction;
 use dollarbill::portfolio::{PortfolioManager, PortfolioConfig, SizingMethod, AllocationMethod, RiskLimits};
 use dollarbill::risk::{DailyRiskLimits, check_daily_drawdown, check_daily_trade_cap};
-use chrono::Timelike;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
@@ -119,6 +118,12 @@ struct RiskManagementConfig {
     /// (likely from an option assignment) is immediately sold at market.
     #[serde(default = "default_sell_assigned_stock")]
     sell_assigned_stock: bool,
+    /// Maximum fraction of account equity that can be at risk on a single underlying
+    /// across all open option positions (count both legs and uncapped spreads).
+    /// Risk is approximated as `notional = avg_entry_price * qty * 100` per position.
+    /// Set to 0.0 to disable (fall back to position-count cap only).
+    #[serde(default = "default_max_risk_capital_per_symbol")]
+    max_risk_capital_per_symbol: f64,
 }
 
 fn default_max_daily_drawdown_pct() -> f64 { 0.05 }
@@ -126,6 +131,7 @@ fn default_max_positions_per_symbol() -> usize { 2 }
 fn default_block_long_premium() -> bool { true }
 fn default_min_momentum_short_put() -> f64 { -0.05 }
 fn default_sell_assigned_stock() -> bool { true }
+fn default_max_risk_capital_per_symbol() -> f64 { 0.04 } // 4% of equity per underlying
 
 #[derive(Debug, Deserialize)]
 struct ExecutionConfig {
@@ -247,23 +253,22 @@ impl PersonalityBasedBot {
             return Ok(());
         }
 
-        // ── Fix #3: Options market window (9:30–16:00 ET) ──────────────────────
-        // Options do NOT trade in extended hours. Even if Alpaca's equity clock
-        // shows "open", we must not submit options orders outside the regular
-        // session (9:30–16:00 ET). We use a UTC offset of -4 h (EDT). In EST
-        // (UTC-5) the window shifts by one hour, but the Alpaca clock check above
-        // already guards the exact boundary, so a ±30-min buffer is safe.
+        // ── Fix #3 / Fix 8: Options market window via Alpaca clock ──────────────
+        // Options do NOT trade in extended hours. Rather than guessing the ET
+        // offset (EDT=UTC-4 vs EST=UTC-5), we parse the clock's `next_close`
+        // timestamp directly. If UTC now is already past the session close, skip.
+        // The Alpaca clock `is_open` guard above already blocks most cases; this
+        // is a belt-and-suspenders check using authoritative Alpaca timestamps.
         {
-            let now_utc_hour = chrono::Utc::now().hour();
-            let now_utc_min  = chrono::Utc::now().minute();
-            // Convert to ET: EDT = UTC-4, EST = UTC-5. Use UTC-4 (EDT) conservatively.
-            let et_minutes = (now_utc_hour * 60 + now_utc_min) as i32 - 4 * 60;
-            let et_minutes = ((et_minutes % (24 * 60)) + 24 * 60) as u32 % (24 * 60);
-            let open_min  = 9 * 60 + 30;   // 09:30 ET
-            let close_min = 16 * 60;        // 16:00 ET
-            if et_minutes < open_min || et_minutes >= close_min {
-                println!("🕐 Options market closed (ET {:02}:{:02}). Skipping iteration.",
-                    et_minutes / 60, et_minutes % 60);
+            use chrono::DateTime;
+            let now_utc = chrono::Utc::now();
+            // next_close is an RFC-3339 string like "2026-07-26T20:00:00Z"
+            let session_closed = DateTime::parse_from_rfc3339(&clock.next_close)
+                .map(|close_ts| now_utc >= close_ts.with_timezone(&chrono::Utc))
+                .unwrap_or(false); // if we can't parse, trust clock.is_open
+            if session_closed {
+                println!("🕐 Options session closed (past Alpaca next_close {}). Skipping iteration.",
+                    clock.next_close);
                 return Ok(());
             }
         }
@@ -388,6 +393,48 @@ impl PersonalityBasedBot {
                     eprintln!("🚨 CRITICAL: Failed to close expiring option {}: {}", sym, e);
                     audit_log(sym, "EXPIRY_CLOSE_FAILED", 0.0, current_price,
                         "", "error", &e.to_string());
+                }
+            }
+        }
+
+        // ── Fix 2.1: Force-close existing long-premium positions ──────────────
+        // `block_long_premium` (Fix #4) only blocks NEW signals — any long
+        // options already in the account keep decaying. If the flag is on, close
+        // them at market now so they stop haemorrhaging theta.
+        // A position is "long-premium" when qty > 0 (long) and the symbol is an
+        // OCC options symbol (≥15 chars, contains a C/P type char at position 12).
+        if self.config.trading.risk_management.block_long_premium {
+            for pos in &positions {
+                let sym = &pos.symbol;
+                if sym.len() < 15 { continue; } // not an option symbol
+                let qty: f64 = pos.qty.parse().unwrap_or(0.0);
+                if qty <= 0.0 { continue; } // short/flat — fine, already credit
+                let opt_type_char = sym.chars().nth(12).unwrap_or('X');
+                if opt_type_char != 'C' && opt_type_char != 'P' { continue; }
+                let current_price: f64 = pos.current_price.parse().unwrap_or(0.0);
+                println!("   🔥 FORCE-CLOSE LONG PREMIUM: {} qty={} — closing long option (block_long_premium=true)", sym, qty);
+                let close_req = OrderRequest {
+                    symbol: sym.clone(),
+                    qty,
+                    side: OrderSide::Sell,
+                    r#type: OrderType::Market,
+                    time_in_force: TimeInForce::Day,
+                    limit_price: None,
+                    stop_price: None,
+                    extended_hours: None,
+                    client_order_id: None,
+                };
+                match client.submit_order(&close_req).await {
+                    Ok(ord) => {
+                        println!("   {} | ✅ Long-premium close submitted ({})", sym, ord.id);
+                        audit_log(sym, "FORCE_CLOSE_LONG_PREMIUM", qty, current_price,
+                            &ord.id, &ord.status, "block_long_premium=true, closing existing long");
+                    }
+                    Err(e) => {
+                        eprintln!("   {} | ❌ Failed to close long-premium position: {}", sym, e);
+                        audit_log(sym, "FORCE_CLOSE_LP_FAILED", qty, current_price,
+                            "", "error", &e.to_string());
+                    }
                 }
             }
         }
@@ -535,17 +582,35 @@ impl PersonalityBasedBot {
                 continue;
             }
 
-            // ── Fix #8: Per-symbol concentration cap ────────────────────────
+            // ── Fix #8 / Fix 2.4: Per-symbol concentration cap (risk-capital aware) ──
             // Count how many open options positions already reference this underlying.
             let sym_prefix = symbol.as_str();
-            let options_for_symbol = positions.iter()
+            let options_for_symbol: Vec<_> = positions.iter()
                 .filter(|p| p.symbol.len() >= 15 && p.symbol.starts_with(sym_prefix))
-                .count();
+                .collect();
+            let position_count = options_for_symbol.len();
             let max_per_sym = self.config.trading.risk_management.max_positions_per_symbol;
-            if options_for_symbol >= max_per_sym {
+            if position_count >= max_per_sym {
                 println!("   {} | ⏭️  Skipping — {}/{} options positions already open for this symbol",
-                    symbol, options_for_symbol, max_per_sym);
+                    symbol, position_count, max_per_sym);
                 continue;
+            }
+
+            // Risk-capital concentration check: sum notional at risk per underlying.
+            // Notional approximation: |entry_price * qty * 100| per position.
+            let cap_pct = self.config.trading.risk_management.max_risk_capital_per_symbol;
+            if cap_pct > 0.0 && equity > 0.0 {
+                let sym_notional: f64 = options_for_symbol.iter().map(|p| {
+                    let entry: f64 = p.avg_entry_price.parse().unwrap_or(0.0);
+                    let qty: f64 = p.qty.parse::<f64>().unwrap_or(0.0).abs();
+                    entry * qty * 100.0 // 1 contract = 100 shares
+                }).sum();
+                let sym_risk_pct = sym_notional / equity;
+                if sym_risk_pct >= cap_pct {
+                    println!("   {} | ⏭️  Skipping — risk capital {:.1}% ≥ cap {:.1}% of equity",
+                        symbol, sym_risk_pct * 100.0, cap_pct * 100.0);
+                    continue;
+                }
             }
 
             // Get the optimal strategy for this stock's personality
