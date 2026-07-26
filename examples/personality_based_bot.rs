@@ -8,6 +8,7 @@ use dollarbill::strategies::matching::StrategyMatcher;
 use dollarbill::strategies::SignalAction;
 use dollarbill::portfolio::{PortfolioManager, PortfolioConfig, SizingMethod, AllocationMethod, RiskLimits};
 use dollarbill::risk::{DailyRiskLimits, check_daily_drawdown, check_daily_trade_cap};
+use chrono::Timelike;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
@@ -102,11 +103,29 @@ struct RiskManagementConfig {
     max_daily_trades: usize,
     #[serde(default = "default_max_daily_drawdown_pct")]
     max_daily_drawdown_pct: f64,
+    /// Max open options positions (across all strikes/expiries) per underlying symbol.
+    /// Prevents concentration like the Jun-Jul QCOM over-trading incident.
+    #[serde(default = "default_max_positions_per_symbol")]
+    max_positions_per_symbol: usize,
+    /// When true (default), `BuyCall`, `BuyPut`, and `BuyStraddle` signals are
+    /// silently dropped. This bot is a short-premium strategy.
+    #[serde(default = "default_block_long_premium")]
+    block_long_premium: bool,
+    /// Minimum 20-day price momentum required to open short-put / cash-secured-put /
+    /// sell-straddle positions. A value of -0.05 means "block if down >5%".
+    #[serde(default = "default_min_momentum_short_put")]
+    min_momentum_short_put: f64,
+    /// When true (default), any plain-equity position that appears in our account
+    /// (likely from an option assignment) is immediately sold at market.
+    #[serde(default = "default_sell_assigned_stock")]
+    sell_assigned_stock: bool,
 }
 
-fn default_max_daily_drawdown_pct() -> f64 {
-    0.05 // 5% default
-}
+fn default_max_daily_drawdown_pct() -> f64 { 0.05 }
+fn default_max_positions_per_symbol() -> usize { 2 }
+fn default_block_long_premium() -> bool { true }
+fn default_min_momentum_short_put() -> f64 { -0.05 }
+fn default_sell_assigned_stock() -> bool { true }
 
 #[derive(Debug, Deserialize)]
 struct ExecutionConfig {
@@ -125,6 +144,9 @@ struct PersonalityBasedBot {
     daily_trades_taken: usize,
     /// The calendar date when `daily_trades_taken` was last reset (YYYY-MM-DD).
     daily_trades_date: String,
+    /// OCC-fingerprint dedup set: prevents the same option leg (symbol+strike+expiry+side)
+    /// from being submitted twice in one iteration cycle. Reset each iteration.
+    submitted_this_iteration: std::collections::HashSet<String>,
 }
 
 impl PersonalityBasedBot {
@@ -184,6 +206,7 @@ impl PersonalityBasedBot {
             portfolio_manager,
             daily_trades_taken,
             daily_trades_date,
+            submitted_this_iteration: std::collections::HashSet::new(),
         }
     }
 
@@ -223,6 +246,30 @@ impl PersonalityBasedBot {
             println!("🕐 Market is closed. Next open: {}  Skipping iteration.", clock.next_open);
             return Ok(());
         }
+
+        // ── Fix #3: Options market window (9:30–16:00 ET) ──────────────────────
+        // Options do NOT trade in extended hours. Even if Alpaca's equity clock
+        // shows "open", we must not submit options orders outside the regular
+        // session (9:30–16:00 ET). We use a UTC offset of -4 h (EDT). In EST
+        // (UTC-5) the window shifts by one hour, but the Alpaca clock check above
+        // already guards the exact boundary, so a ±30-min buffer is safe.
+        {
+            let now_utc_hour = chrono::Utc::now().hour();
+            let now_utc_min  = chrono::Utc::now().minute();
+            // Convert to ET: EDT = UTC-4, EST = UTC-5. Use UTC-4 (EDT) conservatively.
+            let et_minutes = (now_utc_hour * 60 + now_utc_min) as i32 - 4 * 60;
+            let et_minutes = ((et_minutes % (24 * 60)) + 24 * 60) as u32 % (24 * 60);
+            let open_min  = 9 * 60 + 30;   // 09:30 ET
+            let close_min = 16 * 60;        // 16:00 ET
+            if et_minutes < open_min || et_minutes >= close_min {
+                println!("🕐 Options market closed (ET {:02}:{:02}). Skipping iteration.",
+                    et_minutes / 60, et_minutes % 60);
+                return Ok(());
+            }
+        }
+
+        // Reset intra-iteration dedup set for this cycle.
+        self.submitted_this_iteration.clear();
 
         // ── PDT protection ──
         let account_pdt = account.pattern_day_trader;
@@ -345,6 +392,48 @@ impl PersonalityBasedBot {
             }
         }
 
+        // ── Fix #6: Post-assignment stock disposal ────────────────────────────
+        // This bot runs exclusively options strategies. Any plain-equity position
+        // that appears in the account was created by an option assignment (OPASN /
+        // OPEXC). Sell it immediately at market to flatten the unintended delta.
+        if self.config.trading.risk_management.sell_assigned_stock {
+            for pos in &positions {
+                let sym = &pos.symbol;
+                // Plain equity: short symbol (≤6 chars), all alpha/uppercase, no OCC date.
+                let is_plain_equity = sym.len() <= 6
+                    && sym.chars().all(|c| c.is_ascii_alphabetic())
+                    && !self.symbols.contains(sym); // not an intentional equity holding
+                if !is_plain_equity { continue; }
+                let qty: f64 = pos.qty.parse().unwrap_or(0.0);
+                if qty == 0.0 { continue; }
+                let current_price: f64 = pos.current_price.parse().unwrap_or(0.0);
+                println!("   ⚠️  ASSIGNED STOCK: {} qty={:.0} — selling immediately to flatten delta", sym, qty);
+                let sell_req = OrderRequest {
+                    symbol: sym.clone(),
+                    qty: qty.abs(),
+                    side: if qty > 0.0 { OrderSide::Sell } else { OrderSide::Buy },
+                    r#type: OrderType::Market,
+                    time_in_force: TimeInForce::Day,
+                    limit_price: None,
+                    stop_price: None,
+                    extended_hours: None,
+                    client_order_id: None,
+                };
+                match client.submit_order(&sell_req).await {
+                    Ok(ord) => {
+                        println!("   {} | ✅ Assignment liquidation submitted ({})", sym, ord.id);
+                        audit_log(sym, "ASSIGNMENT_LIQUIDATION", qty, current_price,
+                            &ord.id, &ord.status, "auto-sell: assigned from short option");
+                    }
+                    Err(e) => {
+                        eprintln!("   {} | ❌ Failed to liquidate assigned stock: {}", sym, e);
+                        audit_log(sym, "ASSIGNMENT_LIQ_FAILED", qty, current_price,
+                            "", "error", &e.to_string());
+                    }
+                }
+            }
+        }
+
         for pos in &positions {
             let symbol = &pos.symbol;
             let entry_price: f64 = pos.avg_entry_price.parse().unwrap_or(0.0);
@@ -446,6 +535,19 @@ impl PersonalityBasedBot {
                 continue;
             }
 
+            // ── Fix #8: Per-symbol concentration cap ────────────────────────
+            // Count how many open options positions already reference this underlying.
+            let sym_prefix = symbol.as_str();
+            let options_for_symbol = positions.iter()
+                .filter(|p| p.symbol.len() >= 15 && p.symbol.starts_with(sym_prefix))
+                .count();
+            let max_per_sym = self.config.trading.risk_management.max_positions_per_symbol;
+            if options_for_symbol >= max_per_sym {
+                println!("   {} | ⏭️  Skipping — {}/{} options positions already open for this symbol",
+                    symbol, options_for_symbol, max_per_sym);
+                continue;
+            }
+
             // Get the optimal strategy for this stock's personality
             let strategy = match self.matcher.get_optimal_strategy(symbol) {
                 Ok(s) => s,
@@ -535,6 +637,18 @@ impl PersonalityBasedBot {
                 }
             };
 
+            // ── Fix #5: 20-day momentum for short-put gate ───────────────────
+            // Momentum = (price_today / price_20d_ago) - 1.
+            // If we have fewer than 21 bars, treat as flat (0.0) so the gate
+            // does not fire on insufficient data.
+            let momentum_20d: f64 = if prices.len() >= 21 {
+                let old = prices[prices.len() - 21];
+                let new = *prices.last().unwrap_or(&old);
+                if old > 0.0 { new / old - 1.0 } else { 0.0 }
+            } else {
+                0.0
+            };
+
             // Use historical volatility as both market and model IV for now
             // In production, you'd fetch live options data for market IV
             let market_iv = hist_vol;
@@ -560,7 +674,11 @@ impl PersonalityBasedBot {
 
                 // ── Options signals ────────────────────────────────────────────
                 if signal.confidence >= self.config.trading.min_confidence {
-                    match try_submit_options(client, symbol, current_price, &signal.action, signal.confidence).await {
+                    match try_submit_options(
+                        client, symbol, current_price, &signal.action, signal.confidence,
+                        momentum_20d, &self.config.trading.risk_management,
+                        &mut self.submitted_this_iteration,
+                    ).await {
                         Ok(true) => {
                             // Options order submitted — count toward daily limit and move on.
                             acted = true;
@@ -845,13 +963,76 @@ impl PersonalityBasedBot {
 /// Returns `Ok(true)` when an options order was submitted, `Ok(false)` when the action
 /// is not an options signal (caller should fall through to equity handling), and `Err(_)`
 /// when the order construction or API call fails.
+///
+/// Safety gates applied (Fixes #1, #2, #4, #5):
+/// - Fix #1: OCC-fingerprint dedup — prevents the same leg being submitted twice.
+/// - Fix #2: DTE < 1 gate — never open an option on its own expiry day.
+/// - Fix #4: Long-premium blacklist — drops BuyCall, BuyPut, BuyStraddle.
+/// - Fix #5: Momentum gate — blocks short puts / straddles when 20d momentum < threshold.
 async fn try_submit_options(
     client: &AlpacaClient,
     symbol: &str,
     current_price: f64,
     action: &SignalAction,
     confidence: f64,
+    momentum_20d: f64,
+    risk_cfg: &RiskManagementConfig,
+    submitted_fingerprints: &mut std::collections::HashSet<String>,
 ) -> Result<bool, Box<dyn std::error::Error>> {
+    // ── Fix #4: Long-premium blacklist ────────────────────────────────────────
+    if risk_cfg.block_long_premium {
+        let is_long_premium = matches!(
+            action,
+            SignalAction::BuyCall { .. } | SignalAction::BuyPut { .. } | SignalAction::BuyStraddle { .. }
+        );
+        if is_long_premium {
+            println!("   {} | ⛔ BLOCKED: long-premium signal dropped (block_long_premium=true)", symbol);
+            return Ok(false);
+        }
+    }
+
+    /// Extract `days_to_expiry` from any option action variant (returns None for non-options).
+    fn dte_of(action: &SignalAction) -> Option<usize> {
+        match action {
+            SignalAction::BuyCall    { days_to_expiry, .. } => Some(*days_to_expiry),
+            SignalAction::BuyPut     { days_to_expiry, .. } => Some(*days_to_expiry),
+            SignalAction::SellCall   { days_to_expiry, .. } => Some(*days_to_expiry),
+            SignalAction::SellPut    { days_to_expiry, .. } => Some(*days_to_expiry),
+            SignalAction::CashSecuredPut { days_to_expiry, .. } => Some(*days_to_expiry),
+            SignalAction::CoveredCall   { days_to_expiry, .. } => Some(*days_to_expiry),
+            SignalAction::SellStraddle  { days_to_expiry, .. } => Some(*days_to_expiry),
+            SignalAction::BuyStraddle   { days_to_expiry, .. } => Some(*days_to_expiry),
+            SignalAction::IronButterfly { days_to_expiry, .. } => Some(*days_to_expiry),
+            SignalAction::IronCondor    { days_to_expiry, .. } => Some(*days_to_expiry),
+            _ => None,
+        }
+    }
+
+    // ── Fix #2: DTE < 1 gate ──────────────────────────────────────────────────
+    // Never open a new options position on or after its expiry date. The option
+    // will be worth $0 at settlement — a guaranteed loss (GLD 26-Jun incident).
+    if let Some(dte) = dte_of(action) {
+        if dte == 0 {
+            println!("   {} | ⛔ BLOCKED: DTE=0 — option already at/past expiry. Skipping.", symbol);
+            audit_log(symbol, "DTE_BLOCKED", 0.0, current_price, "", "skipped",
+                "DTE=0 (expiry day)");
+            return Ok(false);
+        }
+    }
+
+    // ── Fix #5: Momentum gate for short-put / straddle strategies ────────────
+    let is_short_put_strategy = matches!(
+        action,
+        SignalAction::SellPut { .. } | SignalAction::CashSecuredPut { .. } | SignalAction::SellStraddle { .. }
+    );
+    if is_short_put_strategy && momentum_20d < risk_cfg.min_momentum_short_put {
+        println!("   {} | ⛔ BLOCKED: short-put/straddle blocked — 20d momentum {:.1}% < threshold {:.1}%",
+            symbol, momentum_20d * 100.0, risk_cfg.min_momentum_short_put * 100.0);
+        audit_log(symbol, "MOMENTUM_BLOCKED", 0.0, current_price, "", "skipped",
+            &format!("momentum={:.3}", momentum_20d));
+        return Ok(false);
+    }
+
     /// Build a single-leg market order using the given OCC symbol.
     fn single_leg(occ: String, side: OrderSide) -> OrderRequest {
         OrderRequest {
@@ -867,11 +1048,26 @@ async fn try_submit_options(
         }
     }
 
+    /// Fix #1: fingerprint = "SYMBOL:OCC_SYMBOL:SIDE" — returns false if already submitted.
+    fn dedup_check(fingerprint: &str, set: &mut std::collections::HashSet<String>) -> bool {
+        if set.contains(fingerprint) {
+            false
+        } else {
+            set.insert(fingerprint.to_string());
+            true
+        }
+    }
+
     match action {
         // ── Single-leg directional options ────────────────────────────────────
         SignalAction::BuyCall { strike, days_to_expiry, .. } => {
             let (yy, mm, dd) = AlpacaClient::expiry_from_dte(*days_to_expiry);
             let occ = AlpacaClient::occ_symbol(symbol, yy, mm, dd, true, *strike);
+            let fp = format!("{}:{}:BUY", symbol, occ);
+            if !dedup_check(&fp, submitted_fingerprints) {
+                println!("   {} | ⏭️  DEDUP: {} already submitted this cycle", symbol, occ);
+                return Ok(false);
+            }
             println!("   {} | 🎯 BUY CALL  → {} (conf {:.1}%)", symbol, occ, confidence * 100.0);
             let submitted = client.submit_order(&single_leg(occ, OrderSide::Buy)).await?;
             println!("   {} | ✅ order {} ({})", symbol, submitted.id, submitted.status);
@@ -881,6 +1077,11 @@ async fn try_submit_options(
         SignalAction::BuyPut { strike, days_to_expiry, .. } => {
             let (yy, mm, dd) = AlpacaClient::expiry_from_dte(*days_to_expiry);
             let occ = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, *strike);
+            let fp = format!("{}:{}:BUY", symbol, occ);
+            if !dedup_check(&fp, submitted_fingerprints) {
+                println!("   {} | ⏭️  DEDUP: {} already submitted this cycle", symbol, occ);
+                return Ok(false);
+            }
             println!("   {} | 🎯 BUY PUT   → {} (conf {:.1}%)", symbol, occ, confidence * 100.0);
             let submitted = client.submit_order(&single_leg(occ, OrderSide::Buy)).await?;
             println!("   {} | ✅ order {} ({})", symbol, submitted.id, submitted.status);
@@ -890,6 +1091,11 @@ async fn try_submit_options(
         SignalAction::SellCall { strike, days_to_expiry, .. } => {
             let (yy, mm, dd) = AlpacaClient::expiry_from_dte(*days_to_expiry);
             let occ = AlpacaClient::occ_symbol(symbol, yy, mm, dd, true, *strike);
+            let fp = format!("{}:{}:SELL", symbol, occ);
+            if !dedup_check(&fp, submitted_fingerprints) {
+                println!("   {} | ⏭️  DEDUP: {} already submitted this cycle", symbol, occ);
+                return Ok(false);
+            }
             println!("   {} | 🎯 SELL CALL → {} (conf {:.1}%)", symbol, occ, confidence * 100.0);
             let submitted = client.submit_order(&single_leg(occ, OrderSide::Sell)).await?;
             println!("   {} | ✅ order {} ({})", symbol, submitted.id, submitted.status);
@@ -899,6 +1105,11 @@ async fn try_submit_options(
         SignalAction::SellPut { strike, days_to_expiry, .. } => {
             let (yy, mm, dd) = AlpacaClient::expiry_from_dte(*days_to_expiry);
             let occ = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, *strike);
+            let fp = format!("{}:{}:SELL", symbol, occ);
+            if !dedup_check(&fp, submitted_fingerprints) {
+                println!("   {} | ⏭️  DEDUP: {} already submitted this cycle", symbol, occ);
+                return Ok(false);
+            }
             println!("   {} | 🎯 SELL PUT  → {} (conf {:.1}%)", symbol, occ, confidence * 100.0);
             let submitted = client.submit_order(&single_leg(occ, OrderSide::Sell)).await?;
             println!("   {} | ✅ order {} ({})", symbol, submitted.id, submitted.status);
@@ -910,6 +1121,11 @@ async fn try_submit_options(
         SignalAction::CashSecuredPut { strike, days_to_expiry } => {
             let (yy, mm, dd) = AlpacaClient::expiry_from_dte(*days_to_expiry);
             let occ = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, *strike);
+            let fp = format!("{}:{}:SELL", symbol, occ);
+            if !dedup_check(&fp, submitted_fingerprints) {
+                println!("   {} | ⏭️  DEDUP: {} already submitted this cycle", symbol, occ);
+                return Ok(false);
+            }
             println!("   {} | 🎯 CASH-SECURED PUT → {} (strike {:.2}, conf {:.1}%)",
                 symbol, occ, strike, confidence * 100.0);
             let submitted = client.submit_order(&single_leg(occ, OrderSide::Sell)).await?;
@@ -922,6 +1138,11 @@ async fn try_submit_options(
         SignalAction::CoveredCall { sell_strike, days_to_expiry } => {
             let (yy, mm, dd) = AlpacaClient::expiry_from_dte(*days_to_expiry);
             let occ = AlpacaClient::occ_symbol(symbol, yy, mm, dd, true, *sell_strike);
+            let fp = format!("{}:{}:SELL", symbol, occ);
+            if !dedup_check(&fp, submitted_fingerprints) {
+                println!("   {} | ⏭️  DEDUP: {} already submitted this cycle", symbol, occ);
+                return Ok(false);
+            }
             println!("   {} | 🎯 COVERED CALL → {} (conf {:.1}%)", symbol, occ, confidence * 100.0);
             let submitted = client.submit_order(&single_leg(occ, OrderSide::Sell)).await?;
             println!("   {} | ✅ order {} ({})", symbol, submitted.id, submitted.status);
@@ -934,6 +1155,11 @@ async fn try_submit_options(
             let (yy, mm, dd) = AlpacaClient::expiry_from_dte(*days_to_expiry);
             let call_occ = AlpacaClient::occ_symbol(symbol, yy, mm, dd, true,  *strike);
             let put_occ  = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, *strike);
+            let fp = format!("{}:STRADDLE_SELL:{}{}", symbol, call_occ, put_occ);
+            if !dedup_check(&fp, submitted_fingerprints) {
+                println!("   {} | ⏭️  DEDUP: sell straddle {}/{} already submitted this cycle", symbol, call_occ, put_occ);
+                return Ok(false);
+            }
             println!("   {} | 🎯 SELL STRADDLE → C:{} P:{} (conf {:.1}%)",
                 symbol, call_occ, put_occ, confidence * 100.0);
             let mleg = OptionsOrderRequest {
@@ -964,6 +1190,11 @@ async fn try_submit_options(
             let (yy, mm, dd) = AlpacaClient::expiry_from_dte(*days_to_expiry);
             let call_occ = AlpacaClient::occ_symbol(symbol, yy, mm, dd, true,  *strike);
             let put_occ  = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, *strike);
+            let fp = format!("{}:STRADDLE_BUY:{}{}", symbol, call_occ, put_occ);
+            if !dedup_check(&fp, submitted_fingerprints) {
+                println!("   {} | ⏭️  DEDUP: buy straddle {}/{} already submitted this cycle", symbol, call_occ, put_occ);
+                return Ok(false);
+            }
             println!("   {} | 🎯 BUY STRADDLE → C:{} P:{} (conf {:.1}%)",
                 symbol, call_occ, put_occ, confidence * 100.0);
             let mleg = OptionsOrderRequest {
@@ -996,6 +1227,11 @@ async fn try_submit_options(
             let sp = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, *center_strike);
             let bc = AlpacaClient::occ_symbol(symbol, yy, mm, dd, true,  *center_strike + *wing_width);
             let bp = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, (*center_strike - *wing_width).max(0.01));
+            let fp = format!("{}:IBFLY:{}", symbol, center_strike);
+            if !dedup_check(&fp, submitted_fingerprints) {
+                println!("   {} | ⏭️  DEDUP: iron butterfly {} already submitted this cycle", symbol, center_strike);
+                return Ok(false);
+            }
             println!("   {} | 🎯 IRON BUTTERFLY → wings ±{:.2} (conf {:.1}%)",
                 symbol, wing_width, confidence * 100.0);
             let mleg = OptionsOrderRequest {
@@ -1029,6 +1265,11 @@ async fn try_submit_options(
             let bc = AlpacaClient::occ_symbol(symbol, yy, mm, dd, true,  *buy_call_strike);
             let sp = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, *sell_put_strike);
             let bp = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, *buy_put_strike);
+            let fp = format!("{}:ICONDOR:{}", symbol, sell_call_strike);
+            if !dedup_check(&fp, submitted_fingerprints) {
+                println!("   {} | ⏭️  DEDUP: iron condor {} already submitted this cycle", symbol, sell_call_strike);
+                return Ok(false);
+            }
             println!("   {} | 🎯 IRON CONDOR → SC:{} BC:{} SP:{} BP:{} (conf {:.1}%)",
                 symbol, sc, bc, sp, bp, confidence * 100.0);
             let mleg = OptionsOrderRequest {
@@ -1059,6 +1300,11 @@ async fn try_submit_options(
             let (yy, mm, dd) = AlpacaClient::expiry_from_dte(*days_to_expiry);
             let sc = AlpacaClient::occ_symbol(symbol, yy, mm, dd, true, *sell_strike);
             let bc = AlpacaClient::occ_symbol(symbol, yy, mm, dd, true, *buy_strike);
+            let fp = format!("{}:CCSPREAD:{}_{}", symbol, sell_strike, buy_strike);
+            if !dedup_check(&fp, submitted_fingerprints) {
+                println!("   {} | ⏭️  DEDUP: credit call spread already submitted this cycle", symbol);
+                return Ok(false);
+            }
             println!("   {} | 🎯 CREDIT CALL SPREAD → sell {} / buy {} (conf {:.1}%)",
                 symbol, sc, bc, confidence * 100.0);
             let mleg = OptionsOrderRequest {
@@ -1087,6 +1333,11 @@ async fn try_submit_options(
             let (yy, mm, dd) = AlpacaClient::expiry_from_dte(*days_to_expiry);
             let sp = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, *sell_strike);
             let bp = AlpacaClient::occ_symbol(symbol, yy, mm, dd, false, *buy_strike);
+            let fp = format!("{}:CPSPREAD:{}_{}", symbol, sell_strike, buy_strike);
+            if !dedup_check(&fp, submitted_fingerprints) {
+                println!("   {} | ⏭️  DEDUP: credit put spread already submitted this cycle", symbol);
+                return Ok(false);
+            }
             println!("   {} | 🎯 CREDIT PUT SPREAD → sell {} / buy {} (conf {:.1}%)",
                 symbol, sp, bp, confidence * 100.0);
             let mleg = OptionsOrderRequest {
