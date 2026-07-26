@@ -1,13 +1,109 @@
 # DollarBill — Cumulative Project Review
 
-**Last Updated:** April 11, 2026  
+**Last Updated:** July 26, 2026  
 **Reviewer:** Claude Sonnet 4.6  
-**Scope:** Full codebase audit — 16,316 LOC src, 7,905 LOC tests, 6,678 LOC examples  
-**Build:** Compiles clean. **661 tests pass, 0 fail.** Zero warnings in `src/`.
+**Scope:** Full codebase audit — ~18,000 LOC src, 7,905 LOC tests, 6,678+ LOC examples  
+**Build:** Compiles clean. **682 tests pass, 0 fail, 16 ignored.** Zero warnings in `src/`.
 
-This document merges all review rounds — original Brutal Review, V2, and Reevaluation — into
-a single reference. The current-state sections reflect April 2026. The original pre-fix audits
-are preserved at the bottom for historical context.
+This document merges all review rounds — original Brutal Review, V2, Reevaluation, and the
+July 2026 update — into a single reference. The current-state sections reflect July 2026.
+The original pre-fix audits are preserved at the bottom for historical context.
+
+---
+
+## July 2026 Update — Post-April Changes
+
+### What Was Shipped (April 12 – July 26, 2026)
+
+**Iron Condor Backtest — Variants A–G (Kill 17)**
+A seven-variant diagnostic backtest was run on the regime-aware iron condor strategy.
+Key finding: `should_enter()` suppression of `HighVol`/`Trending` regime entries (Variant G)
+suppresses 188 entry slots and raises max DD from 18.79% (Variant F) to 20.95%. The delta
+between F and G comes from mid-trade regime changes on condors entered in `LowVol`. Variant F
+(P&L-aware dynamic stop with realistic slippage and entry quality filter at 0.35) is the
+recommended configuration — it balances drawdown protection with fill quality without the
+additional DD cost of full HighVol suppression.
+
+**Portfolio Greeks Engine (Phase 2 Part 1)**
+`src/analysis/portfolio_greeks.rs`: `OptionLeg`, `PortfolioGreeks`, `ExposureVector`,
+`PortfolioLimits`. Vanna/volga/charm computed via closed-form BSM; speed/zomma/color via
+finite difference. 20-leg book reprices in ~90 µs (22× under the 2 ms budget). Kill tests
+12–14 pass: regime-aware sizing by vega/delta/theta concentration.
+
+**RegimePipeline + AuditLog (Phase 2 Parts 2–3)**
+`RegimePipeline` wired into the order pipeline. All orders flow through the pipeline before
+submission. `AuditLog` records regime at signal time and at fill time so regime drift between
+signal and execution is detectable. Kill tests 15–16 pass.
+
+**Regime-Adaptive Heston Calibrator**
+ε-insensitive Feller condition enforcement prevents degenerate paths near the boundary.
+Nelder-Mead polish applied after CMA-ES convergence for local refinement. Regime stability
+test added: calibrated params are checked for consistency across consecutive regime windows.
+
+**Backtest-vs-Live Gap Fixes (2.1–2.6)**
+- *2.1*: `backtest_strategy.rs` adds Strategy 4 (Personality-Matched) using
+  `StrategyMatcher::build_from_backtests()` + `get_optimal_strategy()` — same call chain as
+  the live `personality_based_bot`.
+- *2.2*: `src/risk/guards.rs` (new): shared `DailyRiskLimits`, `check_daily_drawdown()`,
+  `check_daily_trade_cap()`, `check_all()`. Both `engine.rs` and the personality bot call
+  the same functions; no drift possible.
+- *2.4*: `backtest_heston.rs` replaces full-window `load_heston_params()` with
+  `estimate_rolling_heston_params()` which re-estimates at each trade date from trailing
+  price history only. **Eliminates look-ahead bias in Heston Sharpe numbers.**
+- *2.5*: `personality_based_bot.rs` adds `EXPIRY_CLOSE` handler that closes positions ≤1 day
+  to expiry at market — mirrors the backtest engine's intrinsic-value settlement.
+- *2.6*: `examples/reconcile_backtest_vs_live.rs` (new): reads `trade_audit.csv`, re-prices
+  each fill with BSM rolling vol, diffs expected vs realised P&L, flags rows >20% divergence.
+
+**Live Bot Safety Guards (13 guards across 2 commits)**
+
+From the Alpaca activities audit (`5d0afb5`):
+1. OCC fingerprint dedup — `submitted_this_iteration` set prevents double-submitting legs.
+2. DTE=0 gate — positions never opened on expiry day (prevents zero-value GLD-style fills).
+3. Explicit ET window check (09:30–16:00 ET) after Alpaca clock — no extended-hours options.
+4. `block_long_premium` flag (default `true`) — drops `BuyCall`/`BuyPut`/`BuyStraddle`.
+5. `min_momentum_short_put` gate (default −5%) — blocks short puts when 20d momentum negative.
+6. `sell_assigned_stock` flag (default `true`) — market-sells equity from option assignment.
+7. `max_positions_per_symbol` cap (default 2) — prevents QCOM-style concentration.
+
+From the consolidated library audit (`a7e1f1d`):
+8. `post_order_safe()` — idempotent order submission with auto-generated `client_order_id`;
+   does **not** retry on timeout (ambiguous outcome), retries Alpaca 429/50x only.
+9. Force-close long-premium positions — each iteration when `block_long_premium=true`, scans
+   open OCC positions with `qty>0` and submits market sell-to-close.
+10. Call-side roll/ITM defense in `position_monitor.rs` — `evaluate_roll_or_itm()` now applies
+    mirrored roll/ITM thresholds as spot rises toward a short-call strike.
+11. BSM-based P&L for SL/TP — `PositionSnapshot` gains `strike`/`is_call` fields; `evaluate()`
+    uses `black_scholes_call/put` when populated; ATM proxy retained as fallback.
+12. 50%-credit target and 21-DTE rules wired into `PositionMonitorConfig`.
+13. `credit_target_pct` (default 0.50) config field for position closing threshold.
+
+All new config fields use `serde` defaults — existing `trading_bot_config.json` files
+continue to work without modification.
+
+**Other Fixes and Features**
+- Finnhub added as a third spot-price connector (`src/market_data/`); connector is
+  configurable via `trading_bot_config.json` (`spot_provider`: `"alpaca"` | `"yfinance"` | `"finnhub"`).
+- Ubuntu/Linux server compatibility: Alpaca price feed fix + SQLite read-only mode.
+- Cross-platform scripts and docs added (`scripts/`, `docs/`).
+- Reporting: fill-time Greeks/IV snapshot, JSON/CSV export, paper trading flag.
+- Yahoo Finance crumb-based auth fixed for options fetch.
+- `serde rename` attrs added to `Trade`/`Quote`/`Snapshot` for Alpaca's abbreviated field names.
+- Stale position cleanup: positions no longer present in Alpaca are removed from local state.
+- Multi-leg OCC order resolution: `ratio_qty=1` per leg (GCD coprime requirement enforced).
+- Circuit breaker pre-flight check fixed; NO SIGNAL log spam reduced.
+- Duplicate position entries and false circuit-breaker trips fixed.
+- Backtest date display fixed; Sharpe ratio overflow on zero-variance returns fixed.
+
+**Test Count (July 2026)**
+| Harness | Passing | Ignored |
+|---|---|---|
+| lib (unit) | 228 | 7 |
+| integration | 364 | 0 |
+| doctests | 64 | 0 |
+| pricing validation | 11 | 2 |
+| other | 15 | 7 |
+| **Total** | **682** | **16** |
 
 ---
 
@@ -193,7 +289,7 @@ Full `clap` subcommand tree replacing the 240-line `main()` monolith:
 
 ---
 
-## Part 4: Module Quality Ratings (April 2026)
+## Part 4: Module Quality Ratings (July 2026)
 
 | Module | LOC | Rating | Notes |
 |---|---|---|---|
@@ -201,33 +297,38 @@ Full `clap` subcommand tree replacing the 240-line `main()` monolith:
 | `models/heston_analytical.rs` | 1,044 | **9/10** | Carr-Madan FFT + GL batch cache; Phase 1 kill-criteria all pass |
 | `models/heston.rs` | 781 | **7/10** | SplitMix64; path sim deduplicated (`is_call: bool`) |
 | `models/american.rs` | 460 | **7/10** | Tree math correct |
-| `backtesting/engine.rs` | 1,485 | **7/10** | ITM settlement correct; real vol params |
+| `backtesting/engine.rs` | ~1,600 | **8/10** | ITM settlement; real vol; DailyRiskLimits guards; look-ahead-free Heston |
 | `backtesting/margin.rs` | 337 | **8/10** | Reg T rules; 15 tests |
 | `strategies/` (all) | ~1,500 | **7/10** | Real signals; all variants tested |
-| `alpaca/client.rs` | 752 | **8/10** | Full OCC routing; 14 tests; parse helpers |
-| `calibration/` | ~800 | **8/10** | CMA-ES + Heston calibration; crash-surface MAE < 0.8% |
+| `alpaca/client.rs` | ~800 | **8/10** | Full OCC routing; idempotent post_order_safe(); parse helpers |
+| `calibration/` | ~800 | **9/10** | CMA-ES + Heston; ε-insensitive Feller; NM polish; regime stability test |
 | `analysis/advanced_classifier.rs` | 905 | **8/10** | Real S/R strength + sector relative vol/momentum |
+| `analysis/portfolio_greeks.rs` | ~350 | **8/10** | vanna/volga/charm closed-form; 20-leg book ~90 µs; kill tests 12–14 pass |
 | `portfolio/` | ~2,400 | **7/10** | 30+ direct unit tests; complete architecture |
 | `streaming/mod.rs` | ~400 | **8/10** | Alpaca WebSocket; trade + quote events; auto-reconnect |
 | `persistence/mod.rs` | ~350 | **7/10** | SQLite via sqlx; TradeRecord, PositionRecord, BotStatus |
+| `alpaca/live_bot.rs` | ~1,200 | **8/10** | 13 safety guards; idempotent orders; position monitor with BSM SL/TP |
+| `risk/guards.rs` | ~160 | **8/10** | Shared DailyRiskLimits; drawdown/trade-cap checks used by both engine and bot |
+| `market_data/` | ~400 | **7/10** | Configurable spot provider: Alpaca / Yahoo Finance / Finnhub |
 
 ---
 
-## Part 5: Test Coverage (April 2026)
+## Part 5: Test Coverage (July 2026)
 
-**661 passing tests across 42+ test files — 0 failed, 8 ignored**
+**682 passing tests across 42+ test files — 0 failed, 16 ignored**
 
 | Module | Source LOC | Test Files | Count | Coverage |
 |---|---|---|---|---|
 | Models (BS, Heston, American) | ~3,500 | 14 files | ~180 | **Excellent** — put-call parity, Greeks, stress, proptest, CDF reference |
-| Pricing Validation (Phase 1) | — | `pricing_validation.rs` | 4 | **Kill-criteria** — BSM PCP 10k, delta FD, Heston batch 1.5ms, CMA-ES crash calibration |
-| Calibration | ~800 | 1 file | ~15 | **Good** — CMA-ES convergence, Heston calibration |
+| Pricing Validation (Phase 1) | — | `pricing_validation.rs` | 11 | **Kill-criteria** — BSM PCP 10k, delta FD, Heston batch 1.5ms, CMA-ES crash, portfolio Greeks 20-leg |
+| Calibration | ~800 | 1 file | ~15 | **Good** — CMA-ES convergence, Heston calibration, regime stability |
 | Backtesting | ~2,200 | 7 files | ~90 | **Good** — engine, short options, slippage, edge cases, margin |
 | Strategies | ~1,500 | 4 files | ~60 | **Good** — exact input→output for all 6 strategies |
 | Portfolio | ~2,000 | 1 file | 30+ | **Good** — VaR, Greeks, Kelly, allocation, performance, CVaR |
-| Alpaca | ~750 | inline | 14 | **Moderate** — OCC symbols, signal conversion; live tests `#[ignore]` |
-| Analysis | ~1,300 | 2 files | ~30 | **Good** — classifier; all 3 stub functions now covered |
+| Alpaca / Live Bot | ~2,000 | inline + unit | 64 | **Good** — OCC symbols, signal conversion, safety guards, position monitor |
+| Analysis | ~1,300 | 2 files | ~30 | **Good** — classifier; portfolio Greeks; all stub functions covered |
 | Backtesting/Margin | ~337 | inline | 15 | **Good** — Reg T margin, credit spreads, iron condor |
+| Integration | — | `tests/` | 364 | **Good** — end-to-end flows |
 
 ---
 
@@ -237,26 +338,34 @@ Full `clap` subcommand tree replacing the 240-line `main()` monolith:
    `dollarbill backtest --save` to generate and persist real performance data.
 2. **Examples dead code** — some config fields in examples are unused; wiring them
    would clean up the suppression pragmas there.
+3. **Iron condor Variant G DD regression** — Variant G's 20.95% max DD (vs 18.79% for F)
+   is caused by mid-trade regime changes on condors entered in `LowVol`. The fix is entry-time
+   regime pinning (store regime at entry; close if current regime differs by >1 class).
+4. **Live options approval** — Alpaca paper approval does not carry over to live. The bot
+   will not submit live options orders without a separate live-trading options approval.
 
 ---
 
-## Part 7: Final Component Scores
+## Part 7: Final Component Scores (July 2026)
 
 | Component | Rating | Assessment |
 |---|---|---|
 | Options Pricing | 9/10 | Correct, tested, QuantLib-parity verified (Phase 1 complete) |
-| Greeks | 9/10 | All signs correct, theta verified against Hull |
+| Greeks | 9/10 | All signs correct; higher-order (vanna/volga/charm) closed-form |
 | Heston MC | 7/10 | SplitMix64 RNG; duplication removed |
-| Backtesting | 7/10 | Honest P&L, real vol per symbol/day |
+| Heston Calibrator | 9/10 | CMA-ES + NM polish; ε-insensitive Feller; regime stability test |
+| Backtesting | 8/10 | Honest P&L; real vol; DailyRiskLimits; look-ahead-free Heston params |
 | Strategies | 7/10 | Real signals, all variants tested |
-| Alpaca / Order Routing | 8/10 | Full OCC options support, 14 tests, parse helpers |
+| Alpaca / Order Routing | 8/10 | Full OCC; idempotent submission; 13 safety guards |
 | Advanced Classifier | 8/10 | Real S/R + sector relative vol/momentum |
+| Portfolio Greeks | 8/10 | vanna/volga/charm; 20-leg ~90 µs; kill tests 12–16 pass |
 | Strategy Matching | 6/10 | Correct structure; waiting on backtest data |
 | Portfolio Module | 7/10 | Complete architecture; 30+ direct tests |
 | Streaming | 8/10 | AlpacaStream; trades, quotes, reconnect |
 | Persistence | 7/10 | SQLite; fills, positions, bot status |
 | CLI | 8/10 | Full clap subcommand tree |
-| **OVERALL** | **7.5/10** | Functional options trading toolkit |
+| Live Bot | 8/10 | 13 safety guards; position monitor; regime pipeline; audit log |
+| **OVERALL** | **8/10** | Production-approaching options trading toolkit |
 
 ---
 

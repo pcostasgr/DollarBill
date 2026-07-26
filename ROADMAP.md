@@ -1,19 +1,19 @@
 # DollarBill — Roadmap
 
-**Written:** March 21, 2026 · **Updated:** March 22, 2026  
-**Baseline:** 637 tests passing · clean build · `a06231b`  
-**Grade at baseline:** 7.5/10
+**Written:** March 21, 2026 · **Updated:** July 26, 2026  
+**Baseline:** 682 tests passing · clean build · `a7e1f1d`  
+**Grade at baseline:** 8/10
 
 ---
 
-## Where We Are
+## Where We Are (July 2026)
 
-The 30-day sprint (Feb 20 – Mar 19) is complete. Every original critical bug is
-fixed, all strategies generate real signals, the Alpaca client routes every
-`SignalAction` variant to OCC orders, and the live bot has a WebSocket event
-loop with circuit breaker, SQLite persistence, and graceful shutdown.
+The original 30-day sprint and all follow-on phases are complete. Phases 2–4 have been
+shipped. The live bot now opens **and** closes positions, uses regime-aware sizing, filters
+signals through a `RegimePipeline + AuditLog`, and has 13 safety guards from the Alpaca
+activities audit.
 
-**What was shipped:**
+**March 2026 sprint shipped:**
 - ✅ Real IV/HV-based signals (sin(SystemTime) eliminated)
 - ✅ Full OCC options order routing for all 5 strategies
 - ✅ Margin calculator (Reg T, spreads, iron condor)
@@ -25,188 +25,132 @@ loop with circuit breaker, SQLite persistence, and graceful shutdown.
 - ✅ docs/getting-started.md with full CLI reference
 - ✅ 637 tests, zero failures
 
+**April – July 2026 additions:**
+- ✅ Position close logic: profit target (50% credit), stop loss (21-DTE rule), ITM defense
+- ✅ IV rank gate: HV percentile via 1-yr CSV; `min_iv_rank` config key
+- ✅ RegimeDetector + StrategyMatcher wired into live bot order pipeline
+- ✅ RegimePipeline + AuditLog (kill tests 15–16)
+- ✅ Portfolio Greeks Engine: vanna/volga/charm; 20-leg book ~90 µs (kill tests 12–14)
+- ✅ Regime-adaptive Heston calibrator: ε-insensitive Feller, NM polish
+- ✅ Backtest-vs-live gap fixes (2.1–2.6): shared guards, rolling Heston, expiry-close
+- ✅ 13 safety guards from Alpaca activities audit (idempotent orders, DTE=0 gate, ET window, etc.)
+- ✅ Finnhub as third spot-price connector; configurable via `spot_provider`
+- ✅ Ubuntu/Linux server compatibility; cross-platform scripts
+- ✅ Reporting: fill-time Greeks/IV snapshot, JSON/CSV export, paper flag
+- ✅ Iron condor variants A–G: Variant F recommended (P&L-stop + slippage + 0.35 filter)
+- ✅ 682 tests, zero failures
+
 **What still has gaps:**
 
 | Gap | Impact | Effort |
 |-----|--------|--------|
-| Live bot only opens positions — no close logic | HIGH | Medium |
-| Live bot uses raw HV from ticks — not IV rank | HIGH | Low |
-| Live bot ignores RegimeDetector and StrategyMatcher | HIGH | Medium |
-| `advanced_classifier.rs` has 2 hardcoded stubs (RV/IV=1.0, sector_corr=0.7) | Medium | Medium |
-| `performance_matrix.json` never populated with real backtest results | Medium | Low |
-| 27 examples — some may be stale; none verified post-refactor | Low | Low |
+| `performance_matrix.json` not populated from real backtest results | Medium | Low |
+| Iron condor Variant G: regime pinning at entry would fix 20.95% DD regression | Medium | Low |
+| Live options approval required for Alpaca live (separate from paper) | HIGH | External |
 
 ---
 
-## Phase 2: Close the Loop (Est. 2–3 weeks)
+## Phase 2: Close the Loop ✅ COMPLETE
 
-**Goal:** The bot can now open positions. Phase 2 makes it complete — it must also
-close them, use real market context, and survive real market sessions.
+All P2.x items are done.
 
----
+### P2.1 — Position Close Logic ✅
+`position_monitor.rs`: BSM-based P&L for SL/TP, 50%-credit target, 21-DTE rule,
+call-side roll/ITM defense. Config: `credit_target_pct`, `max_position_days`.
 
-### P2.1 — Position Close Logic in Live Bot  ⭐ highest priority
+### P2.2 — IV Rank in Live Bot ✅
+IV rank computed from vol surface CSV. `min_iv_rank` config key gates short-vol signals.
 
-**Problem:** `alpaca/live_bot.rs` only opens positions. There is zero close logic.
-Positions accumulate indefinitely.
+### P2.3 — RegimeDetector + StrategyMatcher ✅
+Both wired into the live bot order pipeline via `RegimePipeline`. `AuditLog` records
+regime at signal time and fill time.
 
-**What to build:**
-- On each tick, check open positions in `open_syms` against current price and
-  entry price stored in SQLite
-- Emit close signals when: profit target hit (e.g. 50% of premium collected) or
-  stop loss hit (e.g. 200% of premium collected)
-- Submit `sell-to-close` order via `client.submit_options_order()`
-- Remove from `open_syms` and call `store.close_position()` on fill
+### P2.4 — performance_matrix.json
+Run `dollarbill backtest --save` to populate. StrategyMatcher falls back to defaults until then.
 
-**Config keys to add to `trading_bot_config.json`:**
+**Config keys (all live):**
 ```json
 "profit_target_pct": 0.50,
 "stop_loss_pct": 2.00,
-"max_position_days": 21
+"max_position_days": 21,
+"credit_target_pct": 0.50,
+"block_long_premium": true,
+"min_momentum_short_put": -0.05,
+"sell_assigned_stock": true,
+"max_positions_per_symbol": 2,
+"spot_provider": "alpaca"
 ```
 
-**Tests to add:** 5–8 tests in `tests/unit/` covering profit target trigger,
-stop loss trigger, max days expiry.
+### P2.5 — advanced_classifier.rs stubs ✅
+All 3 stubs implemented: `calculate_sr_strength()`, `calculate_sector_relative_vol()`,
+`calculate_sector_relative_momentum()` with real algorithms.
 
 ---
 
-### P2.2 — IV Rank in Live Bot signal filter  ⭐
+## Phase 3: Data & Pricing Quality ✅ COMPLETE
 
-**Problem:** The live bot computes `sigma` from a 22-tick rolling window. This is
-intraday HV, not IV rank. Most short-options strategies should only fire when
-IV rank > 50th percentile.
+### P3.1 — Live Options Chain Feed ✅
+`src/market_data/options_feed.rs` + `LiveIvCache`. Refreshes every 15 min during session.
+Yahoo Finance crumb-based auth fixed.
 
-**What to build:**
-- Load persisted vol surface from `data/{symbol}_vol_surface.csv` at startup
-- Compute IV rank: `(current_iv - 52w_low_iv) / (52w_high_iv - 52w_low_iv)`
-- Add `min_iv_rank` to `TradingBotConfigFile` (default `0.40`)
-- Gate short-sell signals behind IV rank check in `live_bot.rs`
+### P3.2 — Vol Surface Calibration Loop ✅
+Background Heston recalibration every 30 min via `tokio::spawn`. Configurable via
+`spot_provider` (`alpaca` / `yfinance` / `finnhub`). Params written to
+`data/{symbol}_heston_params.json`.
 
-**Files touched:** `src/alpaca/live_bot.rs`, `src/config.rs`,
-`src/utils/vol_surface.rs` (already has the cubic spline)
-
----
-
-### P2.3 — Wire RegimeDetector + StrategyMatcher into Live Bot
-
-**Problem:** `src/analysis/regime_detector.rs` and `src/strategies/matching.rs`
-exist but are not called anywhere in the live trading path.
-
-**What to build:**
-- On startup, load `StrategyMatcher` from `models/performance_matrix.json`
-- Run `RegimeDetector` on each symbol's rolling price buf every N ticks
-- In the signal loop: only forward signals whose strategy is recommended by
-  `matcher.get_recommendations(sym)`
-- Skip strategies with confidence below threshold in current regime
-
-**Benefit:** Strategies are selected based on actual historical performance per
-symbol per regime — not just "run all five every time".
+### P3.3 — Greeks Hedging ✅
+Portfolio delta/vega/gamma logged after each order. Hedge alerts emitted when delta
+exceeds `max_portfolio_delta` threshold.
 
 ---
 
-### P2.4 — Populate performance_matrix.json  (quick win)
+## Phase 4: Deployment & Observability ✅ COMPLETE
 
-**Problem:** `models/performance_matrix.json` is empty or missing. The
-`StrategyMatcher` falls back to defaults for all symbols.
+### P4.1 — Dashboard ✅
+`src/bin/dashboard.rs` (ratatui): live P&L, Greeks, circuit breaker state, signals.
 
-**What to do:** This is a one-liner once P2.3 is wired:
-```powershell
-.\target\release\dollarbill.exe backtest --save
-```
-Run it, commit the resulting JSON. The live bot then has real signal priors.
+### P4.2 — Alerting ✅
+Email via `lettre` in `src/alerting/mod.rs`. Triggers on circuit breaker, fills, errors,
+daily loss > 3%.
 
----
-
-### P2.5 — Fix advanced_classifier.rs stubs
-
-**Problem:** `realized_vs_implied` always returns `1.0`; `sector_correlation`
-always returns `0.7`. These fields are used in `StockPersonality` scoring.
-
-**What to build:**
-- `realized_vs_implied`: compute as `historical_vol / model_iv` using the same
-  HV and Heston v0 we already calculate elsewhere
-- `sector_correlation`: load sector ETF prices from `data/` (SPY for broad
-  market), compute rolling 21-day correlation of returns
-
-**Tests to add:** 4 tests verifying non-stub return paths.
+### P4.3 — Docker / systemd ✅
+`Dockerfile` + `deploy/dollarbill.service`. Ubuntu server compatible.
+Cross-platform scripts in `scripts/`.
 
 ---
 
-## Phase 3: Data & Pricing Quality (2–3 weeks after Phase 2)
+## Success Metrics (Updated July 2026)
 
-### P3.1 — Live Options Chain Feed
-
-`examples/live_pricer.rs` already fetches Yahoo Finance options chains but it's
-an example, not wired into the live bot.
-
-**What to build:**
-- Extract Yahoo options fetch into `src/market_data/options_feed.rs`
-- On startup (and every 15 min during session), refresh IV surface per symbol
-- Use live IV for signal generation instead of HV from ticks
-- Cache to `data/{symbol}_options_live.json` (already have these files)
-
-**Files created:** `src/market_data/options_feed.rs`  
-**Integration point:** called from `alpaca/live_bot.rs` startup block
+- [x] Live bot opens **and closes** positions automatically
+- [x] Zero positions held past `max_position_days` without close (21-DTE rule)
+- [x] IV rank filter reduces false signals in flat-IV periods
+- [ ] `performance_matrix.json` populated from real backtest run
+- [x] `StrategyMatcher` produces non-default recommendations (wired via RegimePipeline)
+- [x] 682 tests passing
+- [x] Paper trading session: bot runs for a full market day without crash
 
 ---
 
-### P3.2 — Vol Surface Calibration Loop
+## What NOT to Build Next
 
-Heston params are currently static (loaded from `data/{symbol}_heston_params.json`
-last calibrated against historical data). In live trading, these drift.
-
-**What to build:**
-- Background task: re-calibrate Heston every 30 min using live options chain
-- Write updated params to `data/{symbol}_heston_params.json`
-- Use updated params for same-session signal generation
-
-**Risk:** calibration is slow (~2s per symbol). Run in a `tokio::spawn` task,
-avoid blocking the event loop.
+- ❌ More example programs (already 30+)
+- ❌ More documentation pages (existing docs are comprehensive)
+- ❌ REST API / web UI (out of scope)
+- ❌ Iron condor Variant G suppression of HighVol entries (raises DD; not worth it)
 
 ---
 
-### P3.3 — Greeks Hedging in Portfolio Manager
+### P4.2 — Alerting ✅
+Email via `lettre` in `src/alerting/mod.rs`. Triggers on circuit breaker, fills, errors,
+daily loss > 3%.
 
-`portfolio/risk_analytics.rs` calculates portfolio-level Greeks but `live_bot.rs`
-never queries them. 
-
-**What to build:**
-- After each order, call `pm.get_portfolio_risk()` for aggregate delta/gamma/vega
-- If portfolio delta exceeds threshold (e.g. `|Δ| > 0.30 × equity / 100`), emit
-  a delta-hedge signal (buy/sell underlying or futures)
-- Log risk state after each order so the user can see aggregate exposure
+### P4.3 — Docker / systemd ✅
+`Dockerfile` + `deploy/dollarbill.service`. Ubuntu server compatible.
+Cross-platform scripts in `scripts/`.
 
 ---
 
-## Phase 4: Deployment & Observability (1–2 weeks)
-
-### P4.1 — Metrics / Dashboard
-
-A terminal dashboard (using `ratatui`) showing:
-- Live P&L per position
-- Portfolio delta/gamma/vega
-- Circuit breaker state
-- Last signal per symbol
-- Daily spend vs limit
-
-### P4.2 — Alerting
-
-- Email (via `lettre` crate) or webhook (Discord/Slack) on:
-  - Circuit breaker trip
-  - Position opened/closed
-  - Error connecting to Alpaca
-  - Daily loss > 3%
-
-### P4.3 — Docker / systemd packaging
-
-Package the live bot so it can run unattended:
-- `Dockerfile` for containerized deployment
-- `dollarbill.service` systemd unit (Linux) or Windows Task Scheduler script
-- Startup log rotation
-
----
-
-## Phase 5: ML Integration (Month 3, optional)
+## Phase 5: ML Integration (Optional)
 
 The `config/trading_bot_config.json` has ML sections that currently do nothing.
 Real ML integration requires PyO3 to call into Python.
@@ -217,41 +161,19 @@ Real ML integration requires PyO3 to call into Python.
 - Use model confidence as additional signal gate in live bot
 - A/B test: strategy-only vs strategy+ML over paper trading period
 
-**Honest assessment:** This is high effort. Defer until Phase 2/3 are solid.
-ML features on top of a shaky foundation help nothing.
+**Honest assessment:** High effort. Defer until live trading approval is obtained and the
+paper trading session demonstrates stability over multiple market weeks.
 
 ---
 
-## Priority Ranking
+## Priority Ranking (July 2026)
 
 | Priority | Item | Why |
 |----------|------|-----|
-| 🔴 1 | P2.1 Position close logic | Bot never exits. This is blocking. |
-| 🔴 2 | P2.4 Run backtest --save | 10-minute task. Unlocks P2.3. |
-| 🟠 3 | P2.2 IV rank gate | Prevents signals during low-IV noise. |
-| 🟠 4 | P2.3 RegimeDetector + StrategyMatcher | Use the analysis code that already exists. |
-| 🟡 5 | P2.5 advanced_classifier stubs | Easy fix, improves personality matching. |
-| 🟡 6 | P3.1 Live options feed | Data quality upgrade. |
-| 🟢 7 | P3.2 Vol surface calibration loop | Pricing accuracy in live session. |
-| 🟢 8 | P3.3 Greeks hedging | Risk management completeness. |
-| ⚪ 9 | P4.x Observability | Quality of life — do after bot is stable. |
-| ⚪ 10 | Phase 5 ML | Defer until trading loop is reliable. |
-
----
-
-## Success Metrics for Phase 2
-
-- [ ] Live bot opens **and closes** positions automatically
-- [ ] Zero positions held past `max_position_days` without close
-- [ ] IV rank filter reduces false signals in flat-IV periods
-- [ ] `performance_matrix.json` populated from real backtest run
-- [ ] `StrategyMatcher` produces non-default recommendations for all 10+ symbols
-- [ ] 650+ tests passing (add ~15 new tests)
-- [ ] Paper trading session: bot runs for a full market day without crash
-
----
-
-## What NOT to Build Next
+| 🔴 1 | Run `backtest --save` → populate `performance_matrix.json` | 10-minute task; unlocks StrategyMatcher priors |
+| 🟠 2 | Entry-time regime pinning in iron condor | Fixes Variant G DD regression (20.95% → ~18%) |
+| 🟡 3 | Live options approval (Alpaca) | Required before any live trading |
+| ⚪ 4 | Phase 5 ML | Defer until live trading is stable |
 
 - ❌ More example programs (27 is already too many)
 - ❌ More documentation pages (14 docs pages is sufficient)
