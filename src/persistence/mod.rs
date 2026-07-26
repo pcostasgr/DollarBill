@@ -118,6 +118,11 @@ pub struct PositionRecord {
 ///     strategy: Some("Momentum".into()),
 ///     error_message: None,
 ///     timestamp: "2025-01-01T09:30:00Z".into(),
+///     spot_price: Some(195.0),
+///     iv_at_fill: Some(0.32),
+///     delta_at_fill: Some(0.45),
+///     vega_at_fill: Some(0.08),
+///     theta_at_fill: Some(-0.03),
 /// };
 /// store.insert_trade(&rec).await.unwrap();
 /// # }

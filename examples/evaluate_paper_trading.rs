@@ -1,15 +1,15 @@
-/// Evaluate Alpaca paper trading performance.
-///
-/// Usage:
-///   cargo run --example evaluate_paper_trading
-///
-/// Reads config/paper_trading_config.json for initial_balance and
-/// commission_per_trade, then fetches live account state and order
-/// history from Alpaca to produce a full performance report.
-///
-/// Required env vars:
-///   ALPACA_API_KEY     — Alpaca paper trading key
-///   ALPACA_API_SECRET  — Alpaca paper trading secret
+// Evaluate Alpaca paper trading performance.
+//
+// Usage:
+//   cargo run --example evaluate_paper_trading
+//
+// Reads config/paper_trading_config.json for initial_balance and
+// commission_per_trade, then fetches live account state and order
+// history from Alpaca to produce a full performance report.
+//
+// Required env vars:
+//   ALPACA_API_KEY     — Alpaca paper trading key
+//   ALPACA_API_SECRET  — Alpaca paper trading secret
 #![allow(dead_code)]
 
 use dollarbill::alpaca::AlpacaClient;
