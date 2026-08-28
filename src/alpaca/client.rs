@@ -233,7 +233,11 @@ impl AlpacaClient {
                 Ok(response) => {
                     let status = response.status();
                     if status.is_success() {
-                        let data = response.json().await?;
+                        let bytes = response.bytes().await?;
+                        let data = serde_json::from_slice(&bytes).map_err(|e| {
+                            let body = String::from_utf8_lossy(&bytes);
+                            format!("JSON decode error: {e}\nResponse body: {body}")
+                        })?;
                         return Ok(data);
                     }
                     if is_transient(status) && attempt < MAX_RETRIES {

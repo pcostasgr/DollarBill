@@ -11,3 +11,16 @@ data/bot_status.json
 data/trades.db
 bot_state.json
 trade_audit.csv
+
+# Build logs and temp output files
+build_*.txt
+errors*.txt
+examples_err.txt
+test_results*.txt
+test_run.txt
+
+# Test scratch files
+TestFiles/
+
+# VS Code workspace settings (optional: remove if you want to share)
+.vscode/

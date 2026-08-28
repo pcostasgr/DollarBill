@@ -17,7 +17,9 @@ pub struct Account {
     pub short_market_value: String,
     pub initial_margin: String,
     pub maintenance_margin: String,
+    #[serde(default)]
     pub daytrade_count: i32,
+    #[serde(default)]
     pub pattern_day_trader: bool,
     /// Options trading level approved by Alpaca.
     /// 0 = not approved, 1 = Level 1 (covered calls / cash-secured puts),
