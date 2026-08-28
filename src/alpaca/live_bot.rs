@@ -1,10 +1,12 @@
 // Live trading WebSocket event loop extracted from main::cmd_trade.
 // Called when `dollarbill trade --live` (or `--dry-run`) is invoked.
 
+use crate::alpaca::occ as occ_parser;
+use crate::risk::guards::{DailyRiskLimits, check_all as check_risk_guards};
 use crate::alerting::Alerter;
 use crate::alpaca::AlpacaClient;
-use crate::analysis::regime_detector::RegimeDetector;
 use crate::analysis::performance_matrix::StrategyRecommendations;
+use crate::analysis::regime_detector::RegimeDetector;
 use crate::calibration::heston_calibrator::{calibrate_heston, CalibParams};
 use crate::config;
 use crate::market_data::csv_loader::load_csv_closes;
@@ -72,12 +74,7 @@ fn estimate_margin(action: &SignalAction, qty: u32, rough_premium: f64) -> f64 {
 }
 
 fn parse_occ_expiry(occ: &str) -> Option<String> {
-    if occ.len() < 15 { return None; }
-    let yy: u32 = occ[6..8].parse().ok()?;
-    let mm: u32 = occ[8..10].parse().ok()?;
-    let dd: u32 = occ[10..12].parse().ok()?;
-    if mm < 1 || mm > 12 || dd < 1 || dd > 31 { return None; }
-    Some(format!("20{:02}-{:02}-{:02}", yy, mm, dd))
+    occ_parser::parse_occ_expiry_str(occ)
 }
 
 pub async fn run_live_bot(
@@ -236,6 +233,12 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
     let max_daily_loss        = equity * bot_cfg.max_daily_loss_pct;
     let mut estimated_daily_loss = 0.0_f64;
     let mut circuit_broken       = false;
+    // DailyRiskLimits guard — mirrors the guard in personality_based_bot
+    let daily_risk_limits = DailyRiskLimits {
+        max_daily_drawdown_pct: Some(bot_cfg.max_daily_loss_pct),
+        max_daily_trades:       None,
+    };
+    let mut trades_today: usize = 0;
     // Tracks remaining options buying power so we can reject orders that would
     // exceed it before they reach Alpaca (avoiding 403 insufficient-buying-power).
     // Decremented after each fill; not incremented on close (conservative).
@@ -431,7 +434,33 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
     };
     println!("Stream connected -- press Ctrl-C to stop\n");
 
-    // ── Main event loop ───────────────────────────────────────────────────
+    // ── Sell any assigned equity (options-only bot) ───────────────────────
+    // Any plain-equity position is an assignment accident — flatten immediately.
+    if !dry_run {
+        if let Ok(positions) = client.get_positions().await {
+            for pos in &positions {
+                let sym = &pos.symbol;
+                let is_equity = sym.len() <= 6 && sym.chars().all(|c| c.is_ascii_alphabetic());
+                if !is_equity { continue; }
+                let qty: f64 = pos.qty.parse().unwrap_or(0.0);
+                if qty == 0.0 { continue; }
+                use crate::alpaca::types::{OrderRequest, OrderSide, OrderType, TimeInForce};
+                let sell_req = OrderRequest {
+                    symbol: sym.clone(),
+                    qty: qty.abs(),
+                    side: if qty > 0.0 { OrderSide::Sell } else { OrderSide::Buy },
+                    r#type: OrderType::Market,
+                    time_in_force: TimeInForce::Day,
+                    limit_price: None, stop_price: None,
+                    extended_hours: None, client_order_id: None,
+                };
+                match client.submit_order(&sell_req).await {
+                    Ok(o)  => println!("  ⚠️  Assigned {sym} qty={qty:.0} — liquidated ({})", o.id),
+                    Err(e) => eprintln!("  ❌ Failed to liquidate assigned {sym}: {e}"),
+                }
+            }
+        }
+    }
     let mut ctrl_c_trade = std::pin::pin!(tokio::signal::ctrl_c());
     loop {
         let event = tokio::select! {
@@ -498,6 +527,12 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                 // Circuit breaker — stop new signals if daily loss limit is hit
                 if circuit_broken { continue; }
 
+                // DailyRiskLimits guard — halts new entries when drawdown or trade cap is hit
+                let current_equity = equity - estimated_daily_loss;
+                if check_risk_guards(equity, current_equity, trades_today, &daily_risk_limits).is_halt() {
+                    continue;
+                }
+
                 // Signal cooldown check
                 let now = Instant::now();
                 if let Some(&prev) = last_signal.get(&sym) {
@@ -555,10 +590,10 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                             // Derive strike and call/put type from OCC symbol
                             // so BSM repricing uses the actual contract parameters.
                             strike: pos.occ_symbol.as_deref().and_then(|occ| {
-                                occ.get(13..21).and_then(|s| s.parse::<f64>().ok()).map(|v| v / 1000.0)
+                                occ_parser::parse_occ(occ).map(|p| p.strike)
                             }),
-                            is_call: pos.occ_symbol.as_deref().map(|occ| {
-                                occ.chars().nth(12) == Some('C')
+                            is_call: pos.occ_symbol.as_deref().and_then(|occ| {
+                                occ_parser::parse_occ(occ).map(|p| p.is_call)
                             }),
                         };
                         match position_monitor.evaluate(&snapshot, price, sigma) {
@@ -744,7 +779,7 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
 
                 // Generate signals
                 let signals = registry.generate_all_signals(&sym, price, sigma, model_iv, sigma);
-                let avoid_strat = strategy_avoid.get(&sym).map(|s| s.as_str()).unwrap_or("");
+                let avoid_strat = strategy_avoid.get(&sym).map(|s: &String| s.as_str()).unwrap_or("");
                 let actionable: Vec<_> = signals.iter()
                     .filter(|s| {
                         // Base confidence gate
@@ -799,14 +834,9 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                             // avoid entering positions with immediate assignment risk.
                             if let Some(ref raw_sym) = order.symbol.clone() {
                                 let resolved = client.resolve_single_leg_occ(raw_sym).await;
-                                // Parse strike from OCC: chars 13-21 are the strike * 1000
-                                let is_put = resolved.len() >= 13
-                                    && resolved.chars().nth(12) == Some('P');
-                                let resolved_strike = if resolved.len() >= 21 {
-                                    resolved[13..21].parse::<f64>().ok().map(|v| v / 1000.0)
-                                } else {
-                                    None
-                                };
+                                let resolved_parts = occ_parser::parse_occ(&resolved);
+                                let is_put = resolved_parts.as_ref().map(|p| !p.is_call).unwrap_or(false);
+                                let resolved_strike = resolved_parts.as_ref().map(|p| p.strike);
                                 if is_put {
                                     if let Some(rs) = resolved_strike {
                                         // Reject if the resolved put strike is within 0.5% of
@@ -891,6 +921,7 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                     }
                                     // dashboard tracking
                                     session_orders += 1;
+                                    trades_today   += 1;
                                     let desc = format!("{} {:?} @ ${:.2}  {}",
                                         sig.strategy_name, sig.action, price,
                                         chrono::Utc::now().format("%H:%M:%S"));

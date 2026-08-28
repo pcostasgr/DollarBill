@@ -409,8 +409,22 @@ impl PersonalityBasedBot {
                 if sym.len() < 15 { continue; } // not an option symbol
                 let qty: f64 = pos.qty.parse().unwrap_or(0.0);
                 if qty <= 0.0 { continue; } // short/flat — fine, already credit
-                let opt_type_char = sym.chars().nth(12).unwrap_or('X');
-                if opt_type_char != 'C' && opt_type_char != 'P' { continue; }
+                // Use the robust OCC parser — nth(12) is wrong for compact symbols.
+                let occ_parts = match dollarbill::alpaca::occ::parse_occ(sym) {
+                    Some(p) => p,
+                    None => continue,
+                };
+                // Skip long legs that hedge a short on the same underlying+expiry.
+                // Closing a hedge leg leaves a naked short — skip it.
+                let is_hedge = positions.iter().any(|other| {
+                    if other.symbol == *sym { return false; }
+                    let other_qty: f64 = other.qty.parse().unwrap_or(0.0);
+                    if other_qty >= 0.0 { return false; } // other must be short
+                    dollarbill::alpaca::occ::parse_occ(&other.symbol)
+                        .map(|o| o.root == occ_parts.root && o.expiry == occ_parts.expiry)
+                        .unwrap_or(false)
+                });
+                if is_hedge { continue; }
                 let current_price: f64 = pos.current_price.parse().unwrap_or(0.0);
                 println!("   🔥 FORCE-CLOSE LONG PREMIUM: {} qty={} — closing long option (block_long_premium=true)", sym, qty);
                 let close_req = OrderRequest {
@@ -447,9 +461,10 @@ impl PersonalityBasedBot {
             for pos in &positions {
                 let sym = &pos.symbol;
                 // Plain equity: short symbol (≤6 chars), all alpha/uppercase, no OCC date.
+                // Any short alphabetic symbol is an assigned equity — there are
+                // no intentional equity holdings in this options-only bot.
                 let is_plain_equity = sym.len() <= 6
-                    && sym.chars().all(|c| c.is_ascii_alphabetic())
-                    && !self.symbols.contains(sym); // not an intentional equity holding
+                    && sym.chars().all(|c| c.is_ascii_alphabetic());
                 if !is_plain_equity { continue; }
                 let qty: f64 = pos.qty.parse().unwrap_or(0.0);
                 if qty == 0.0 { continue; }
@@ -600,10 +615,18 @@ impl PersonalityBasedBot {
             // Notional approximation: |entry_price * qty * 100| per position.
             let cap_pct = self.config.trading.risk_management.max_risk_capital_per_symbol;
             if cap_pct > 0.0 && equity > 0.0 {
+                // Use max-loss (strike × 100 × qty) not premium — a $5 premium on a
+                // $200 strike carries $20 000 of risk, not $500.
                 let sym_notional: f64 = options_for_symbol.iter().map(|p| {
-                    let entry: f64 = p.avg_entry_price.parse().unwrap_or(0.0);
                     let qty: f64 = p.qty.parse::<f64>().unwrap_or(0.0).abs();
-                    entry * qty * 100.0 // 1 contract = 100 shares
+                    let max_loss = dollarbill::alpaca::occ::parse_occ(&p.symbol)
+                        .map(|o| o.strike * qty * 100.0)
+                        .unwrap_or_else(|| {
+                            // Fallback to entry price if OCC parse fails
+                            let entry: f64 = p.avg_entry_price.parse().unwrap_or(0.0);
+                            entry * qty * 100.0
+                        });
+                    max_loss
                 }).sum();
                 let sym_risk_pct = sym_notional / equity;
                 if sym_risk_pct >= cap_pct {

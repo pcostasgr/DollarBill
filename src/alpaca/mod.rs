@@ -4,6 +4,7 @@
 
 pub mod client;
 pub mod live_bot;
+pub mod occ;
 pub mod types;
 
 pub use client::AlpacaClient;

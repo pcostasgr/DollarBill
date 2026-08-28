@@ -140,19 +140,17 @@ impl AlpacaClient {
         }).await
     }
 
-    /// Generate a unique, stable `client_order_id` for idempotent order submission.
-    ///
-    /// Format: `db-<prefix>-<unix_ms>-<nonce_hex>` — unique per submission attempt
-    /// within the same millisecond but deterministic enough for logging/auditing.
+    /// Generate a unique `client_order_id` using a monotonic counter.
     fn generate_order_id(prefix: &str) -> String {
+        use std::sync::atomic::{AtomicU64, Ordering};
         use std::time::{SystemTime, UNIX_EPOCH};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
         let ts_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
-            .as_millis();
-        // Nonce derived from stack address — cheap, collision-resistant at bot scale.
-        let nonce: u64 = (&ts_ms as *const _ as u64).wrapping_mul(0x9e3779b97f4a7c15);
-        format!("db-{}-{}-{:06x}", prefix, ts_ms, nonce & 0xff_ffff)
+            .as_millis() as u64;
+        format!("db-{}-{}-{:06x}", prefix, ts_ms, seq & 0xff_ffff)
     }
 
     /// Submit a new order with idempotency protection.
@@ -604,37 +602,22 @@ impl AlpacaClient {
     /// actually-listed contract (by expiry closeness then strike distance).
     /// Returns the original symbol unchanged if parsing fails or the API is unavailable.
     pub async fn resolve_single_leg_occ(&self, occ: &str) -> String {
-        // OCC format: ROOT__(6) YYMMDD(6) C|P(1) SSSSSSSS(8) = 21 chars
-        if occ.len() < 21 {
-            return occ.to_string();
-        }
-        let underlying = occ[..6].trim();
-        let yy: u32 = match occ[6..8].parse() { Ok(v) => v, Err(_) => return occ.to_string() };
-        let mm: u32 = match occ[8..10].parse() { Ok(v) => v, Err(_) => return occ.to_string() };
-        let dd: u32 = match occ[10..12].parse() { Ok(v) => v, Err(_) => return occ.to_string() };
-        let is_put = occ.chars().nth(12) == Some('P');
-        let strike_raw: f64 = match occ[13..21].parse() { Ok(v) => v, Err(_) => return occ.to_string() };
-        let target_strike = strike_raw / 1000.0;
+        let parts = match crate::alpaca::occ::parse_occ(occ) {
+            Some(p) => p,
+            None => return occ.to_string(),
+        };
+        let underlying    = &parts.root;
+        let target_strike = parts.strike;
+        let opt_type      = if parts.is_call { "call" } else { "put" };
+        let expiry        = parts.expiry;
 
         use chrono::{Duration, NaiveDate};
         #[derive(Deserialize)]
-        struct Contract {
-            symbol: String,
-            strike_price: String,
-            expiration_date: String,
-        }
+        struct Contract { symbol: String, strike_price: String, expiration_date: String }
         #[derive(Deserialize)]
-        struct ContractsResponse {
-            option_contracts: Vec<Contract>,
-        }
-
-        let expiry = match NaiveDate::from_ymd_opt(2000 + yy as i32, mm, dd) {
-            Some(d) => d,
-            None => return occ.to_string(),
-        };
+        struct ContractsResponse { option_contracts: Vec<Contract> }
         let from = expiry - Duration::days(7);
         let to   = expiry + Duration::days(7);
-        let opt_type = if is_put { "put" } else { "call" };
         let strike_lo = (target_strike * 0.9).max(0.5);
         let strike_hi = target_strike * 1.1 + 5.0;
 

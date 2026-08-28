@@ -259,16 +259,13 @@ impl PositionMonitor {
             None => return CloseDecision::Hold,
         };
 
-        // OCC format: ROOT(6) YYMMDD(6) C|P(1) STRIKE(8 digits × 1000)
-        let opt_char = occ.chars().nth(12).unwrap_or('X');
-        let is_put  = opt_char == 'P';
-        let is_call = opt_char == 'C';
-        if !is_put && !is_call { return CloseDecision::Hold; }
-
-        let strike = match occ.get(13..21).and_then(|s| s.parse::<f64>().ok()) {
-            Some(v) => v / 1000.0,
+        let parts = match crate::alpaca::occ::parse_occ(occ) {
+            Some(p) => p,
             None => return CloseDecision::Hold,
         };
+        let is_put  = !parts.is_call;
+        let is_call =  parts.is_call;
+        let strike  =  parts.strike;
 
         if is_put {
             // Thresholds above strike — the put is OTM when spot > strike.
@@ -392,11 +389,10 @@ pub fn scan_portfolio(
 
         // ITM / roll zone alerts for short puts (same convention as PositionMonitor: above-strike thresholds)
         if let Some(occ) = &pos.occ_symbol {
-            let is_put = occ.len() >= 13 && occ.chars().nth(12) == Some('P');
-            if is_put {
-                if let Some(strike) = occ.get(13..21).and_then(|s| s.parse::<f64>().ok()).map(|v| v / 1000.0) {
-                    let roll_t = strike * (1.0 + config.roll_trigger_pct);
-                    let itm_t  = strike * (1.0 + config.itm_proximity_pct);
+            if let Some(parts) = crate::alpaca::occ::parse_occ(occ) {
+                if !parts.is_call {
+                    let roll_t = parts.strike * (1.0 + config.roll_trigger_pct);
+                    let itm_t  = parts.strike * (1.0 + config.itm_proximity_pct);
                     if spot <= itm_t {
                         alerts.itm_proximity.push(pos.symbol.clone());
                     } else if spot <= roll_t {
