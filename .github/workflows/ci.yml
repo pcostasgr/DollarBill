@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build
+        run: cargo build --all
+
+      # Unit + integration test suite — includes kill-switch scenarios,
+      # OCC proptest fuzzing, invariant tests, and portfolio tests.
+      - name: Tests
+        run: cargo test --all
+        # No real Alpaca API calls are made; tests use the pure risk/invariant layer.
+        # Set dummy env vars so any accidental live-path code doesn't panic on missing env.
+        env:
+          ALPACA_API_KEY: test-key-ci
+          ALPACA_API_SECRET: test-secret-ci
+
+  # Lint job — catches dead code, unused imports, and obvious style issues.
+  lint:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Clippy
+        run: cargo clippy --all -- -D warnings

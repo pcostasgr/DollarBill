@@ -154,3 +154,90 @@ mod tests {
         assert!(check_all(100_000.0, 1.0, 999, &lim).allows_entry());
     }
 }
+
+// ── Property-based tests (proptest) ──────────────────────────────────────────
+// Guarantee: check_all NEVER returns Allow when a configured limit is breached.
+#[cfg(test)]
+mod proptest_guards {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// When drawdown ≥ limit, check_all must always Halt.
+        #[test]
+        fn always_halt_when_drawdown_breached(
+            equity in 10_000f64..1_000_000f64,
+            loss_pct in 0.05f64..0.50f64,   // 5–50% loss, always at or above the 5% limit
+            trades in 0usize..5usize,
+        ) {
+            let current = equity * (1.0 - loss_pct);
+            let lim = DailyRiskLimits {
+                max_daily_drawdown_pct: Some(0.05),
+                max_daily_trades: None,
+            };
+            prop_assert!(
+                check_all(equity, current, trades, &lim).is_halt(),
+                "drawdown {:.1}% must halt with 5% limit",
+                loss_pct * 100.0
+            );
+        }
+    }
+
+    proptest! {
+        /// When trades_today ≥ cap, check_all must always Halt (assuming equity is fine).
+        #[test]
+        fn always_halt_when_trade_cap_reached(
+            equity in 10_000f64..1_000_000f64,
+            cap in 1usize..20usize,
+            excess in 0usize..10usize,  // trades over cap
+        ) {
+            let trades = cap + excess;
+            let lim = DailyRiskLimits {
+                max_daily_drawdown_pct: None,
+                max_daily_trades: Some(cap),
+            };
+            prop_assert!(
+                check_all(equity, equity, trades, &lim).is_halt(),
+                "trades {} >= cap {} must halt",
+                trades, cap
+            );
+        }
+    }
+
+    proptest! {
+        /// When equity is *below* the drawdown threshold, always Allow.
+        #[test]
+        fn always_allow_when_within_limits(
+            equity in 10_000f64..1_000_000f64,
+            loss_pct in 0.0f64..0.049f64,  // strictly under 5%
+            trades in 0usize..9usize,       // under 10 cap
+        ) {
+            let current = equity * (1.0 - loss_pct);
+            let lim = DailyRiskLimits {
+                max_daily_drawdown_pct: Some(0.05),
+                max_daily_trades: Some(10),
+            };
+            prop_assert!(
+                check_all(equity, current, trades, &lim).allows_entry(),
+                "drawdown {:.2}% and {} trades should allow entry",
+                loss_pct * 100.0, trades
+            );
+        }
+    }
+
+    proptest! {
+        /// No limit configured → always Allow regardless of inputs.
+        #[test]
+        fn no_limits_always_allow(
+            equity in 1f64..1_000_000f64,
+            current in 0f64..1_000_000f64,
+            trades in 0usize..10_000usize,
+        ) {
+            let lim = DailyRiskLimits {
+                max_daily_drawdown_pct: None,
+                max_daily_trades: None,
+            };
+            prop_assert!(check_all(equity, current, trades, &lim).allows_entry());
+        }
+    }
+}
