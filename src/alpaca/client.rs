@@ -325,6 +325,31 @@ impl AlpacaClient {
         self.get("/v2/account").await
     }
 
+    /// Fetch recent account activities filtered by type.
+    ///
+    /// Use `activity_types = &["OPASN", "OPEXC"]` to reliably detect option
+    /// assignments and exercises — far more accurate than heuristic symbol-length
+    /// checks, because the activity record is written on the assignment date while
+    /// the resulting equity position only appears after T+1 settlement.
+    ///
+    /// `since` is an optional ISO-8601 date string (`"YYYY-MM-DD"`) to limit the
+    /// lookback window; `None` returns the last page of activities.
+    pub async fn get_account_activities(
+        &self,
+        activity_types: &[&str],
+        since: Option<&str>,
+    ) -> Result<Vec<AccountActivity>, Box<dyn Error>> {
+        if activity_types.is_empty() {
+            return Ok(vec![]);
+        }
+        let types_param = activity_types.join(",");
+        let mut path = format!("/v2/account/activities?activity_types={}", types_param);
+        if let Some(date) = since {
+            path.push_str(&format!("&after={}", date));
+        }
+        self.get(&path).await
+    }
+
     /// Get the current market clock (is_open, next_open, next_close).
     pub async fn get_clock(&self) -> Result<Clock, Box<dyn Error>> {
         self.get("/v2/clock").await

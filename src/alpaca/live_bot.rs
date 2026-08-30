@@ -3,6 +3,7 @@
 
 use crate::alpaca::occ as occ_parser;
 use crate::risk::guards::{DailyRiskLimits, check_all as check_risk_guards};
+use crate::risk::invariants::{assert_invariants, BotState, InvariantPosition};
 use crate::alerting::Alerter;
 use crate::alpaca::AlpacaClient;
 use crate::analysis::performance_matrix::StrategyRecommendations;
@@ -461,6 +462,34 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
             }
         }
     }
+
+    // ── OPASN / OPEXC activity check on startup ───────────────────────────
+    // Use Alpaca's structured activity feed instead of heuristic symbol-length
+    // checks. OPASN = option assigned against us (short put exercised), OPEXC =
+    // option exercised by us (long call/put).  Log any recent assignments so
+    // operators can confirm the liquidation above handled them.
+    match client.get_account_activities(&["OPASN", "OPEXC"], None).await {
+        Ok(activities) => {
+            let relevant: Vec<_> = activities.iter()
+                .filter(|a| a.activity_type == "OPASN" || a.activity_type == "OPEXC")
+                .collect();
+            if !relevant.is_empty() {
+                println!("\n📋 Recent option assignment/exercise activity:");
+                for act in relevant {
+                    println!("  {} {} {} qty={} @ {} on {}",
+                        act.activity_type, act.side, act.symbol,
+                        act.qty, act.price, act.date);
+                    if act.activity_type == "OPASN" {
+                        warn!("OPASN detected for {} — verify equity liquidation completed", act.symbol);
+                    }
+                }
+            } else {
+                println!("✅ No recent OPASN/OPEXC activity found");
+            }
+        }
+        Err(e) => eprintln!("⚠️  Activity feed unavailable (non-critical): {}", e),
+    }
+
     let mut ctrl_c_trade = std::pin::pin!(tokio::signal::ctrl_c());
     loop {
         let event = tokio::select! {
@@ -1000,6 +1029,37 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                         };
                                         if let Err(e) = store.insert_trade(&fill_rec).await {
                                             error!("Fill record DB write failed: {}", e);
+                                        }
+                                        // ── Post-fill invariant check ─────────────────────
+                                        {
+                                            let inv_positions: Vec<InvariantPosition> = open_positions.values().map(|p| {
+                                                InvariantPosition {
+                                                    symbol:       p.symbol.clone(),
+                                                    occ_symbol:   p.occ_symbol.clone(),
+                                                    qty:          p.qty,
+                                                    current_mark: p.entry_price,
+                                                }
+                                            }).collect();
+                                            let inv_state = BotState {
+                                                positions:              inv_positions,
+                                                equity:                 equity - estimated_daily_loss,
+                                                start_of_day_equity:    equity,
+                                                was_circuit_broken:     circuit_broken,
+                                                circuit_broken,
+                                                max_risk_capital_pct:   bot_cfg.max_daily_loss_pct,
+                                                max_daily_drawdown_pct: bot_cfg.max_daily_loss_pct,
+                                                block_long_premium:     true,
+                                                protected_equity:       std::collections::HashSet::new(),
+                                            };
+                                            let violations = assert_invariants(&inv_state);
+                                            if !violations.is_empty() {
+                                                error!("INVARIANT VIOLATIONS AFTER FILL:");
+                                                for v in &violations {
+                                                    error!("  {}", v);
+                                                }
+                                                circuit_broken = true;
+                                                eprintln!("⛔ Invariant violated — circuit breaker tripped. Requires manual review.");
+                                            }
                                         }
                                         // Position recorded — stop processing further signals for
                                         // this symbol on this tick to prevent duplicate entries.

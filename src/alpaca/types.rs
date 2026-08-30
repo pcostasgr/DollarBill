@@ -337,3 +337,45 @@ pub struct OptionsOrderRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_order_id: Option<String>,
 }
+
+/// A single entry from the Alpaca account activity stream.
+///
+/// The two activity types relevant for option assignment are:
+///   - `OPASN` — option assigned (short put exercised against the account)
+///   - `OPEXC` — option exercised (long put exercised by the account)
+///
+/// These are far more reliable than heuristically checking position symbol length,
+/// because the plain-equity position appears *after* settlement (T+1) while the
+/// activity record appears immediately on assignment date.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountActivity {
+    /// Activity type, e.g. `"OPASN"`, `"OPEXC"`, `"FILL"`, `"DIV"`.
+    pub activity_type: String,
+    /// Alpaca's unique ID for this activity record.
+    #[serde(default)]
+    pub id: String,
+    /// OCC symbol of the option contract involved (present for OPASN / OPEXC).
+    #[serde(default)]
+    pub symbol: String,
+    /// ISO-8601 timestamp of when the activity occurred.
+    #[serde(default)]
+    pub date: String,
+    /// Number of contracts assigned/exercised (positive integer string).
+    #[serde(default)]
+    pub qty: String,
+    /// Strike price at which the option was exercised / assigned (as a decimal string).
+    #[serde(default)]
+    pub price: String,
+    /// Side: "buy" for long (OPEXC), "sell" for short (OPASN put assignment).
+    #[serde(default)]
+    pub side: String,
+    /// Net cash effect on the account.
+    #[serde(default)]
+    pub net_amount: String,
+    /// Per-share price for the underlying delivery.
+    #[serde(default)]
+    pub per_share_amount: String,
+    /// Human-readable description (optional, not always present).
+    #[serde(default)]
+    pub description: String,
+}
