@@ -1,13 +1,84 @@
 # DollarBill — Cumulative Project Review
 
-**Last Updated:** July 26, 2026  
+**Last Updated:** September 5, 2026  
 **Reviewer:** Claude Sonnet 4.6  
 **Scope:** Full codebase audit — ~18,000 LOC src, 7,905 LOC tests, 6,678+ LOC examples  
-**Build:** Compiles clean. **682 tests pass, 0 fail, 16 ignored.** Zero warnings in `src/`.
+**Build:** Compiles clean. **748 tests pass, 0 fail, 16 ignored.** Zero warnings in `src/`.
 
-This document merges all review rounds — original Brutal Review, V2, Reevaluation, and the
-July 2026 update — into a single reference. The current-state sections reflect July 2026.
-The original pre-fix audits are preserved at the bottom for historical context.
+This document merges all review rounds — original Brutal Review, V2, Reevaluation, the
+July 2026 update, and the September 2026 Adversarial Hardening Plan update — into a single
+reference. The current-state sections reflect September 2026. The original pre-fix audits
+are preserved at the bottom for historical context.
+
+---
+
+## September 2026 Update — Adversarial Hardening Plan
+
+A dedicated adversarial-hardening pass (`TestFiles/DollarBill_Adversarial_Hardening_Plan.md`,
+local working doc) closed the remaining gaps between the risk layer's design and its runtime
+behavior, informed by a replay of the actual July 2026 incident activities ledger.
+
+**OCC Parsing Rewrite**
+`src/alpaca/occ.rs` replaces ad-hoc `nth()`/slice-index parsing (which broke on
+compact/padded root symbols like GLD, QCOM, GOOGL) with a single `parse_occ()` used
+everywhere — `client.rs`, `live_bot.rs`, `position_monitor.rs`. Proptest fuzzing covers
+no-panic-on-arbitrary-input, round-trip (compact + padded), and malformed input.
+
+**Shared Position Management**
+`src/risk/position_management.rs::manage_open_positions()` is now the single decision point
+for profit-take, defensive-close, roll, and force-close-long-premium actions, called
+identically by `live_bot.rs` and the backtesting engine. Added a per-symbol concentration cap
+(`max_risk_per_symbol_pct`, default 6%) and a roll-imbalance guard that flattens a rolled leg
+if the new fill quantity doesn't match the old leg's quantity.
+
+**Runtime Invariant Enforcement**
+`src/risk/invariants.rs::assert_invariants()` runs post-fill and checks NoNakedLongPremium,
+NoUnprotectedEquity, MaxLossWithinLimit, DailyDrawdownWithinLimit, and
+CircuitBreakerStaysTripped. On violation the bot now actually flattens all open risk
+(`close_all_positions` + local/store state cleanup) and sends a dedicated
+`Alerter::invariant_violation` email — previously it only set the circuit-breaker flag,
+leaving existing risk in place.
+
+**Order-Path Contract**
+`src/order_path.rs` is a new pure module implementing an explicit
+validate_signal → check_risk_guards → size_position → build_order → validate_occ_symbol →
+generate_client_order_id pipeline, with a distinct `OrderPathError` variant per failure mode
+(no silent-continue / `unwrap_or` masking). Documented step-by-step in `ORDER_PATH.md`,
+including an independent-review checklist answered against the current codebase.
+`validate_occ_symbol` is now called in `live_bot.rs` as an extra pre-submit gate for both
+single-leg and multi-leg orders.
+
+**`protected_equity` Wiring**
+`BotRuntimeConfig.protected_equity` is now threaded into both `live_bot`'s `ManagementConfig`
+and the invariant checker's `BotState`. Previously this field was always empty, so
+intentionally-held long stock (e.g. from an assignment) could never be marked protected and
+was vulnerable to being force-closed by the long-premium guard.
+
+**Assignment Detection**
+`get_account_activities()` on `AlpacaClient` queries Alpaca's OPASN/OPEXC activity feed; the
+bot warns on startup if there are recent assignments/exercises it doesn't yet account for.
+
+**New Test Coverage**
+- `src/alpaca/client.rs` `mock_http_tests`: a local hand-rolled HTTP server (no external
+  mocking crate) proving 422/403 responses surface as `Err` without retry, 429 is retried to
+  success, and ambiguous connect/timeout errors are never retried — the basis of the
+  `client_order_id` idempotency contract.
+- `src/streaming/mod.rs`: a local mock WebSocket server test proving `next_event()` recovers
+  from an abrupt connection drop via `reconnect_with_backoff` and resumes delivering data.
+- `tests/integration/test_kill_switches.rs` (10 tests): the §1.3 kill-switch scenario table
+  plus 3 bonus tests, exercised purely at the risk/invariant layer (no real Alpaca calls).
+- `tests/integration/test_july_replay.rs`: deterministic replay of the saved July 2026
+  incident's Alpaca activities ledger through the shared risk layer, asserting the post-fix
+  guards prevent the original loss class (naked long premium, missed assignment liquidation,
+  runaway concentration, drawdown breaker).
+- `.github/workflows/ci.yml`: build + test + `clippy -D warnings` gate on every push/PR.
+
+**Still Open**
+- The assignment-race window (gap between a risk check and order submission) is closed
+  reactively (via invariants/assignment detection) but not preventively.
+- Partial multi-leg fill has no HTTP-level mock test — only invariant-layer coverage.
+- `examples/personality_based_bot.rs` still uses its own inline close logic instead of the
+  shared `manage_open_positions()`.
 
 ---
 
@@ -98,12 +169,13 @@ continue to work without modification.
 **Test Count (July 2026)**
 | Harness | Passing | Ignored |
 |---|---|---|
-| lib (unit) | 228 | 7 |
-| integration | 364 | 0 |
-| doctests | 64 | 0 |
-| pricing validation | 11 | 2 |
-| other | 15 | 7 |
-| **Total** | **682** | **16** |
+| lib (unit) | 279 | 7 |
+| integration | 379 | 0 |
+| pricing validation | 14 | 7 |
+| portfolio | 64 | 0 |
+| doctests | 11 | 2 |
+| verify_cdf | 1 | 0 |
+| **Total** | **748** | **16** |
 
 ---
 
@@ -313,40 +385,44 @@ Full `clap` subcommand tree replacing the 240-line `main()` monolith:
 
 ---
 
-## Part 5: Test Coverage (July 2026)
+## Part 5: Test Coverage (September 2026)
 
-**682 passing tests across 42+ test files — 0 failed, 16 ignored**
+**748 passing tests across 45+ test files — 0 failed, 16 ignored**
 
 | Module | Source LOC | Test Files | Count | Coverage |
 |---|---|---|---|---|
 | Models (BS, Heston, American) | ~3,500 | 14 files | ~180 | **Excellent** — put-call parity, Greeks, stress, proptest, CDF reference |
-| Pricing Validation (Phase 1) | — | `pricing_validation.rs` | 11 | **Kill-criteria** — BSM PCP 10k, delta FD, Heston batch 1.5ms, CMA-ES crash, portfolio Greeks 20-leg |
+| Pricing Validation (Phase 1) | — | `pricing_validation.rs` | 14 | **Kill-criteria** — BSM PCP 10k, delta FD, Heston batch 1.5ms, CMA-ES crash, portfolio Greeks 20-leg |
 | Calibration | ~800 | 1 file | ~15 | **Good** — CMA-ES convergence, Heston calibration, regime stability |
 | Backtesting | ~2,200 | 7 files | ~90 | **Good** — engine, short options, slippage, edge cases, margin |
 | Strategies | ~1,500 | 4 files | ~60 | **Good** — exact input→output for all 6 strategies |
-| Portfolio | ~2,000 | 1 file | 30+ | **Good** — VaR, Greeks, Kelly, allocation, performance, CVaR |
-| Alpaca / Live Bot | ~2,000 | inline + unit | 64 | **Good** — OCC symbols, signal conversion, safety guards, position monitor |
+| Portfolio | ~2,000 | 1 file | 64 | **Good** — VaR, Greeks, Kelly, allocation, performance, CVaR |
+| Alpaca / Live Bot | ~2,400 | inline + unit | ~90 | **Good** — OCC parser proptest, mock-HTTP retry/idempotency, signal conversion, safety guards |
+| Risk (guards/invariants/position_management) | ~900 | inline + unit | ~30 | **Good** — proptest guards, invariant violation paths, concentration/roll checks |
+| Order Path | ~350 | inline | ~10 | **Good** — full-pipeline proptest fuzzing across adversarial roots/strikes/expiries |
 | Analysis | ~1,300 | 2 files | ~30 | **Good** — classifier; portfolio Greeks; all stub functions covered |
 | Backtesting/Margin | ~337 | inline | 15 | **Good** — Reg T margin, credit spreads, iron condor |
-| Integration | — | `tests/` | 364 | **Good** — end-to-end flows |
+| Integration | — | `tests/` | 379 | **Good** — end-to-end flows, kill-switch scenarios, July incident replay |
 
 ---
 
 ## Part 6: What Still Needs Work
 
-1. **Strategy matching data** — `matching.rs` structure is complete; run
-   `dollarbill backtest --save` to generate and persist real performance data.
-2. **Examples dead code** — some config fields in examples are unused; wiring them
-   would clean up the suppression pragmas there.
-3. **Iron condor Variant G DD regression** — Variant G's 20.95% max DD (vs 18.79% for F)
+1. **`examples/personality_based_bot.rs` still inline** — doesn't yet call the shared
+   `manage_open_positions()` used by `live_bot.rs` and backtesting; still uses older inline
+   close logic, so it can drift from the shared guards.
+2. **Assignment-race window** — the gap between a risk check and order submission is closed
+   reactively (invariants + OPASN/OPEXC detection) but not preventively.
+3. **Partial multi-leg fill** — no HTTP-level mock test, only invariant-layer coverage.
+4. **Iron condor Variant G DD regression** — Variant G's 20.95% max DD (vs 18.79% for F)
    is caused by mid-trade regime changes on condors entered in `LowVol`. The fix is entry-time
    regime pinning (store regime at entry; close if current regime differs by >1 class).
-4. **Live options approval** — Alpaca paper approval does not carry over to live. The bot
+5. **Live options approval** — Alpaca paper approval does not carry over to live. The bot
    will not submit live options orders without a separate live-trading options approval.
 
 ---
 
-## Part 7: Final Component Scores (July 2026)
+## Part 7: Final Component Scores (September 2026)
 
 | Component | Rating | Assessment |
 |---|---|---|
@@ -356,15 +432,16 @@ Full `clap` subcommand tree replacing the 240-line `main()` monolith:
 | Heston Calibrator | 9/10 | CMA-ES + NM polish; ε-insensitive Feller; regime stability test |
 | Backtesting | 8/10 | Honest P&L; real vol; DailyRiskLimits; look-ahead-free Heston params |
 | Strategies | 7/10 | Real signals, all variants tested |
-| Alpaca / Order Routing | 8/10 | Full OCC; idempotent submission; 13 safety guards |
+| Alpaca / Order Routing | 8/10 | Full OCC via central `occ.rs` parser; idempotent submission; mock-HTTP retry tests |
 | Advanced Classifier | 8/10 | Real S/R + sector relative vol/momentum |
 | Portfolio Greeks | 8/10 | vanna/volga/charm; 20-leg ~90 µs; kill tests 12–16 pass |
-| Strategy Matching | 6/10 | Correct structure; waiting on backtest data |
-| Portfolio Module | 7/10 | Complete architecture; 30+ direct tests |
-| Streaming | 8/10 | AlpacaStream; trades, quotes, reconnect |
+| Strategy Matching | 8/10 | `performance_matrix.json` populated from real backtest data |
+| Portfolio Module | 7/10 | Complete architecture; 64 direct tests |
+| Streaming | 8/10 | AlpacaStream; trades, quotes, reconnect; mock server test proves recovery |
 | Persistence | 7/10 | SQLite; fills, positions, bot status |
 | CLI | 8/10 | Full clap subcommand tree |
-| Live Bot | 8/10 | 13 safety guards; position monitor; regime pipeline; audit log |
+| Live Bot | 8.5/10 | Shared `manage_open_positions()`; runtime invariant enforcement with active flatten+alert; order-path contract |
+| Order Path | 8/10 | Pure pipeline, explicit error variants, documented + proptest-fuzzed |
 | **OVERALL** | **8/10** | Production-approaching options trading toolkit |
 
 ---

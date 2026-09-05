@@ -708,7 +708,7 @@ trade_audit.csv                         # Runtime: append-only audit log
 
 ## ✅ Testing
 
-**Comprehensive Test Suite: 487+ tests, 100% passing**
+**Comprehensive Test Suite: 748 tests, 100% passing (16 ignored)**
 
 ### Test Coverage by Category
 
@@ -745,7 +745,16 @@ trade_audit.csv                         # Runtime: append-only audit log
 | **Integration** | 17 | End-to-end pipeline, multi-model consistency, regime stress |
 | **Performance** | 3 | BSM, Heston, Nelder-Mead speed benchmarks |
 | **CDF Verification** | 1 | Normal CDF accuracy against 6 reference values |
-| **Doc-tests** | 5 | SABR, GL, vol surface, Alpaca client examples |
+| **Doc-tests** | 11 | SABR, GL, vol surface, Alpaca client examples |
+| **Risk — Guards / Invariants / Position Management** | ~30 | Daily drawdown/trade-cap proptest guards, runtime invariant checker (flatten+alert on violation), shared `manage_open_positions`, per-symbol concentration cap, roll-imbalance guard |
+| **Alpaca — OCC Parser** | ~10 | `parse_occ` proptest fuzzing: no-panic, round-trip (compact + padded), malformed input |
+| **Order Path** | ~10 | Full-pipeline proptest fuzzing across adversarial roots/strikes/expiries |
+| **Alpaca — Mock HTTP / Streaming Reconnect** | ~10 | Local mock HTTP server (retry/idempotency semantics); mock WebSocket server (reconnect recovery) |
+| **Integration — Kill Switches & July Replay** | ~15 | Kill-switch scenario table + deterministic replay of the July 2026 incident activities ledger |
+
+> See [ROADMAP.md](ROADMAP.md) and [REVIEW.md](REVIEW.md) for the fully up-to-date module-by-module
+> test breakdown; the table above reflects the original test suite plus the September 2026
+> adversarial-hardening additions.
 
 ### Running Tests
 ```bash

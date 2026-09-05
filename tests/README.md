@@ -31,13 +31,19 @@ cargo test test_call_option_atm
 
 ## Current Status
 
-**421+ tests implemented, 421+ passing (100% ✅)**
+**748 tests implemented, 748 passing, 16 ignored (100% of runnable tests ✅)**
+
+> Historical breakdown below predates the September 2026 adversarial-hardening pass (OCC parser
+> proptest, order-path pipeline, runtime invariants, kill-switch/July-replay integration tests,
+> mock HTTP/WebSocket tests). See [../REVIEW.md](../REVIEW.md) Part 5 for the current breakdown.
 
 ### Breakdown by Type
-- **Integration Tests**: 307 passing
-- **Library Unit Tests**: 110 passing (7 ignored — network-dependent)
+- **Integration Tests**: 379 passing
+- **Library Unit Tests**: 279 passing (7 ignored — network/release-only)
+- **Portfolio Tests**: 64 passing
+- **Pricing Validation (kill-criteria)**: 14 passing (7 ignored — release-only)
 - **Standalone Tests**: 1 passing (CDF verification)
-- **Doc Tests**: 3 passing (1 ignored)
+- **Doc Tests**: 11 passing (2 ignored)
 
 ### Test Coverage by Category
 - ✅ Black-Scholes Pricing: 30/30 (100%)

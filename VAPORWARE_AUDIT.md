@@ -1,4 +1,4 @@
-# Vaporware Audit — Updated July 2026
+# Vaporware Audit — Updated September 2026
 
 This document tracks what was previously vaporware and its current status.
 Since the original audit, substantial work has been done. All vaporware is gone.
@@ -75,9 +75,10 @@ Since the original audit, substantial work has been done. All vaporware is gone.
 ## ⚠️ Still Partially Stubbed
 
 ### `src/strategies/matching.rs` — `load_performance_data()`
-- Hardcoded data was removed; function is now a documented no-op
-- Comment: "real data should be loaded via PerformanceMatrix::load_from_file()"
-- **Status:** Run `dollarbill backtest --save` to populate. Then commit the JSON.
+- Hardcoded data was removed; function loads real data via `PerformanceMatrix::load_from_file()`
+- **Status:** ✅ Resolved (Aug 28, 2026) — `models/performance_matrix.json` populated from a real
+  `dollarbill backtest --save` run across all 15 symbols; results in `BACKTEST_REPORT.md`.
+  Re-run the same command to refresh after any strategy/config change.
 
 ---
 
@@ -108,15 +109,21 @@ Since the original audit, substantial work has been done. All vaporware is gone.
 ### Healthy (no action needed):
 - `src/strategies/` — All 6 strategies use real signals. All variants tested.
 - `src/alpaca/` — Full options order routing. Idempotent `post_order_safe()`. 13 safety guards.
+  Central OCC parser (`occ.rs`) with proptest fuzzing. Mock-HTTP tests for retry/idempotency behavior.
 - `src/backtesting/` — Honest P&L. Reg T margin. Shared DailyRiskLimits guards.
 - `src/models/` — BSM, Heston, American all correct and well-tested.
 - `src/calibration/` — CMA-ES + Heston calibration; ε-insensitive Feller; NM polish; regime stability.
 - `src/analysis/portfolio_greeks.rs` — vanna/volga/charm closed-form; kill tests 12–16.
-- `src/risk/guards.rs` — shared daily drawdown/trade-cap guards.
+- `src/risk/guards.rs` — shared daily drawdown/trade-cap guards; proptest invariants.
+- `src/risk/position_management.rs` — shared `manage_open_positions()` (live bot + backtest); per-symbol concentration cap.
+- `src/risk/invariants.rs` — post-fill runtime invariant checker; flattens risk and alerts on violation.
+- `src/order_path.rs` — pure order-path pipeline with explicit error variants; documented in `ORDER_PATH.md`.
 - `src/market_data/` — configurable spot provider; live options feed; 30-min recalibration loop.
+- `src/strategies/matching.rs` — `performance_matrix.json` populated from real backtest output.
 
 ### Needs targeted fixes:
-- `src/strategies/matching.rs` — Populate with real backtest output (structure is complete)
+- `examples/personality_based_bot.rs` — still uses older inline close logic instead of the shared
+  `manage_open_positions()` function used by `live_bot.rs` and backtesting.
 
 ### Has unit tests (not vaporware):
 - `src/portfolio/` — 38+ dedicated unit tests (sizing, VaR, allocation, performance, manager)
@@ -137,19 +144,21 @@ Keep all Python scripts. They provide real data pipeline value.
 
 ## 📋 Summary
 
-| Category | Original Audit | April 2026 | July 2026 |
-|----------|---------------|------------|-----------|
-| Fake strategies (sin/random) | 4 | 0 | 0 |
-| Signal variants missing fields | 4 | 0 | 0 |
-| Signal variants returning Err in order routing | 4 | 0 | 0 |
-| Math bugs | 6 | 0 | 0 |
-| Stubbed functions (hardcoded returns) | 5+ | 0 | 0 |
-| Modules with zero dedicated tests | 6 | 0 | 0 |
-| Vaporware config files | 4+ | 0 | 0 |
-| Live bot with no close logic | 1 | 0 | 0 |
-| No regime pipeline in live path | 1 | 0 | 0 |
-| Missing safety guards | ~10 | 0 | 0 |
-| Look-ahead bias in Heston backtest | 1 | 0 | 0 |
+| Category | Original Audit | April 2026 | July 2026 | September 2026 |
+|----------|---------------|------------|-----------|-----------------|
+| Fake strategies (sin/random) | 4 | 0 | 0 | 0 |
+| Signal variants missing fields | 4 | 0 | 0 | 0 |
+| Signal variants returning Err in order routing | 4 | 0 | 0 | 0 |
+| Math bugs | 6 | 0 | 0 | 0 |
+| Stubbed functions (hardcoded returns) | 5+ | 0 | 0 | 0 |
+| Modules with zero dedicated tests | 6 | 0 | 0 | 0 |
+| Vaporware config files | 4+ | 0 | 0 | 0 |
+| Live bot with no close logic | 1 | 0 | 0 | 0 |
+| No regime pipeline in live path | 1 | 0 | 0 | 0 |
+| Missing safety guards | ~10 | 0 | 0 | 0 |
+| Look-ahead bias in Heston backtest | 1 | 0 | 0 | 0 |
+| `performance_matrix.json` unpopulated | — | — | 1 | 0 |
 
-**Net:** All vaporware is gone. Only remaining gap is `performance_matrix.json` population
-(run `dollarbill backtest --save`).
+**Net:** All vaporware is gone. `performance_matrix.json` was populated Aug 28, 2026. The
+remaining item is bringing `examples/personality_based_bot.rs` onto the shared
+`manage_open_positions()` path (see [ROADMAP.md](ROADMAP.md) priority ranking).

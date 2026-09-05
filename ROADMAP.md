@@ -1,12 +1,12 @@
 # DollarBill — Roadmap
 
-**Written:** March 21, 2026 · **Updated:** July 26, 2026  
-**Baseline:** 682 tests passing · clean build · `a7e1f1d`  
+**Written:** March 21, 2026 · **Updated:** September 5, 2026  
+**Baseline:** 748 tests passing (16 ignored) · clean build · `80d1d7e`  
 **Grade at baseline:** 8/10
 
 ---
 
-## Where We Are (July 2026)
+## Where We Are (September 2026)
 
 The original 30-day sprint and all follow-on phases are complete. Phases 2–4 have been
 shipped. The live bot now opens **and** closes positions, uses regime-aware sizing, filters
@@ -40,11 +40,27 @@ activities audit.
 - ✅ Iron condor variants A–G: Variant F recommended (P&L-stop + slippage + 0.35 filter)
 - ✅ 682 tests, zero failures
 
+**August – September 2026 additions (Adversarial Hardening Plan):**
+- ✅ `performance_matrix.json` populated from a real `dollarbill backtest --save` run across all 15 symbols; `BACKTEST_REPORT.md` added
+- ✅ `src/alpaca/occ.rs`: central OCC parser (compact + padded roots) replacing brittle `nth()`/slice-index parsing that broke on GLD/QCOM/GOOGL-style symbols; proptest fuzzing (no-panic, round-trip, malformed input)
+- ✅ `src/risk/position_management.rs`: shared `manage_open_positions()` used identically by `live_bot` and backtesting — profit-take/defensive-close/roll/force-close-long decisions in one place; per-symbol concentration cap (`max_risk_per_symbol_pct`, default 6%); wired into `live_bot.rs` (removed direct `PositionMonitor` use)
+- ✅ `src/alpaca/live_bot.rs`: roll-imbalance guard (flattens a rolled leg if new fill qty doesn't match old leg's qty); OPASN/OPEXC assignment detection on startup via `get_account_activities()`
+- ✅ `src/risk/invariants.rs`: post-fill runtime invariant checker (`assert_invariants`) — NoNakedLongPremium, NoUnprotectedEquity, MaxLossWithinLimit, DailyDrawdownWithinLimit, CircuitBreakerStaysTripped. On violation, the bot now actually flattens all open risk (`close_all_positions` + state cleanup) and sends an `Alerter::invariant_violation` email, not just a circuit-breaker flag flip
+- ✅ `src/order_path.rs`: pure order-path pipeline (validate_signal → check_risk_guards → size_position → build_order → validate_occ_symbol → generate_client_order_id) with an explicit `OrderPathError` per step; documented in `ORDER_PATH.md` with the independent-review checklist answered inline; full-pipeline proptest fuzzing
+- ✅ `config.rs`: `protected_equity` added to `BotRuntimeConfig` and wired into `live_bot`'s `ManagementConfig`/invariant `BotState` (previously always empty, so intentional long stock could never be marked protected)
+- ✅ `src/alpaca/client.rs` mock_http_tests: local hand-rolled HTTP server proving 422/403 surface as `Err` without retry, 429 retries to success, and ambiguous connect/timeout errors are never retried (client_order_id idempotency)
+- ✅ `src/streaming/mod.rs` mock WebSocket server test: proves `next_event()` recovers from an abrupt connection drop via `reconnect_with_backoff` and resumes delivering data
+- ✅ `tests/integration/test_kill_switches.rs` (10 tests) and `tests/integration/test_july_replay.rs`: deterministic replay of the saved July 2026 incident activities ledger, asserting the post-fix guards prevent the original loss class (naked long premium, missed assignment liquidation, runaway concentration, drawdown breaker)
+- ✅ `.github/workflows/ci.yml`: build + test + `clippy -D warnings` on every push/PR
+- ✅ 748 tests, zero failures (16 ignored)
+
 **What still has gaps:**
 
 | Gap | Impact | Effort |
 |-----|--------|--------|
-| `performance_matrix.json` not populated from real backtest results | Medium | Low |
+| Assignment-race window (risk-check-to-submit gap) only closed reactively, not preventively | Medium | Medium |
+| Partial multi-leg fill has no HTTP-level mock test (only invariant-layer coverage) | Low | Medium |
+| `examples/personality_based_bot.rs` doesn't yet call `manage_open_positions` (still uses older inline close logic) | Medium | Low |
 | Iron condor Variant G: regime pinning at entry would fix 20.95% DD regression | Medium | Low |
 | Live options approval required for Alpaca live (separate from paper) | HIGH | External |
 
@@ -65,8 +81,9 @@ IV rank computed from vol surface CSV. `min_iv_rank` config key gates short-vol 
 Both wired into the live bot order pipeline via `RegimePipeline`. `AuditLog` records
 regime at signal time and fill time.
 
-### P2.4 — performance_matrix.json
-Run `dollarbill backtest --save` to populate. StrategyMatcher falls back to defaults until then.
+### P2.4 — performance_matrix.json ✅
+Populated via `dollarbill backtest --save` across all 15 symbols (Aug 28, 2026); results written to
+`BACKTEST_REPORT.md`. Re-run the same command to refresh after any strategy/config change.
 
 **Config keys (all live):**
 ```json
@@ -119,15 +136,17 @@ Cross-platform scripts in `scripts/`.
 
 ---
 
-## Success Metrics (Updated July 2026)
+## Success Metrics (Updated September 2026)
 
 - [x] Live bot opens **and closes** positions automatically
 - [x] Zero positions held past `max_position_days` without close (21-DTE rule)
 - [x] IV rank filter reduces false signals in flat-IV periods
-- [ ] `performance_matrix.json` populated from real backtest run
+- [x] `performance_matrix.json` populated from real backtest run
 - [x] `StrategyMatcher` produces non-default recommendations (wired via RegimePipeline)
-- [x] 682 tests passing
+- [x] 748 tests passing (16 ignored)
 - [x] Paper trading session: bot runs for a full market day without crash
+- [x] Shared `manage_open_positions()` used identically by live bot and backtesting
+- [x] Runtime invariant checker actively flattens risk on violation (not just circuit-breaker flag)
 
 ---
 
@@ -166,11 +185,11 @@ paper trading session demonstrates stability over multiple market weeks.
 
 ---
 
-## Priority Ranking (July 2026)
+## Priority Ranking (September 2026)
 
 | Priority | Item | Why |
 |----------|------|-----|
-| 🔴 1 | Run `backtest --save` → populate `performance_matrix.json` | 10-minute task; unlocks StrategyMatcher priors |
+| 🔴 1 | Wire `manage_open_positions` into `examples/personality_based_bot.rs` | Removes the last inline close-logic path that can drift from the shared guards |
 | 🟠 2 | Entry-time regime pinning in iron condor | Fixes Variant G DD regression (20.95% → ~18%) |
 | 🟡 3 | Live options approval (Alpaca) | Required before any live trading |
 | ⚪ 4 | Phase 5 ML | Defer until live trading is stable |
