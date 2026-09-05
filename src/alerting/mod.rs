@@ -142,4 +142,20 @@ impl Alerter {
         )
         .await;
     }
+
+    /// Runtime invariant violated (naked long premium, unprotected equity,
+    /// drawdown breach, etc). Always sent regardless of the `on_*` flags —
+    /// this is the highest-priority alert the bot can raise.
+    pub async fn invariant_violation(&self, violations: &[String]) {
+        self.send(
+            "INVARIANT VIOLATION — risk flattened, bot halted",
+            &format!(
+                "The runtime invariant checker detected a violation and the bot \
+                 flattened all open risk and tripped the circuit breaker permanently \
+                 for the day. Manual review is required before resuming.\n\n{}",
+                violations.join("\n")
+            ),
+        )
+        .await;
+    }
 }

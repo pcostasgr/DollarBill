@@ -331,6 +331,7 @@ mod tests {
             block_long_premium:      true,
             max_portfolio_delta_pct: 0.003,
             protected_equity:        HashSet::new(),
+            max_risk_per_symbol_pct: 0.06,
         }
     }
 
@@ -339,8 +340,11 @@ mod tests {
         // credit_target_pct=0.50, so the position should trigger ProfitTake not Hold
         // when BSM reprices it near zero.  Verify we get at least one non-Hold action
         // for the healthy short put (ProfitTake is the correct outcome at 30 DTE deep OTM).
+        // Equity is set well above the concentration cap ($150k notional / 6% = $2.5M
+        // cap trigger) so this test isolates profit-take/DTE logic from the
+        // concentration guard, which is covered separately.
         let pos = short_put("AAPL", 150.0, 180.0, 3.0, 30);
-        let actions = manage_open_positions(&[pos], &cfg(), 100_000.0);
+        let actions = manage_open_positions(&[pos], &cfg(), 500_000.0);
         // DeltaAlert will always be in the list; we want to confirm no ForceCloseLong/DefensiveClose
         assert!(!actions.iter().any(|a| matches!(a, ManagementAction::ForceCloseLong { .. })));
         assert!(!actions.iter().any(|a| matches!(a, ManagementAction::DefensiveClose { .. })));

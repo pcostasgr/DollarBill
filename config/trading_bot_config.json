@@ -13,7 +13,8 @@
     "roll_trigger_pct":     0.10,
     "roll_dte_days":        21,
     "max_rolls":            4,
-    "spot_price_source":    "alpaca"
+    "spot_price_source":    "alpaca",
+    "protected_equity":     []
   },
   "alerts": {
     "enabled":               false,

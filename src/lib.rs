@@ -15,3 +15,4 @@ pub mod streaming;
 pub mod persistence;
 pub mod alerting;
 pub mod risk;
+pub mod order_path;

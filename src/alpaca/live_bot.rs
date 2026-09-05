@@ -393,6 +393,9 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
     // ── Rolling price buffers and signal-cooldown trackers ────────────────
     let mut price_buf: HashMap<String, VecDeque<f64>> = HashMap::new();
     let mut last_signal: HashMap<String, Instant>     = HashMap::new();
+    // Equity tickers the bot intentionally holds long — never auto-sell or flag.
+    let protected_equity_set: HashSet<String> =
+        bot_cfg.protected_equity.iter().cloned().collect();
     // ── Shared position management config (mirrors entry-guard thresholds) ─
     let mgmt_config = ManagementConfig {
         credit_target_pct:       0.50,
@@ -407,7 +410,7 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
         roll_trigger_pct:        bot_cfg.roll_trigger_pct,
         block_long_premium:      true,
         max_portfolio_delta_pct: 0.003,
-        protected_equity:        std::collections::HashSet::new(),
+        protected_equity:        protected_equity_set.clone(),
         max_risk_per_symbol_pct: 0.06,
     };
     // Re-entry cooldown: after closing a position, block new entries for 5 min
@@ -894,6 +897,12 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                             // avoid entering positions with immediate assignment risk.
                             if let Some(ref raw_sym) = order.symbol.clone() {
                                 let resolved = client.resolve_single_leg_occ(raw_sym).await;
+                                // ── Order-path §5: reject any symbol Alpaca would 422 on ──
+                                if let Err(e) = crate::order_path::validate_occ_symbol(&resolved) {
+                                    warn!("Order path validation rejected {} — skipping: {}", resolved, e);
+                                    println!("    ⚠️  Rejected {} ({})", resolved, e);
+                                    continue;
+                                }
                                 let resolved_parts = occ_parser::parse_occ(&resolved);
                                 let is_put = resolved_parts.as_ref().map(|p| !p.is_call).unwrap_or(false);
                                 let resolved_strike = resolved_parts.as_ref().map(|p| p.strike);
@@ -920,9 +929,20 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                             // the nearest actually-listed contract. order.symbol is None for
                             // mleg orders so the block above is a no-op for them.
                             if let Some(ref mut legs) = order.legs {
+                                let mut reject_reason: Option<String> = None;
                                 for leg in legs.iter_mut() {
                                     let raw = leg.symbol.clone();
-                                    leg.symbol = client.resolve_single_leg_occ(&raw).await;
+                                    let resolved = client.resolve_single_leg_occ(&raw).await;
+                                    if let Err(e) = crate::order_path::validate_occ_symbol(&resolved) {
+                                        reject_reason = Some(format!("{resolved}: {e}"));
+                                        break;
+                                    }
+                                    leg.symbol = resolved;
+                                }
+                                if let Some(reason) = reject_reason {
+                                    warn!("Order path validation rejected multi-leg order for {} — skipping: {}", sym, reason);
+                                    println!("    ⚠️  Rejected multi-leg order for {} ({})", sym, reason);
+                                    continue;
                                 }
                             }
                             // Pre-flight buying-power check: skip if estimated margin
@@ -1080,16 +1100,32 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                                 max_risk_capital_pct:   bot_cfg.max_daily_loss_pct,
                                                 max_daily_drawdown_pct: bot_cfg.max_daily_loss_pct,
                                                 block_long_premium:     true,
-                                                protected_equity:       std::collections::HashSet::new(),
+                                                protected_equity:       protected_equity_set.clone(),
                                             };
                                             let violations = assert_invariants(&inv_state);
                                             if !violations.is_empty() {
-                                                error!("INVARIANT VIOLATIONS AFTER FILL:");
-                                                for v in &violations {
+                                                error!("INVARIANT VIOLATIONS AFTER FILL — flattening all risk:");
+                                                let violation_strings: Vec<String> = violations.iter().map(|v| v.to_string()).collect();
+                                                for v in &violation_strings {
                                                     error!("  {}", v);
                                                 }
                                                 circuit_broken = true;
-                                                eprintln!("⛔ Invariant violated — circuit breaker tripped. Requires manual review.");
+                                                eprintln!("⛔ Invariant violated — flattening all open risk, circuit breaker tripped permanently. Requires manual review.");
+                                                // ── Flatten all open risk (plan §4: on failure the bot must
+                                                // flatten, trip the breaker, alert, and log the full state) ──
+                                                if !dry_run {
+                                                    match client.close_all_positions().await {
+                                                        Ok(closed) => warn!("Flattened {} position(s) after invariant violation", closed.len()),
+                                                        Err(e) => error!("Flatten-all failed after invariant violation: {} — MANUAL INTERVENTION REQUIRED", e),
+                                                    }
+                                                }
+                                                for flat_sym in open_positions.keys().cloned().collect::<Vec<_>>() {
+                                                    let _ = store.close_position(&flat_sym).await;
+                                                }
+                                                open_positions.clear();
+                                                open_syms.clear();
+                                                let a = alerter.clone();
+                                                tokio::spawn(async move { a.invariant_violation(&violation_strings).await; });
                                             }
                                         }
                                         // Position recorded — stop processing further signals for

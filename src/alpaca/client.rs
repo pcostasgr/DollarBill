@@ -72,6 +72,24 @@ impl AlpacaClient {
         }
     }
 
+    /// Test-only constructor pointing at an arbitrary base URL (a local mock
+    /// HTTP server) with a short timeout, so tests never hang for 30s.
+    #[cfg(test)]
+    pub(crate) fn with_base_url(api_key: String, api_secret: String, base_url: String) -> Self {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .expect("Failed to build HTTP client");
+        Self {
+            client,
+            api_key,
+            api_secret,
+            base_url,
+            data_url: MARKET_DATA_URL.to_string(),
+            live: false,
+        }
+    }
+
     /// Create client from environment variables.
     ///
     /// Reads `ALPACA_API_KEY` and `ALPACA_API_SECRET`.
@@ -141,7 +159,10 @@ impl AlpacaClient {
     }
 
     /// Generate a unique `client_order_id` using a monotonic counter.
-    fn generate_order_id(prefix: &str) -> String {
+    ///
+    /// Exposed at `pub(crate)` so `order_path::generate_client_order_id` can
+    /// reuse the identical implementation instead of duplicating it.
+    pub(crate) fn generate_order_id(prefix: &str) -> String {
         use std::sync::atomic::{AtomicU64, Ordering};
         use std::time::{SystemTime, UNIX_EPOCH};
         static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -1187,3 +1208,134 @@ mod tests {
         assert_eq!(req.limit_price, Some(3.00));
     }
 }
+
+/// Mock-HTTP tests for the order-submission path (Adversarial Hardening Plan
+/// §3.3 checklist items 1 and 3). Uses a minimal hand-rolled HTTP/1.1 server
+/// over a local TCP socket — no real Alpaca API calls, no external mocking
+/// crate dependency.
+#[cfg(test)]
+mod mock_http_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    /// Spawn a mock server that replies to each accepted connection in turn
+    /// with the given (status, reason, body) tuples, then stops. Sends
+    /// `Connection: close` so reqwest never reuses the socket for the next
+    /// canned response.
+    async fn spawn_mock_server(responses: Vec<(u16, &'static str, String)>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            for (status, reason, body) in responses {
+                if let Ok((mut socket, _)) = listener.accept().await {
+                    let mut buf = [0u8; 8192];
+                    let _ = socket.read(&mut buf).await; // drain the request, ignore contents
+                    let resp = format!(
+                        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = socket.write_all(resp.as_bytes()).await;
+                    let _ = socket.shutdown().await;
+                }
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    fn sample_order_request() -> OrderRequest {
+        OrderRequest {
+            symbol: "AAPL".to_string(),
+            qty: 1.0,
+            side: OrderSide::Buy,
+            r#type: OrderType::Market,
+            time_in_force: TimeInForce::Day,
+            limit_price: None,
+            stop_price: None,
+            extended_hours: None,
+            client_order_id: None,
+        }
+    }
+
+    fn sample_order_json(client_order_id: &str) -> String {
+        format!(
+            r#"{{"id":"ord-1","client_order_id":"{client_order_id}","created_at":"2026-01-01T00:00:00Z",
+            "updated_at":null,"submitted_at":null,"filled_at":null,"expired_at":null,"canceled_at":null,
+            "failed_at":null,"replaced_at":null,"asset_id":"a1","symbol":"AAPL","asset_class":"us_equity",
+            "qty":"1","filled_qty":"0","order_type":"market","side":"buy","time_in_force":"day",
+            "limit_price":null,"stop_price":null,"filled_avg_price":null,"status":"accepted",
+            "extended_hours":false,"legs":null}}"#
+        )
+    }
+
+    // ── Checklist item 1: Alpaca error codes ───────────────────────────────
+
+    #[tokio::test]
+    async fn submit_order_surfaces_422_asset_not_found_without_retry() {
+        let body = r#"{"code":40010001,"message":"asset \"INVALIDXYZ\" not found"}"#.to_string();
+        let base = spawn_mock_server(vec![(422, "Unprocessable Entity", body)]).await;
+        let client = AlpacaClient::with_base_url("k".into(), "s".into(), base);
+        let mut order = sample_order_request();
+        order.symbol = "INVALIDXYZ".to_string();
+        let result = client.submit_order(&order).await;
+        let err = result.expect_err("422 must surface as Err, not a fabricated Ok");
+        assert!(err.to_string().contains("422"), "error must mention the status code: {err}");
+        assert!(err.to_string().to_lowercase().contains("not found"), "error must carry the body: {err}");
+    }
+
+    #[tokio::test]
+    async fn submit_order_surfaces_403_insufficient_buying_power_without_retry() {
+        let body = r#"{"code":40310000,"message":"insufficient buying power"}"#.to_string();
+        let base = spawn_mock_server(vec![(403, "Forbidden", body)]).await;
+        let client = AlpacaClient::with_base_url("k".into(), "s".into(), base);
+        let result = client.submit_order(&sample_order_request()).await;
+        let err = result.expect_err("403 must surface as Err");
+        assert!(err.to_string().contains("403"), "error must mention the status code: {err}");
+    }
+
+    #[tokio::test]
+    async fn submit_order_retries_429_then_succeeds() {
+        let ok_body = sample_order_json("db-eq-retry-test");
+        let base = spawn_mock_server(vec![
+            (429, "Too Many Requests", "{}".to_string()),
+            (200, "OK", ok_body),
+        ]).await;
+        let client = AlpacaClient::with_base_url("k".into(), "s".into(), base);
+        let order = client.submit_order(&sample_order_request()).await
+            .expect("429 must be retried and eventually succeed");
+        assert_eq!(order.status, "accepted");
+    }
+
+    // ── Checklist item 3: duplicate client_order_id / retry-safety ────────
+
+    #[tokio::test]
+    async fn generate_order_id_never_repeats_across_calls() {
+        // Directly exercises the id-generation contract documented in
+        // ORDER_PATH.md step 6: unique per call, so a retried submission
+        // never silently reuses an id in a way that could mask a duplicate.
+        let ids: Vec<String> = (0..50).map(|_| AlpacaClient::generate_order_id("eq")).collect();
+        let mut unique = ids.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(ids.len(), unique.len(), "generate_order_id produced a duplicate id");
+    }
+
+    #[tokio::test]
+    async fn no_retry_on_ambiguous_connect_error() {
+        // Bind then immediately drop a listener to get a port with nothing
+        // listening — every connection attempt gets ECONNREFUSED, the same
+        // "outcome unknown" class of error a real network timeout produces.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        let base = format!("http://{addr}");
+        let client = AlpacaClient::with_base_url("k".into(), "s".into(), base);
+        let result = client.submit_order(&sample_order_request()).await;
+        let err = result.expect_err("connection failure must surface as Err");
+        assert!(
+            err.to_string().contains("ORDER_SUBMISSION_TIMEOUT"),
+            "connect/timeout errors must be reported as ambiguous, not retried: {err}"
+        );
+    }
+}
+

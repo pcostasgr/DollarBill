@@ -271,3 +271,83 @@ impl AlpacaStream {
         Ok(())
     }
 }
+
+/// WebSocket disconnect/reconnect scenario test (Adversarial Hardening Plan
+/// §1.3 kill-switch scenario: "WebSocket disconnect then reconnect with stale
+/// positions"). Runs a minimal local mock Alpaca-protocol WS server — no real
+/// network calls, no external mocking crate.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::net::{TcpListener, TcpStream};
+
+    type ServerWs = tokio_tungstenite::WebSocketStream<TcpStream>;
+
+    /// Perform the server side of the same connect/auth/subscribe handshake
+    /// that `AlpacaStream::connect_to` expects from the client side.
+    async fn server_handshake(raw: TcpStream) -> ServerWs {
+        let mut ws = tokio_tungstenite::accept_async(raw).await.expect("server WS handshake failed");
+        ws.send(Message::Text(r#"[{"T":"success","msg":"connected"}]"#.to_string())).await.unwrap();
+        let _auth = ws.next().await; // client's auth message
+        ws.send(Message::Text(r#"[{"T":"success","msg":"authenticated"}]"#.to_string())).await.unwrap();
+        let _sub = ws.next().await; // client's subscribe message
+        ws.send(Message::Text(r#"[{"T":"subscription","trades":["AAPL"],"quotes":["AAPL"]}]"#.to_string())).await.unwrap();
+        ws
+    }
+
+    /// Spawns a mock server that accepts exactly two connections at the same
+    /// address: the first is dropped immediately after the handshake
+    /// (simulating a network failure), the second sends one trade tick and
+    /// stays open briefly so the client can read it.
+    async fn spawn_ws_mock_server() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            // Connection 1: handshake, then drop without sending data —
+            // the abrupt TCP close is what next_event() must recover from.
+            if let Ok((raw, _)) = listener.accept().await {
+                let _ws = server_handshake(raw).await;
+                // Dropped here: no keep-alive, no explicit close frame.
+            }
+            // Connection 2: handshake, then send a trade tick.
+            if let Ok((raw, _)) = listener.accept().await {
+                let mut ws = server_handshake(raw).await;
+                let trade = r#"[{"T":"t","S":"AAPL","p":150.25,"s":100,"t":"2026-01-01T00:00:00Z"}]"#;
+                let _ = ws.send(Message::Text(trade.to_string())).await;
+                tokio::time::sleep(Duration::from_millis(300)).await;
+            }
+        });
+        format!("ws://{addr}")
+    }
+
+    #[tokio::test]
+    async fn stream_recovers_from_drop_via_reconnect_and_resumes_data() {
+        let url = spawn_ws_mock_server().await;
+        let symbols = vec!["AAPL".to_string()];
+        let mut stream = AlpacaStream::connect_to(&url, "test-key", "test-secret", &symbols)
+            .await
+            .expect("initial connect should succeed against the mock server");
+
+        // The mock server dropped connection 1 right after the handshake, so
+        // the next read must fail/close and next_event() must transparently
+        // reconnect against the same address (connection 2).
+        let ev = stream.next_event().await;
+        assert!(
+            matches!(ev, Some(MarketEvent::Reconnected)),
+            "expected MarketEvent::Reconnected after the drop, got {:?}", ev
+        );
+
+        // After reconnecting, the stream must resume delivering real data —
+        // this is the "stale positions must reconcile against fresh data"
+        // requirement from the kill-switch scenario table.
+        let ev2 = stream.next_event().await;
+        match ev2 {
+            Some(MarketEvent::Trade(t)) => {
+                assert_eq!(t.symbol, "AAPL");
+                assert!((t.price - 150.25).abs() < 1e-9);
+            }
+            other => panic!("expected a Trade event after reconnect, got {:?}", other),
+        }
+    }
+}
+

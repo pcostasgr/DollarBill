@@ -233,6 +233,11 @@ pub struct BotRuntimeConfig {
     /// Set to `"yahoo"` to use Yahoo Finance (no API key required).
     #[serde(default)]
     pub spot_price_source: SpotPriceSource,
+    /// Equity tickers the bot intentionally holds long (e.g. covered-call shares)
+    /// and must never auto-liquidate or flag as an unprotected assignment.
+    /// Default: empty — every plain-equity position is treated as an accident.
+    #[serde(default)]
+    pub protected_equity: Vec<String>,
 }
 
 impl BotRuntimeConfig {
@@ -268,6 +273,7 @@ impl Default for BotRuntimeConfig {
             roll_dte_days:        Self::default_roll_dte_days(),
             max_rolls:            Self::default_max_rolls(),
             spot_price_source:    SpotPriceSource::default(),
+            protected_equity:     Vec::new(),
         }
     }
 }
