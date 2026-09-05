@@ -1,0 +1,9 @@
+{
+  "start_equity": 74000.0,
+  "max_daily_loss_pct": 0.05,
+  "max_risk_per_symbol_pct": 0.06,
+  "block_long_premium": true,
+  "credit_target_pct": 0.50,
+  "roll_before_dte": 21,
+  "itm_proximity_pct": 0.03
+}

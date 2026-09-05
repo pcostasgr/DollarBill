@@ -408,6 +408,7 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
         block_long_premium:      true,
         max_portfolio_delta_pct: 0.003,
         protected_equity:        std::collections::HashSet::new(),
+        max_risk_per_symbol_pct: 0.06,
     };
     // Re-entry cooldown: after closing a position, block new entries for 5 min
     let mut cooldown = CooldownTracker::new(300);
@@ -621,7 +622,7 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                             spot:          price,
                             sigma,
                         };
-                        let mgmt_actions = manage_open_positions(&[managed_pos], &mgmt_config);
+                        let mgmt_actions = manage_open_positions(&[managed_pos], &mgmt_config, equity - estimated_daily_loss);
                         // Derive strike for roll targeting from existing OCC; fall back to spot
                         let occ_strike = pos.occ_symbol.as_deref()
                             .and_then(|occ| occ_parser::parse_occ(occ).map(|p| p.strike))
@@ -697,9 +698,28 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                                     if let Err(e) = store.upsert_position(&rolled_pos).await {
                                                         error!("DB roll upsert failed: {}", e);
                                                     } else {
-                                                        open_positions.insert(sym.clone(), rolled_pos);
-                                                        println!("    ✅ Rolled to {} (roll {}/{})",
-                                                            filled.symbol, roll_number, max_rolls);
+                                                        // Imbalance guard: new-leg qty must match old-leg qty
+                                                        let filled_qty = filled.filled_qty
+                                                            .parse::<f64>()
+                                                            .unwrap_or(pos.qty.abs());
+                                                        if (filled_qty - pos.qty.abs()).abs() > 0.5 {
+                                                            warn!("ROLL_IMBALANCE [{sym}]: old qty={:.0} new filled_qty={:.0} — flattening imbalance",
+                                                                pos.qty.abs(), filled_qty);
+                                                            eprintln!("    ⚠️  Roll imbalance for {sym}: expected {:.0} got {:.0} — flattening",
+                                                                pos.qty.abs(), filled_qty);
+                                                            // Close whatever partial fill landed to avoid naked exposure
+                                                            if let Some(ref new_occ_s) = rolled_pos.occ_symbol {
+                                                                let _ = client.close_position(new_occ_s).await;
+                                                            }
+                                                            let _ = store.close_position(&sym).await;
+                                                            open_syms.remove(&sym);
+                                                            open_positions.remove(&sym);
+                                                            cooldown.record_close(&sym);
+                                                        } else {
+                                                            open_positions.insert(sym.clone(), rolled_pos);
+                                                            println!("    ✅ Rolled to {} (roll {}/{})",
+                                                                filled.symbol, roll_number, max_rolls);
+                                                        }
                                                     }
                                                 }
                                                 Err(e) => {

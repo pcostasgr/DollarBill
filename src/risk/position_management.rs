@@ -86,24 +86,29 @@ pub struct ManagementConfig {
     pub max_portfolio_delta_pct: f64,
     /// Set of equity symbols the bot intentionally holds long (never auto-sell).
     pub protected_equity: HashSet<String>,
+    /// Max notional risk per underlying as a fraction of equity
+    /// (strike × |qty| × 100 ≤ equity × limit).  0.0 = disabled.
+    /// Default: 0.06 (6% per symbol — stops concentration before it's catastrophic).
+    pub max_risk_per_symbol_pct: f64,
 }
 
 impl Default for ManagementConfig {
     fn default() -> Self {
         Self {
-            credit_target_pct:      0.50,
-            roll_before_dte:        21,
-            max_rolls:              2,
-            roll_dte_days:          30,
-            risk_free_rate:         0.045,
-            profit_target_pct:      0.25,
-            stop_loss_pct:          2.0,
-            max_position_days:      45,
-            itm_proximity_pct:      0.03,
-            roll_trigger_pct:       0.05,
-            block_long_premium:     true,
-            max_portfolio_delta_pct: 0.003, // 0.3% of equity
-            protected_equity:       HashSet::new(),
+            credit_target_pct:        0.50,
+            roll_before_dte:          21,
+            max_rolls:                2,
+            roll_dte_days:            30,
+            risk_free_rate:           0.045,
+            profit_target_pct:        0.25,
+            stop_loss_pct:            2.0,
+            max_position_days:        45,
+            itm_proximity_pct:        0.03,
+            roll_trigger_pct:         0.05,
+            block_long_premium:       true,
+            max_portfolio_delta_pct:  0.003,
+            protected_equity:         HashSet::new(),
+            max_risk_per_symbol_pct:  0.06,
         }
     }
 }
@@ -115,9 +120,13 @@ impl Default for ManagementConfig {
 ///
 /// Callers must execute every non-`Hold` action before the next tick.
 /// The function is pure — it never submits orders or mutates state.
+///
+/// `equity` is the current mark-to-market account equity, used for the
+/// per-symbol concentration check.  Pass `0.0` to skip that check.
 pub fn manage_open_positions(
     positions: &[ManagedPosition],
     config: &ManagementConfig,
+    equity: f64,
 ) -> Vec<ManagementAction> {
     let monitor = PositionMonitor::new(PositionMonitorConfig {
         profit_target_pct:     config.profit_target_pct,
@@ -141,9 +150,26 @@ pub fn manage_open_positions(
         let strike    = occ_parts.as_ref().map(|p| p.strike);
         let is_call   = occ_parts.as_ref().map(|p| p.is_call);
 
+        // ── Per-symbol concentration limit ─────────────────────────────────
+        if config.max_risk_per_symbol_pct > 0.0 && equity > 0.0 && pos.qty < 0.0 {
+            if let Some(k) = strike {
+                let notional = k * pos.qty.abs() * 100.0;
+                if notional > equity * config.max_risk_per_symbol_pct {
+                    actions.push(ManagementAction::DefensiveClose {
+                        symbol: pos.symbol.clone(),
+                        occ:    pos.occ_symbol.clone(),
+                        reason: format!(
+                            "CONCENTRATION: notional ${:.0} > {:.0}% of equity ${:.0}",
+                            notional, config.max_risk_per_symbol_pct * 100.0, equity
+                        ),
+                    });
+                    continue;
+                }
+            }
+        }
+
         // ── Long-premium force-close gate ─────────────────────────────────
-        if config.block_long_premium && pos.qty > 0.0 && pos.occ_symbol.is_some() {
-            // Only force-close if it is NOT hedging a short on the same root+expiry
+        if config.block_long_premium && pos.qty > 0.0 && pos.occ_symbol.is_some() {            // Only force-close if it is NOT hedging a short on the same root+expiry
             let is_hedge = positions.iter().any(|other| {
                 if other.symbol == pos.symbol && other.occ_symbol == pos.occ_symbol {
                     return false;
@@ -314,7 +340,7 @@ mod tests {
         // when BSM reprices it near zero.  Verify we get at least one non-Hold action
         // for the healthy short put (ProfitTake is the correct outcome at 30 DTE deep OTM).
         let pos = short_put("AAPL", 150.0, 180.0, 3.0, 30);
-        let actions = manage_open_positions(&[pos], &cfg());
+        let actions = manage_open_positions(&[pos], &cfg(), 100_000.0);
         // DeltaAlert will always be in the list; we want to confirm no ForceCloseLong/DefensiveClose
         assert!(!actions.iter().any(|a| matches!(a, ManagementAction::ForceCloseLong { .. })));
         assert!(!actions.iter().any(|a| matches!(a, ManagementAction::DefensiveClose { .. })));
@@ -324,7 +350,7 @@ mod tests {
     fn force_close_unhedged_long() {
         let mut pos = short_put("AAPL", 150.0, 180.0, 3.0, 30);
         pos.qty = 1.0; // long, unhedged
-        let actions = manage_open_positions(&[pos.clone()], &cfg());
+        let actions = manage_open_positions(&[pos.clone()], &cfg(), 100_000.0);
         assert!(actions.iter().any(|a| matches!(a, ManagementAction::ForceCloseLong { .. })));
     }
 
@@ -337,7 +363,7 @@ mod tests {
         // Give the long the same expiry month as the short
         let long_occ = long_wing.occ_symbol.clone().unwrap();
         // Same root + expiry → is_hedge = true
-        let actions = manage_open_positions(&[short, long_wing], &cfg());
+        let actions = manage_open_positions(&[short, long_wing], &cfg(), 100_000.0);
         assert!(!actions.iter().any(|a| matches!(a, ManagementAction::ForceCloseLong { .. })));
         let _ = long_occ; // silence unused warning
     }
@@ -348,7 +374,7 @@ mod tests {
         pos.qty = 1.0;
         let mut c = cfg();
         c.block_long_premium = false;
-        let actions = manage_open_positions(&[pos], &c);
+        let actions = manage_open_positions(&[pos], &c, 100_000.0);
         assert!(!actions.iter().any(|a| matches!(a, ManagementAction::ForceCloseLong { .. })));
     }
 }
