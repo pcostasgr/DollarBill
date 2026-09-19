@@ -60,7 +60,6 @@ activities audit.
 |-----|--------|--------|
 | Assignment-race window (risk-check-to-submit gap) only closed reactively, not preventively | Medium | Medium |
 | Partial multi-leg fill has no HTTP-level mock test (only invariant-layer coverage) | Low | Medium |
-| `examples/personality_based_bot.rs` doesn't yet call `manage_open_positions` (still uses older inline close logic) | Medium | Low |
 | Iron condor Variant G: regime pinning at entry would fix 20.95% DD regression | Medium | Low |
 | Live options approval required for Alpaca live (separate from paper) | HIGH | External |
 

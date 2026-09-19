@@ -7,7 +7,10 @@ use dollarbill::market_data::symbols::load_enabled_stocks;
 use dollarbill::strategies::matching::StrategyMatcher;
 use dollarbill::strategies::SignalAction;
 use dollarbill::portfolio::{PortfolioManager, PortfolioConfig, SizingMethod, AllocationMethod, RiskLimits};
-use dollarbill::risk::{DailyRiskLimits, check_daily_drawdown, check_daily_trade_cap};
+use dollarbill::risk::{
+    DailyRiskLimits, check_daily_drawdown, check_daily_trade_cap,
+    ManagedPosition, ManagementAction, ManagementConfig, manage_open_positions,
+};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
@@ -24,6 +27,18 @@ const STATE_FILE: &str = "bot_state.json";
 struct BotState {
     date: String,
     daily_trades_taken: usize,
+    #[serde(default)]
+    position_meta: HashMap<String, PositionMeta>,
+}
+
+/// Per-OCC-symbol bookkeeping needed by `manage_open_positions` that Alpaca's
+/// Position API doesn't expose (true entry date, roll count). `entry_date` is
+/// best-effort — the date the bot first observed the position, not necessarily
+/// the true fill time (e.g. across a bot restart).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct PositionMeta {
+    entry_date: String,
+    roll_count: i32,
 }
 
 impl BotState {
@@ -69,6 +84,26 @@ fn audit_log(
     }
 }
 
+/// Close a single OCC option position at market, retrying once on failure, and
+/// record the outcome to the audit log. Shared by every `ManagementAction`
+/// close variant returned by `manage_open_positions`.
+async fn close_managed_position(client: &AlpacaClient, occ: &str, tag: &str, reason: &str) {
+    let close_result = match client.close_position(occ).await {
+        Ok(ord) => Ok(ord),
+        Err(_) => client.close_position(occ).await, // one retry
+    };
+    match close_result {
+        Ok(ord) => {
+            println!("      ✅ Closed ({})", ord.id);
+            audit_log(occ, tag, 0.0, 0.0, &ord.id, &ord.status, reason);
+        }
+        Err(e) => {
+            eprintln!("      🚨 CRITICAL: Failed to close {}: {}", occ, e);
+            audit_log(occ, &format!("{tag}_FAILED"), 0.0, 0.0, "", "error", &e.to_string());
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct PersonalityBotConfig {
     trading: TradingConfig,
@@ -97,7 +132,12 @@ struct TradingConfig {
 
 #[derive(Debug, Deserialize)]
 struct RiskManagementConfig {
+    /// Superseded by the BSM-based thresholds in `ManagementConfig` (see
+    /// `manage_open_positions`), but kept so existing config JSON files with
+    /// these keys still deserialize without edits.
+    #[allow(dead_code)]
     stop_loss_pct: f64,
+    #[allow(dead_code)]
     take_profit_pct: f64,
     max_daily_trades: usize,
     #[serde(default = "default_max_daily_drawdown_pct")]
@@ -153,6 +193,8 @@ struct PersonalityBasedBot {
     /// OCC-fingerprint dedup set: prevents the same option leg (symbol+strike+expiry+side)
     /// from being submitted twice in one iteration cycle. Reset each iteration.
     submitted_this_iteration: std::collections::HashSet<String>,
+    /// Entry-date/roll-count bookkeeping per open OCC symbol, keyed for `manage_open_positions`.
+    position_meta: HashMap<String, PositionMeta>,
 }
 
 impl PersonalityBasedBot {
@@ -213,7 +255,18 @@ impl PersonalityBasedBot {
             daily_trades_taken,
             daily_trades_date,
             submitted_this_iteration: std::collections::HashSet::new(),
+            position_meta: saved.position_meta,
         }
+    }
+
+    /// Persist daily-trade counter and position metadata together so neither
+    /// write can silently clobber the other's latest value on disk.
+    fn save_state(&self) {
+        BotState {
+            date: self.daily_trades_date.clone(),
+            daily_trades_taken: self.daily_trades_taken,
+            position_meta: self.position_meta.clone(),
+        }.save();
     }
 
     async fn run_iteration(&mut self) -> Result<(), Box<dyn Error>> {
@@ -314,7 +367,7 @@ impl PersonalityBasedBot {
         if self.daily_trades_date != today {
             self.daily_trades_date = today.clone();
             self.daily_trades_taken = 0;
-            BotState { date: today, daily_trades_taken: 0 }.save();
+            self.save_state();
         }
         let tc_guard = check_daily_trade_cap(self.daily_trades_taken, &dd_limits);
         if tc_guard.is_halt() {
@@ -349,109 +402,9 @@ impl PersonalityBasedBot {
         // 🔥 ACTIVE POSITION MANAGEMENT - Check stop-losses, take-profits, and expiry
         println!("\n🔍 Checking Position Management (Stop-Loss/Take-Profit/Expiry)...");
 
-        // ── Option expiry handler ─────────────────────────────────────────────
-        // Mirror the backtester's close_all_positions() at expiry.
-        // OCC symbol format: ROOT(≤6 chars) YYMMDD(6) C|P(1) STRIKE(8)
-        // e.g. "AAPL  260620C00195000" or compact "QCOM260508P00120000"
-        let today_str = chrono::Local::now().format("%y%m%d").to_string(); // YYMMDD
-        let tomorrow_str = {
-            let tomorrow = chrono::Local::now() + chrono::Duration::days(1);
-            tomorrow.format("%y%m%d").to_string()
-        };
-        for pos in &positions {
-            let sym = &pos.symbol;
-            // Detect OCC option symbol: must be ≥15 chars and contain C or P
-            // preceded by a 6-digit date block.
-            if sym.len() < 15 { continue; }
-            // The date block starts at char 6 (0-indexed) for standard OCC symbols.
-            // Try both compact (no padding) and padded variants.
-            let date_block: String = sym.chars().filter(|c| c.is_ascii_digit()).take(6).collect();
-            if date_block.len() != 6 { continue; }
-
-            let is_expiring = date_block == today_str || date_block == tomorrow_str;
-            if !is_expiring { continue; }
-
-            let current_price: f64 = pos.current_price.parse().unwrap_or(0.0);
-            println!("   📅 EXPIRY APPROACHING: {} expires {} | Current: ${:.2}",
-                sym, date_block, current_price);
-
-            // Close the position before expiry to avoid assignment/settlement risk.
-            // This mirrors the backtester's ITM settlement logic — we exit at market
-            // rather than accepting assignment on a short leg.
-            print!("      Closing {} before expiry → ", sym);
-            let close_result = match client.close_position(sym).await {
-                Ok(ord) => Ok(ord),
-                Err(_) => client.close_position(sym).await, // one retry
-            };
-            match close_result {
-                Ok(ord) => {
-                    println!("✅ Closed ({})", ord.id);
-                    audit_log(sym, "EXPIRY_CLOSE", 0.0, current_price, &ord.id,
-                        &ord.status, "expiry ≤1 day — closed to avoid assignment");
-                }
-                Err(e) => {
-                    eprintln!("🚨 CRITICAL: Failed to close expiring option {}: {}", sym, e);
-                    audit_log(sym, "EXPIRY_CLOSE_FAILED", 0.0, current_price,
-                        "", "error", &e.to_string());
-                }
-            }
-        }
-
-        // ── Fix 2.1: Force-close existing long-premium positions ──────────────
-        // `block_long_premium` (Fix #4) only blocks NEW signals — any long
-        // options already in the account keep decaying. If the flag is on, close
-        // them at market now so they stop haemorrhaging theta.
-        // A position is "long-premium" when qty > 0 (long) and the symbol is an
-        // OCC options symbol (≥15 chars, contains a C/P type char at position 12).
-        if self.config.trading.risk_management.block_long_premium {
-            for pos in &positions {
-                let sym = &pos.symbol;
-                if sym.len() < 15 { continue; } // not an option symbol
-                let qty: f64 = pos.qty.parse().unwrap_or(0.0);
-                if qty <= 0.0 { continue; } // short/flat — fine, already credit
-                // Use the robust OCC parser — nth(12) is wrong for compact symbols.
-                let occ_parts = match dollarbill::alpaca::occ::parse_occ(sym) {
-                    Some(p) => p,
-                    None => continue,
-                };
-                // Skip long legs that hedge a short on the same underlying+expiry.
-                // Closing a hedge leg leaves a naked short — skip it.
-                let is_hedge = positions.iter().any(|other| {
-                    if other.symbol == *sym { return false; }
-                    let other_qty: f64 = other.qty.parse().unwrap_or(0.0);
-                    if other_qty >= 0.0 { return false; } // other must be short
-                    dollarbill::alpaca::occ::parse_occ(&other.symbol)
-                        .map(|o| o.root == occ_parts.root && o.expiry == occ_parts.expiry)
-                        .unwrap_or(false)
-                });
-                if is_hedge { continue; }
-                let current_price: f64 = pos.current_price.parse().unwrap_or(0.0);
-                println!("   🔥 FORCE-CLOSE LONG PREMIUM: {} qty={} — closing long option (block_long_premium=true)", sym, qty);
-                let close_req = OrderRequest {
-                    symbol: sym.clone(),
-                    qty,
-                    side: OrderSide::Sell,
-                    r#type: OrderType::Market,
-                    time_in_force: TimeInForce::Day,
-                    limit_price: None,
-                    stop_price: None,
-                    extended_hours: None,
-                    client_order_id: None,
-                };
-                match client.submit_order(&close_req).await {
-                    Ok(ord) => {
-                        println!("   {} | ✅ Long-premium close submitted ({})", sym, ord.id);
-                        audit_log(sym, "FORCE_CLOSE_LONG_PREMIUM", qty, current_price,
-                            &ord.id, &ord.status, "block_long_premium=true, closing existing long");
-                    }
-                    Err(e) => {
-                        eprintln!("   {} | ❌ Failed to close long-premium position: {}", sym, e);
-                        audit_log(sym, "FORCE_CLOSE_LP_FAILED", qty, current_price,
-                            "", "error", &e.to_string());
-                    }
-                }
-            }
-        }
+        // Note: option expiry, force-close-long-premium, and stop-loss/take-profit
+        // are all now handled below by the shared `manage_open_positions()` — the
+        // same BSM-based logic live_bot.rs and the backtester use (see ROADMAP.md).
 
         // ── Fix #6: Post-assignment stock disposal ────────────────────────────
         // This bot runs exclusively options strategies. Any plain-equity position
@@ -496,76 +449,113 @@ impl PersonalityBasedBot {
             }
         }
 
+        // ── Unified position management (via shared src/risk/position_management.rs) ──
+        // Same BSM-based credit-target/profit-target/stop-loss/roll/ITM-defense/expiry
+        // logic that live_bot.rs and the backtester use — zero drift between the three.
+        let mgmt_config = ManagementConfig {
+            block_long_premium:      self.config.trading.risk_management.block_long_premium,
+            max_risk_per_symbol_pct: self.config.trading.risk_management.max_risk_capital_per_symbol,
+            ..ManagementConfig::default()
+        };
+        let mut managed_positions: Vec<ManagedPosition> = Vec::new();
+        let mut spot_sigma_cache: HashMap<String, (f64, f64)> = HashMap::new();
+        let mut live_occ_symbols: std::collections::HashSet<String> = std::collections::HashSet::new();
         for pos in &positions {
-            let symbol = &pos.symbol;
-            let entry_price: f64 = pos.avg_entry_price.parse().unwrap_or(0.0);
-
-            // Use current_price from position data; if missing or zero, skip this
-            // position's SL/TP check rather than silently using a stale price.
-            let current_price: f64 = match pos.current_price.parse::<f64>() {
-                Ok(p) if p > 0.0 => p,
-                _ => {
-                    println!("   ⚠️  {} | Skipping SL/TP — current price unavailable or zero", symbol);
-                    continue;
-                }
+            let occ_sym = &pos.symbol;
+            let occ_parts = match dollarbill::alpaca::occ::parse_occ(occ_sym) {
+                Some(p) => p,
+                None => continue, // not an OCC option symbol (equities handled above)
             };
+            let qty: f64 = pos.qty.parse().unwrap_or(0.0);
+            if qty == 0.0 { continue; }
+            live_occ_symbols.insert(occ_sym.clone());
 
-            let _unrealized_pl: f64 = pos.unrealized_pl.parse().unwrap_or(0.0);
-            let pl_pct = if entry_price > 0.0 { 
-                (current_price - entry_price) / entry_price 
+            let (spot, sigma) = if let Some(&cached) = spot_sigma_cache.get(&occ_parts.root) {
+                cached
             } else {
-                0.0 
-            };
-
-            let stop_loss_threshold = -self.config.trading.risk_management.stop_loss_pct;
-            let take_profit_threshold = self.config.trading.risk_management.take_profit_pct;
-
-            if pl_pct <= stop_loss_threshold {
-                // STOP LOSS TRIGGERED
-                print!("   🛑 STOP LOSS: {} | Entry: ${:.2} → Current: ${:.2} | Loss: {:.1}% | ",
-                    symbol, entry_price, current_price, pl_pct * 100.0);
-
-                // Retry the close once — a single transient failure must not leave
-                // a losing position open.
-                let close_result = match client.close_position(symbol).await {
-                    Ok(ord) => Ok(ord),
-                    Err(_) => client.close_position(symbol).await,
+                let end_time = chrono::Utc::now();
+                let start_time = end_time - chrono::Duration::days(60);
+                let computed = match client.get_bars(&occ_parts.root, "1Day",
+                    &start_time.format("%Y-%m-%d").to_string(),
+                    Some(&end_time.format("%Y-%m-%d").to_string()), Some(60)).await
+                {
+                    Ok(bars) if !bars.is_empty() => {
+                        let prices: Vec<f64> = bars.iter().map(|b| b.c).collect();
+                        let spot = *prices.last().unwrap();
+                        let sigma = calculate_volatility(&prices).unwrap_or(0.30);
+                        (spot, sigma)
+                    }
+                    // Fallback: use the option's own mark as a rough spot proxy and a
+                    // conservative default vol rather than skipping management entirely.
+                    _ => (pos.current_price.parse().unwrap_or(0.0), 0.30),
                 };
-                match close_result {
-                    Ok(ord) => {
-                        println!("✅ Position closed ({})", ord.id);
-                        audit_log(symbol, "STOP_LOSS", 0.0, current_price, &ord.id, &ord.status, "stop-loss triggered");
-                    }
-                    Err(e) => {
-                        eprintln!("🚨 CRITICAL: Failed to close stop-loss position {}: {}", symbol, e);
-                        audit_log(symbol, "STOP_LOSS_FAILED", 0.0, current_price, "", "error", &e.to_string());
-                    }
-                }
-                continue; // Skip further analysis for this symbol
-            } else if pl_pct >= take_profit_threshold {
-                // TAKE PROFIT TRIGGERED
-                print!("   💰 TAKE PROFIT: {} | Entry: ${:.2} → Current: ${:.2} | Gain: {:.1}% | ",
-                    symbol, entry_price, current_price, pl_pct * 100.0);
+                spot_sigma_cache.insert(occ_parts.root.clone(), computed);
+                computed
+            };
 
-                match client.close_position(symbol).await {
-                    Ok(ord) => {
-                        println!("✅ Position closed ({})", ord.id);
-                        audit_log(symbol, "TAKE_PROFIT", 0.0, current_price, &ord.id, &ord.status, "take-profit triggered");
-                    }
-                    Err(e) => {
-                        eprintln!("⚠️  Failed to close take-profit position {}: {}", symbol, e);
-                        audit_log(symbol, "TAKE_PROFIT_FAILED", 0.0, current_price, "", "error", &e.to_string());
+            let meta = self.position_meta.entry(occ_sym.clone()).or_insert_with(|| PositionMeta {
+                entry_date: chrono::Local::now().format("%Y-%m-%d").to_string(),
+                roll_count: 0,
+            });
+            managed_positions.push(ManagedPosition {
+                symbol:        occ_parts.root.clone(),
+                occ_symbol:    Some(occ_sym.clone()),
+                qty,
+                entry_premium: pos.avg_entry_price.parse().ok(),
+                expires_at:    Some(occ_parts.expiry_str.clone()),
+                entry_date:    meta.entry_date.clone(),
+                roll_count:    meta.roll_count,
+                current_mark:  pos.current_price.parse().unwrap_or(0.0),
+                spot,
+                sigma,
+            });
+        }
+        // Drop metadata for positions that are no longer open.
+        self.position_meta.retain(|occ, _| live_occ_symbols.contains(occ));
+        self.save_state();
+
+        for action in manage_open_positions(&managed_positions, &mgmt_config, equity) {
+            match action {
+                ManagementAction::Hold => {}
+                ManagementAction::DeltaAlert { portfolio_delta, threshold } => {
+                    if threshold > 0.0 && portfolio_delta.abs() > equity * threshold {
+                        println!("   ⚠️  PORTFOLIO DELTA ALERT: {:.1} exceeds {:.2}% of equity threshold",
+                            portfolio_delta, threshold * 100.0);
                     }
                 }
-                continue; // Skip further analysis for this symbol
-            } else {
-                // Position within acceptable range
-                println!("   ✅ {} | P&L: {:.1}% (Target: +{:.0}% / Stop: -{:.0}%)", 
-                    symbol, pl_pct * 100.0, 
-                    take_profit_threshold * 100.0,
-                    stop_loss_threshold.abs() * 100.0);
+                ManagementAction::ForceCloseLong { occ, .. } => {
+                    let Some(occ) = occ else { continue };
+                    println!("   🔥 FORCE-CLOSE LONG PREMIUM: {} (block_long_premium=true)", occ);
+                    close_managed_position(client, &occ, "FORCE_CLOSE_LONG_PREMIUM",
+                        "block_long_premium=true, closing existing long").await;
+                    self.position_meta.remove(&occ);
+                }
+                ManagementAction::ProfitTake { occ, reason, .. } => {
+                    let Some(occ) = occ else { continue };
+                    println!("   💰 PROFIT TAKE: {} — {}", occ, reason);
+                    close_managed_position(client, &occ, "PROFIT_TAKE", &reason).await;
+                    self.position_meta.remove(&occ);
+                }
+                ManagementAction::DefensiveClose { occ, reason, .. } => {
+                    let Some(occ) = occ else { continue };
+                    println!("   🛑 DEFENSIVE CLOSE: {} — {}", occ, reason);
+                    close_managed_position(client, &occ, "DEFENSIVE_CLOSE", &reason).await;
+                    self.position_meta.remove(&occ);
+                }
+                ManagementAction::Roll { occ, new_dte_days, roll_number, .. } => {
+                    // This bot does not yet open a replacement leg after a roll
+                    // trigger; close the aging leg and let the normal signal scan
+                    // re-enter fresh next iteration (simplified roll).
+                    let Some(occ) = occ else { continue };
+                    println!("   🔄 ROLL TRIGGER: {} (roll #{}, target {}d) — closing (simplified roll)",
+                        occ, roll_number, new_dte_days);
+                    close_managed_position(client, &occ,
+                        "ROLL_CLOSE", &format!("roll #{} trigger — closed instead of rolled", roll_number)).await;
+                    self.position_meta.remove(&occ);
+                }
             }
         }
+        self.save_state();
 
         println!("\n🧠 Analyzing with Personality-Driven Strategies...\n");
 
@@ -771,10 +761,7 @@ impl PersonalityBasedBot {
                             // Options order submitted — count toward daily limit and move on.
                             acted = true;
                             self.daily_trades_taken += 1;
-                            BotState {
-                                date: self.daily_trades_date.clone(),
-                                daily_trades_taken: self.daily_trades_taken,
-                            }.save();
+                            self.save_state();
                             continue;
                         }
                         Ok(false) => {} // Not an options signal; fall through to equity handling.
@@ -879,10 +866,7 @@ impl PersonalityBasedBot {
                                             audit_log(symbol, "BUY", position_size as f64,
                                                 current_price, &filled.id, &filled.status, &signal.strategy_name);
                                             self.daily_trades_taken += 1;
-                                            BotState {
-                                                date: self.daily_trades_date.clone(),
-                                                daily_trades_taken: self.daily_trades_taken,
-                                            }.save();
+                                            self.save_state();
                                         }
                                         Err(e) => println!(" ⚠️  Fill poll error: {}", e),
                                     }
@@ -959,10 +943,7 @@ impl PersonalityBasedBot {
                                                     current_price, &filled.id, &filled.status,
                                                     &signal.strategy_name);
                                             self.daily_trades_taken += 1;
-                                            BotState {
-                                                date: self.daily_trades_date.clone(),
-                                                daily_trades_taken: self.daily_trades_taken,
-                                            }.save();
+                                            self.save_state();
                                             }
                                             Err(e) => println!(" ⚠️  Fill poll error: {}", e),
                                         }
