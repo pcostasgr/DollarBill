@@ -1,6 +1,6 @@
 # DollarBill — Cumulative Project Review
 
-**Last Updated:** September 5, 2026  
+**Last Updated:** September 26, 2026  
 **Reviewer:** Claude Sonnet 4.6  
 **Scope:** Full codebase audit — ~18,000 LOC src, 7,905 LOC tests, 6,678+ LOC examples  
 **Build:** Compiles clean. **748 tests pass, 0 fail, 16 ignored.** Zero warnings in `src/`.
@@ -72,13 +72,16 @@ bot warns on startup if there are recent assignments/exercises it doesn't yet ac
   guards prevent the original loss class (naked long premium, missed assignment liquidation,
   runaway concentration, drawdown breaker).
 - `.github/workflows/ci.yml`: build + test + `clippy -D warnings` gate on every push/PR.
+- (2026-09-19) `examples/personality_based_bot.rs` now calls the shared
+  `manage_open_positions()` used by `live_bot.rs` and backtesting, replacing its inline
+  expiry-close/force-close/SL-TP logic; added `PositionMeta` (entry_date/roll_count) tracked
+  in `bot_state.json`.
 
 **Still Open**
 - The assignment-race window (gap between a risk check and order submission) is closed
   reactively (via invariants/assignment detection) but not preventively.
 - Partial multi-leg fill has no HTTP-level mock test — only invariant-layer coverage.
-- `examples/personality_based_bot.rs` still uses its own inline close logic instead of the
-  shared `manage_open_positions()`.
+- Iron condor Variant G's 20.95% max DD regression (fix: entry-time regime pinning).
 
 ---
 
@@ -408,16 +411,13 @@ Full `clap` subcommand tree replacing the 240-line `main()` monolith:
 
 ## Part 6: What Still Needs Work
 
-1. **`examples/personality_based_bot.rs` still inline** — doesn't yet call the shared
-   `manage_open_positions()` used by `live_bot.rs` and backtesting; still uses older inline
-   close logic, so it can drift from the shared guards.
-2. **Assignment-race window** — the gap between a risk check and order submission is closed
+1. **Assignment-race window** — the gap between a risk check and order submission is closed
    reactively (invariants + OPASN/OPEXC detection) but not preventively.
-3. **Partial multi-leg fill** — no HTTP-level mock test, only invariant-layer coverage.
-4. **Iron condor Variant G DD regression** — Variant G's 20.95% max DD (vs 18.79% for F)
+2. **Partial multi-leg fill** — no HTTP-level mock test, only invariant-layer coverage.
+3. **Iron condor Variant G DD regression** — Variant G's 20.95% max DD (vs 18.79% for F)
    is caused by mid-trade regime changes on condors entered in `LowVol`. The fix is entry-time
    regime pinning (store regime at entry; close if current regime differs by >1 class).
-5. **Live options approval** — Alpaca paper approval does not carry over to live. The bot
+4. **Live options approval** — Alpaca paper approval does not carry over to live. The bot
    will not submit live options orders without a separate live-trading options approval.
 
 ---
@@ -440,7 +440,7 @@ Full `clap` subcommand tree replacing the 240-line `main()` monolith:
 | Streaming | 8/10 | AlpacaStream; trades, quotes, reconnect; mock server test proves recovery |
 | Persistence | 7/10 | SQLite; fills, positions, bot status |
 | CLI | 8/10 | Full clap subcommand tree |
-| Live Bot | 8.5/10 | Shared `manage_open_positions()`; runtime invariant enforcement with active flatten+alert; order-path contract |
+| Live Bot | 9/10 | Shared `manage_open_positions()` used identically by `live_bot.rs` and `personality_based_bot.rs`; runtime invariant enforcement with active flatten+alert; order-path contract |
 | Order Path | 8/10 | Pure pipeline, explicit error variants, documented + proptest-fuzzed |
 | **OVERALL** | **8/10** | Production-approaching options trading toolkit |
 

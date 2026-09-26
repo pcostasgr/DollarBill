@@ -122,8 +122,8 @@ Since the original audit, substantial work has been done. All vaporware is gone.
 - `src/strategies/matching.rs` — `performance_matrix.json` populated from real backtest output.
 
 ### Needs targeted fixes:
-- `examples/personality_based_bot.rs` — still uses older inline close logic instead of the shared
-  `manage_open_positions()` function used by `live_bot.rs` and backtesting.
+- None outstanding. `examples/personality_based_bot.rs` was wired onto the shared
+  `manage_open_positions()` (2026-09-19, commit `b5b0ef8`), matching `live_bot.rs` and backtesting.
 
 ### Has unit tests (not vaporware):
 - `src/portfolio/` — 38+ dedicated unit tests (sizing, VaR, allocation, performance, manager)
@@ -159,6 +159,8 @@ Keep all Python scripts. They provide real data pipeline value.
 | Look-ahead bias in Heston backtest | 1 | 0 | 0 | 0 |
 | `performance_matrix.json` unpopulated | — | — | 1 | 0 |
 
-**Net:** All vaporware is gone. `performance_matrix.json` was populated Aug 28, 2026. The
-remaining item is bringing `examples/personality_based_bot.rs` onto the shared
-`manage_open_positions()` path (see [ROADMAP.md](ROADMAP.md) priority ranking).
+**Net:** All vaporware is gone. `performance_matrix.json` was populated Aug 28, 2026.
+`examples/personality_based_bot.rs` was wired onto the shared `manage_open_positions()` path
+on 2026-09-19 (commit `b5b0ef8`), closing the last drift risk between the live bot and the
+example bot's close logic. Remaining work is tracked in [ROADMAP.md](ROADMAP.md)'s priority
+ranking (regime pinning, live options approval) — none of it is vaporware.

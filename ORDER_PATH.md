@@ -134,11 +134,9 @@ No step uses `unwrap_or`/silent `continue` to mask a failure.
    and `position_management`'s concentration check both use
    `strike × qty × 100`, never raw premium.
 8. **Reachability from both bots** — `manage_open_positions` and
-   `assert_invariants` are called identically from `live_bot.rs`;
-   `examples/personality_based_bot.rs` uses the same `risk::guards` module
-   but does not yet call `manage_open_positions` (still open — see repo
-   memory `dollarbill-roadmap-status.md`).
+   `assert_invariants` are called identically from `live_bot.rs` and, as of
+   2026-09-19 (commit `b5b0ef8`), `examples/personality_based_bot.rs` as well.
 
-**Status:** items 1, 3, 5, 6, 7, 8 (partial) covered by tests referenced above.
+**Status:** items 1, 3, 5, 6, 7, 8 covered by tests referenced above.
 Items 2 and 4 remain open — no HTTP-level partial-fill simulation, and the
 assignment-race window is only closed reactively, not preventively.

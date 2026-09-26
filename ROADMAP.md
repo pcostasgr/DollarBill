@@ -1,7 +1,7 @@
 # DollarBill — Roadmap
 
-**Written:** March 21, 2026 · **Updated:** September 5, 2026  
-**Baseline:** 748 tests passing (16 ignored) · clean build · `80d1d7e`  
+**Written:** March 21, 2026 · **Updated:** September 26, 2026  
+**Baseline:** 748 tests passing (16 ignored) · clean build · `b5b0ef8`  
 **Grade at baseline:** 8/10
 
 ---
@@ -53,6 +53,13 @@ activities audit.
 - ✅ `tests/integration/test_kill_switches.rs` (10 tests) and `tests/integration/test_july_replay.rs`: deterministic replay of the saved July 2026 incident activities ledger, asserting the post-fix guards prevent the original loss class (naked long premium, missed assignment liquidation, runaway concentration, drawdown breaker)
 - ✅ `.github/workflows/ci.yml`: build + test + `clippy -D warnings` on every push/PR
 - ✅ 748 tests, zero failures (16 ignored)
+
+**September 19, 2026 addition:**
+- ✅ `examples/personality_based_bot.rs` now calls the shared `manage_open_positions()` (same
+  path as `live_bot.rs`) instead of its own inline expiry-close/force-close/SL-TP logic; added
+  `PositionMeta` (entry_date/roll_count) tracked in `bot_state.json` since Alpaca's Position API
+  has no entry-date field. Roll actions are close-only for now (bot doesn't yet reopen a rolled
+  leg). This closed the last inline close-logic path that could drift from the shared guards.
 
 **What still has gaps:**
 
@@ -188,10 +195,9 @@ paper trading session demonstrates stability over multiple market weeks.
 
 | Priority | Item | Why |
 |----------|------|-----|
-| 🔴 1 | Wire `manage_open_positions` into `examples/personality_based_bot.rs` | Removes the last inline close-logic path that can drift from the shared guards |
-| 🟠 2 | Entry-time regime pinning in iron condor | Fixes Variant G DD regression (20.95% → ~18%) |
-| 🟡 3 | Live options approval (Alpaca) | Required before any live trading |
-| ⚪ 4 | Phase 5 ML | Defer until live trading is stable |
+| 🔴 1 | Entry-time regime pinning in iron condor | Fixes Variant G DD regression (20.95% → ~18%) |
+| 🟠 2 | Live options approval (Alpaca) | Required before any live trading |
+| ⚪ 3 | Phase 5 ML | Defer until live trading is stable |
 
 - ❌ More example programs (27 is already too many)
 - ❌ More documentation pages (14 docs pages is sufficient)
