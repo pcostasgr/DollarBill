@@ -1,4 +1,4 @@
-# Vaporware Audit — Updated September 2026
+# Vaporware Audit — Updated October 2026
 
 This document tracks what was previously vaporware and its current status.
 Since the original audit, substantial work has been done. All vaporware is gone.
@@ -110,13 +110,24 @@ Since the original audit, substantial work has been done. All vaporware is gone.
 - `src/strategies/` — All 6 strategies use real signals. All variants tested.
 - `src/alpaca/` — Full options order routing. Idempotent `post_order_safe()`. 13 safety guards.
   Central OCC parser (`occ.rs`) with proptest fuzzing. Mock-HTTP tests for retry/idempotency behavior.
-- `src/backtesting/` — Honest P&L. Reg T margin. Shared DailyRiskLimits guards.
+- `src/backtesting/` — Honest P&L. Reg T margin. Shared DailyRiskLimits guards. Final
+  liquidation uses the last historical day (fixed Oct 2026 — previously used the first day,
+  silently corrupting P&L/equity-curve stats for any position still open at backtest end).
+  Iron condor sizing uses the wider wing width, not short-strike distance (fixed Oct 2026).
+  Short positions now route through the same `manage_open_positions()` the live bot uses
+  (fixed Oct 2026 — previously a separate, older implementation).
 - `src/models/` — BSM, Heston, American all correct and well-tested.
 - `src/calibration/` — CMA-ES + Heston calibration; ε-insensitive Feller; NM polish; regime stability.
 - `src/analysis/portfolio_greeks.rs` — vanna/volga/charm closed-form; kill tests 12–16.
 - `src/risk/guards.rs` — shared daily drawdown/trade-cap guards; proptest invariants.
-- `src/risk/position_management.rs` — shared `manage_open_positions()` (live bot + backtest); per-symbol concentration cap.
-- `src/risk/invariants.rs` — post-fill runtime invariant checker; flattens risk and alerts on violation.
+- `src/risk/position_management.rs` — shared `manage_open_positions()`, genuinely used
+  identically by the live bot **and** the backtesting engine as of October 2026 (the
+  "backtest" half of this claim was aspirational until then — see `ROADMAP.md`); per-symbol
+  concentration cap.
+- `src/risk/invariants.rs` — post-fill runtime invariant checker; flattens risk and alerts on
+  violation. Hedge detection and max-loss now use `src/risk/payoff.rs`'s payoff-based
+  classification engine instead of a `strike × qty × 100` approximation (fixed Oct 2026 —
+  naked short calls were previously reported as a small finite risk instead of unbounded).
 - `src/order_path.rs` — pure order-path pipeline with explicit error variants; documented in `ORDER_PATH.md`.
 - `src/market_data/` — configurable spot provider; live options feed; 30-min recalibration loop.
 - `src/strategies/matching.rs` — `performance_matrix.json` populated from real backtest output.

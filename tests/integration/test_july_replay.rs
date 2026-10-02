@@ -189,7 +189,7 @@ pub fn replay_step(
         itm_proximity_pct:       cfg.itm_proximity_pct,
         ..ManagementConfig::default()
     };
-    let actions = manage_open_positions(&managed_positions, &mgmt_cfg, state.equity);
+    let actions = manage_open_positions(&managed_positions, &mgmt_cfg, state.equity, chrono::Utc::now().date_naive());
     for action in &actions {
         match action {
             ManagementAction::DefensiveClose { symbol, reason, .. }

@@ -6,7 +6,8 @@
 ///   3. Emit a high-priority alert.
 ///   4. Log the full state for post-mortem.
 use crate::alpaca::occ::parse_occ;
-use std::collections::HashSet;
+use crate::risk::payoff::{IdentifiedExposure, OptionExposure, portfolio_max_loss};
+use std::collections::{HashMap, HashSet};
 
 // ── Invariant definitions ─────────────────────────────────────────────────────
 
@@ -81,25 +82,31 @@ pub fn assert_invariants(state: &BotState) -> Vec<InvariantViolation> {
     let mut violations = Vec::new();
 
     // ── 1. No naked long premium ──────────────────────────────────────────
+    // A long option only offsets risk if it matches the SAME option type
+    // (calls hedge calls, puts hedge puts) on the same underlying+expiry, and
+    // only up to the quantity the opposing shorts can actually absorb
+    // (see TestFiles/DollarBill_RECOMMENDED_CHANGES.md #3).
     if state.block_long_premium {
+        let mut buckets: HashMap<(String, String, bool), (f64, f64)> = HashMap::new();
         for pos in &state.positions {
-            if pos.qty <= 0.0 { continue; }
             let Some(ref occ_str) = pos.occ_symbol else { continue };
             let Some(parts) = parse_occ(occ_str) else { continue };
-
-            let is_hedge = state.positions.iter().any(|other| {
-                if other.symbol == pos.symbol && other.occ_symbol == pos.occ_symbol { return false; }
-                if other.qty >= 0.0 { return false; }
-                parse_occ(other.occ_symbol.as_deref().unwrap_or(""))
-                    .map(|o| o.root == parts.root && o.expiry == parts.expiry)
-                    .unwrap_or(false)
-            });
-            if !is_hedge {
+            let key = (parts.root.clone(), parts.expiry_str.clone(), parts.is_call);
+            let entry = buckets.entry(key).or_insert((0.0, 0.0));
+            if pos.qty > 0.0 {
+                entry.0 += pos.qty;
+            } else if pos.qty < 0.0 {
+                entry.1 += pos.qty.abs();
+            }
+        }
+        for ((root, expiry, is_call), (total_long, total_short)) in buckets {
+            let naked = total_long - total_short;
+            if naked > 0.0 {
                 violations.push(InvariantViolation {
                     invariant: Invariant::NoNakedLongPremium,
                     detail: format!(
-                        "{} qty={:.0} is a long-premium position with no matching short hedge",
-                        occ_str, pos.qty
+                        "{} {} {} has {:.0} long contract(s) with no matching short hedge",
+                        root, expiry, if is_call { "call" } else { "put" }, naked
                     ),
                 });
             }
@@ -123,23 +130,43 @@ pub fn assert_invariants(state: &BotState) -> Vec<InvariantViolation> {
     }
 
     // ── 3. Max loss within limit ──────────────────────────────────────────
-    if state.max_risk_capital_pct > 0.0 && state.equity > 0.0 {
-        let total_max_loss: f64 = state.positions.iter().filter_map(|p| {
-            if p.qty >= 0.0 { return None; } // only short positions carry uncapped risk
-            parse_occ(p.occ_symbol.as_deref()?)
-                .map(|o| o.strike * p.qty.abs() * 100.0)
-        }).sum();
-        let loss_pct = total_max_loss / state.equity;
-        let limit = state.max_risk_capital_pct;
-        // Allow up to 10× the per-symbol limit as a total portfolio ceiling
-        if loss_pct > limit * 10.0 {
+    // Uses the payoff-based risk engine instead of a `strike × qty` notional
+    // approximation, so naked short calls are correctly flagged as unbounded
+    // rather than silently reported as a finite (and understated) figure
+    // (see TestFiles/DollarBill_RECOMMENDED_CHANGES.md #4).
+    if state.equity > 0.0 {
+        let exposures: Vec<IdentifiedExposure> = state.positions.iter().filter_map(|p| {
+            let occ = parse_occ(p.occ_symbol.as_deref()?)?;
+            Some(IdentifiedExposure {
+                root: occ.root,
+                expiry: occ.expiry_str,
+                exposure: OptionExposure {
+                    is_call: occ.is_call,
+                    strike: occ.strike,
+                    quantity: p.qty.round() as i32,
+                },
+            })
+        }).collect();
+        let (total_max_loss, any_unbounded) = portfolio_max_loss(&exposures);
+
+        if any_unbounded {
             violations.push(InvariantViolation {
                 invariant: Invariant::MaxLossWithinLimit,
-                detail: format!(
-                    "total max-loss ${:.0} is {:.1}% of equity — exceeds {:.1}% portfolio limit",
-                    total_max_loss, loss_pct * 100.0, limit * 1000.0
-                ),
+                detail: "one or more underlyings carry uncovered short calls with unbounded loss potential".to_string(),
             });
+        } else if state.max_risk_capital_pct > 0.0 {
+            let loss_pct = total_max_loss / state.equity;
+            let limit = state.max_risk_capital_pct;
+            // Allow up to 10× the per-symbol limit as a total portfolio ceiling
+            if loss_pct > limit * 10.0 {
+                violations.push(InvariantViolation {
+                    invariant: Invariant::MaxLossWithinLimit,
+                    detail: format!(
+                        "total max-loss ${:.0} is {:.1}% of equity — exceeds {:.1}% portfolio limit",
+                        total_max_loss, loss_pct * 100.0, limit * 1000.0
+                    ),
+                });
+            }
         }
     }
 
@@ -194,6 +221,10 @@ mod tests {
         format!("{}260926P{:08.0}", root, strike * 1000.0)
     }
 
+    fn occ_call(root: &str, strike: f64) -> String {
+        format!("{}260926C{:08.0}", root, strike * 1000.0)
+    }
+
     #[test]
     fn empty_state_no_violations() {
         assert!(assert_invariants(&healthy_state()).is_empty());
@@ -230,6 +261,49 @@ mod tests {
             current_mark: 1.0,
         });
         assert!(assert_invariants(&s).is_empty());
+    }
+
+    /// TestFiles/DollarBill_RECOMMENDED_CHANGES.md #3: a short PUT must not be
+    /// treated as a hedge for a long CALL — different option types, no payoff
+    /// relationship. The long calls must be flagged as naked.
+    #[test]
+    fn call_does_not_hedge_put_automatically() {
+        let mut s = healthy_state();
+        s.positions.push(InvariantPosition {
+            symbol: "AAPL".into(),
+            occ_symbol: Some(occ_call("AAPL", 150.0)),
+            qty: 10.0,
+            current_mark: 2.0,
+        });
+        s.positions.push(InvariantPosition {
+            symbol: "AAPL".into(),
+            occ_symbol: Some(occ_put("AAPL", 140.0)),
+            qty: -1.0,
+            current_mark: 1.0,
+        });
+        let v = assert_invariants(&s);
+        assert!(
+            v.iter().any(|x| x.invariant == Invariant::NoNakedLongPremium),
+            "long calls with only an unrelated short put present must still be flagged naked"
+        );
+    }
+
+    /// TestFiles/DollarBill_RECOMMENDED_CHANGES.md #4: a naked short call must
+    /// be flagged via unbounded-risk, not silently pass a finite notional check.
+    #[test]
+    fn naked_short_call_breaches_max_loss_even_with_small_notional() {
+        let mut s = healthy_state();
+        // A single $1 strike naked call would pass the old `strike × qty × 100`
+        // check trivially ($100 notional), but its true risk is unbounded.
+        s.positions.push(InvariantPosition {
+            symbol: "AAPL".into(),
+            occ_symbol: Some(occ_call("AAPL", 1.0)),
+            qty: -1.0,
+            current_mark: 0.5,
+        });
+        s.block_long_premium = false; // isolate the max-loss invariant only
+        let v = assert_invariants(&s);
+        assert!(v.iter().any(|x| x.invariant == Invariant::MaxLossWithinLimit));
     }
 
     #[test]

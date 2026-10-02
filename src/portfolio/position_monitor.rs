@@ -143,9 +143,11 @@ impl PositionMonitor {
     /// - `pos`   – position snapshot
     /// - `spot`  – current underlying price
     /// - `sigma` – current realised/implied vol (annualised, e.g. 0.25)
-    pub fn evaluate(&self, pos: &PositionSnapshot, spot: f64, sigma: f64) -> CloseDecision {
-        let today = Utc::now().date_naive();
-
+    /// - `today` – the "current" date used for DTE/expiry math. Live callers
+    ///   pass `Utc::now().date_naive()`; the backtester passes the simulated
+    ///   date so expiry/roll decisions are evaluated against simulated time,
+    ///   not wall-clock time.
+    pub fn evaluate(&self, pos: &PositionSnapshot, spot: f64, sigma: f64, today: NaiveDate) -> CloseDecision {
         // ── 1. DTE / expiry checks ─────────────────────────────────────────
         if let Some(exp_str) = &pos.expires_at {
             if let Ok(exp_date) = NaiveDate::parse_from_str(exp_str, "%Y-%m-%d") {
@@ -455,7 +457,7 @@ mod tests {
         // strike=250; roll_threshold=262.5, itm_threshold=257.5
         // spot=270 is well above roll_threshold → Hold
         let pos = put_pos("TEST  251219P00250000", REALISTIC_PREMIUM, 0, &far_expiry);
-        assert_eq!(monitor.evaluate(&pos, 270.0, 0.2), CloseDecision::Hold);
+        assert_eq!(monitor.evaluate(&pos, 270.0, 0.2, Utc::now().date_naive()), CloseDecision::Hold);
     }
 
     #[test]
@@ -465,7 +467,7 @@ mod tests {
         // strike=250; roll_threshold=250*(1+0.05)=262.5; itm_threshold=250*(1+0.03)=257.5
         // spot=260 → 257.5 < 260 ≤ 262.5 → Roll zone
         let pos = put_pos("TEST  251219P00250000", REALISTIC_PREMIUM, 0, &far_expiry);
-        match monitor.evaluate(&pos, 260.0, 0.2) {
+        match monitor.evaluate(&pos, 260.0, 0.2, Utc::now().date_naive()) {
             CloseDecision::Roll { new_strike, roll_number, .. } => {
                 assert_eq!(new_strike, 250.0);
                 assert_eq!(roll_number, 1);
@@ -480,7 +482,7 @@ mod tests {
         let far_expiry = (Utc::now() + chrono::Duration::days(20)).format("%Y-%m-%d").to_string();
         // strike=250; itm_threshold=250*(1+0.03)=257.5; spot=255 ≤ 257.5 → ITM close
         let pos = put_pos("TEST  251219P00250000", REALISTIC_PREMIUM, 0, &far_expiry);
-        match monitor.evaluate(&pos, 255.0, 0.2) {
+        match monitor.evaluate(&pos, 255.0, 0.2, Utc::now().date_naive()) {
             CloseDecision::Close(CloseReason::ItmProximity { .. }) => {}
             other => panic!("Expected ItmProximity close, got {:?}", other),
         }
@@ -493,7 +495,7 @@ mod tests {
         // spot=260 is in roll zone, but roll_count=2 = max_rolls → MaxRollsReached
         let pos = put_pos("TEST  251219P00250000", REALISTIC_PREMIUM, 2, &far_expiry);
         assert_eq!(
-            monitor.evaluate(&pos, 260.0, 0.2),
+            monitor.evaluate(&pos, 260.0, 0.2, Utc::now().date_naive()),
             CloseDecision::Close(CloseReason::MaxRollsReached)
         );
     }
@@ -504,8 +506,27 @@ mod tests {
         let tomorrow = (Utc::now() + chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
         let pos = put_pos("TEST  251219P00250000", REALISTIC_PREMIUM, 0, &tomorrow);
         assert_eq!(
-            monitor.evaluate(&pos, 260.0, 0.2),
+            monitor.evaluate(&pos, 260.0, 0.2, Utc::now().date_naive()),
             CloseDecision::Close(CloseReason::OneDte)
+        );
+    }
+
+    /// Regression test: `evaluate` must use the `today` argument for all DTE
+    /// math, never `Utc::now()` internally — otherwise reusing this monitor
+    /// from a backtester (simulated dates, usually far from wall-clock time)
+    /// would see every position as instantly expired (see
+    /// TestFiles/DollarBill_RECOMMENDED_CHANGES.md #5).
+    #[test]
+    fn evaluate_uses_provided_today_not_wall_clock() {
+        let monitor = PositionMonitor::new(cfg());
+        // A 2024 expiry, 20 "days" after a simulated 2024 "today" — both far in
+        // the past relative to the real wall-clock date this test runs on.
+        let pos = put_pos("TEST  240215P00250000", REALISTIC_PREMIUM, 0, "2024-02-15");
+        let simulated_today = NaiveDate::from_ymd_opt(2024, 1, 26).unwrap();
+        assert_eq!(
+            monitor.evaluate(&pos, 270.0, 0.2, simulated_today),
+            CloseDecision::Hold,
+            "must treat the simulated date as 'today', not wall-clock time"
         );
     }
 
@@ -515,7 +536,7 @@ mod tests {
         let yesterday = (Utc::now() - chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
         let pos = put_pos("TEST  251219P00250000", REALISTIC_PREMIUM, 0, &yesterday);
         assert_eq!(
-            monitor.evaluate(&pos, 260.0, 0.2),
+            monitor.evaluate(&pos, 260.0, 0.2, Utc::now().date_naive()),
             CloseDecision::Close(CloseReason::Expired)
         );
     }

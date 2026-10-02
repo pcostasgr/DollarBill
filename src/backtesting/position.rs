@@ -27,6 +27,9 @@ pub struct Position {
     pub entry_price: f64,
     pub entry_date: String,
     pub entry_spot: f64,
+    /// Expiration date ("YYYY-MM-DD"), when known. Used to route this
+    /// position through the shared `risk::position_management` layer.
+    pub expiry_date: Option<String>,
     pub exit_price: Option<f64>,
     pub exit_date: Option<String>,
     pub exit_spot: Option<f64>,
@@ -65,6 +68,7 @@ impl Position {
             entry_price,
             entry_date,
             entry_spot,
+            expiry_date: None,
             exit_price: None,
             exit_date: None,
             exit_spot: None,

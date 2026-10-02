@@ -1,14 +1,42 @@
 # DollarBill — Cumulative Project Review
 
-**Last Updated:** September 26, 2026  
-**Reviewer:** Claude Sonnet 4.6  
+**Last Updated:** October 2, 2026  
+**Reviewer:** Claude Sonnet 4.6 (GitHub Copilot, Claude Sonnet 4.5 session)  
 **Scope:** Full codebase audit — ~18,000 LOC src, 7,905 LOC tests, 6,678+ LOC examples  
-**Build:** Compiles clean. **748 tests pass, 0 fail, 16 ignored.** Zero warnings in `src/`.
+**Build:** Compiles clean. **765 tests pass, 0 fail, 16 ignored.** Zero warnings in `src/`.
 
 This document merges all review rounds — original Brutal Review, V2, Reevaluation, the
-July 2026 update, and the September 2026 Adversarial Hardening Plan update — into a single
-reference. The current-state sections reflect September 2026. The original pre-fix audits
-are preserved at the bottom for historical context.
+July 2026 update, the September 2026 Adversarial Hardening Plan update, and the October 2026
+`DollarBill_RECOMMENDED_CHANGES.md` fix pass — into a single reference. The current-state
+sections reflect October 2026. The original pre-fix audits are preserved at the bottom for
+historical context.
+
+---
+
+## October 2026 Update — Recommended Changes Review
+
+`TestFiles/DollarBill_RECOMMENDED_CHANGES.md` (an external code review) raised 8 findings.
+All 8 were independently re-verified against the current codebase before fixing; 6 were
+confirmed as real, current bugs — including two that directly corrupted historical backtest
+P&L (final-liquidation price and iron condor sizing). See `ROADMAP.md`'s October 2, 2026
+entry for the full list. Two corrections to prior claims in this document surfaced during
+the review:
+
+- The "Shared Position Management" claim below ("called identically by `live_bot.rs` and the
+  backtesting engine") was **not actually true** until this pass — `backtesting/engine.rs`
+  had its own separate, older exit-condition implementation. It now genuinely routes every
+  short position through `manage_open_positions()`.
+- `PositionMonitor::evaluate()` hardcoded `Utc::now()` for "today", which would have made
+  the above integration close every backtest position as instantly expired. Fixed by
+  threading an explicit `today: NaiveDate` parameter through both functions.
+
+A new `src/risk/payoff.rs` replaces the `strike × qty × 100` notional approximation used by
+the hedge-detection and max-loss invariants with a general payoff-based classification engine
+(`DefinedRisk` / `PartiallyDefined` / `UnboundedRisk`) — naked short calls are now correctly
+flagged as unbounded risk instead of silently passing as a small finite number.
+
+**Any previously-saved `performance_matrix.json` / backtest results predate these fixes and
+should be regenerated (`dollarbill backtest --save`) before being trusted again.**
 
 ---
 
@@ -440,7 +468,7 @@ Full `clap` subcommand tree replacing the 240-line `main()` monolith:
 | Streaming | 8/10 | AlpacaStream; trades, quotes, reconnect; mock server test proves recovery |
 | Persistence | 7/10 | SQLite; fills, positions, bot status |
 | CLI | 8/10 | Full clap subcommand tree |
-| Live Bot | 9/10 | Shared `manage_open_positions()` used identically by `live_bot.rs` and `personality_based_bot.rs`; runtime invariant enforcement with active flatten+alert; order-path contract |
+| Live Bot | 9/10 | Shared `manage_open_positions()` used identically by `live_bot.rs`, `personality_based_bot.rs`, **and the backtesting engine** (fixed Oct 2026 — previously backtest had a separate implementation); runtime invariant enforcement with active flatten+alert; order-path contract |
 | Order Path | 8/10 | Pure pipeline, explicit error variants, documented + proptest-fuzzed |
 | **OVERALL** | **8/10** | Production-approaching options trading toolkit |
 

@@ -31,7 +31,7 @@ cargo test test_call_option_atm
 
 ## Current Status
 
-**748 tests implemented, 748 passing, 16 ignored (100% of runnable tests ✅)**
+**765 tests implemented, 765 passing, 16 ignored (100% of runnable tests ✅)**
 
 > Historical breakdown below predates the September 2026 adversarial-hardening pass (OCC parser
 > proptest, order-path pipeline, runtime invariants, kill-switch/July-replay integration tests,

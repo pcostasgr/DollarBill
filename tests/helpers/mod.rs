@@ -2,6 +2,7 @@
 
 use dollarbill::models::bs_mod::Greeks;
 use dollarbill::market_data::csv_loader::HistoricalDay;
+use chrono::NaiveDate;
 
 /// Generate synthetic stock data for testing
 pub fn generate_synthetic_stock_data(
@@ -13,16 +14,21 @@ pub fn generate_synthetic_stock_data(
     let mut data = Vec::with_capacity(days);
     let mut price = start_price;
     let dt: f64 = 1.0 / 252.0; // One trading day
-    
+    // Real, monotonically-increasing calendar dates — a wrapping "day of month"
+    // string (e.g. always within January) breaks any expiry/DTE arithmetic that
+    // depends on dates actually advancing (see risk::position_management use
+    // in backtesting::engine, which computes real expiry dates from entry_date).
+    let base_date = NaiveDate::from_ymd_opt(2024, 1, 1).expect("valid date");
+
     for i in 0..days {
-        let date = format!("2024-01-{:02}", (i % 30) + 1);
+        let date = (base_date + chrono::Duration::days(i as i64)).format("%Y-%m-%d").to_string();
         
         // Simple geometric Brownian motion simulation
         let random_shock = if i % 2 == 0 { volatility * dt.sqrt() } else { -volatility * dt.sqrt() };
         price *= 1.0 + drift * dt + random_shock;
         
         data.push(HistoricalDay {
-            date: date.clone(),
+            date,
             close: price,
         });
     }

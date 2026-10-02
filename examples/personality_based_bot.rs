@@ -514,7 +514,7 @@ impl PersonalityBasedBot {
         self.position_meta.retain(|occ, _| live_occ_symbols.contains(occ));
         self.save_state();
 
-        for action in manage_open_positions(&managed_positions, &mgmt_config, equity) {
+        for action in manage_open_positions(&managed_positions, &mgmt_config, equity, chrono::Utc::now().date_naive()) {
             match action {
                 ManagementAction::Hold => {}
                 ManagementAction::DeltaAlert { portfolio_delta, threshold } => {

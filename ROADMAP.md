@@ -1,8 +1,8 @@
 # DollarBill — Roadmap
 
-**Written:** March 21, 2026 · **Updated:** September 26, 2026  
-**Baseline:** 748 tests passing (16 ignored) · clean build · `b5b0ef8`  
-**Grade at baseline:** 8/10
+**Written:** March 21, 2026 · **Updated:** October 2, 2026  
+**Baseline:** 765 tests passing (16 ignored) · clean build · see Git log for latest commit  
+**Grade at baseline:** 8.5/10
 
 ---
 
@@ -60,6 +60,53 @@ activities audit.
   `PositionMeta` (entry_date/roll_count) tracked in `bot_state.json` since Alpaca's Position API
   has no entry-date field. Roll actions are close-only for now (bot doesn't yet reopen a rolled
   leg). This closed the last inline close-logic path that could drift from the shared guards.
+
+**October 2, 2026 — `TestFiles/DollarBill_RECOMMENDED_CHANGES.md` review, all 8 findings resolved
+or triaged:**
+- ✅ Backtest final liquidation used `historical_data.first()` instead of `.last()` — an open
+  position surviving to the end of a backtest was being closed at the **starting** price/date,
+  corrupting P&L, equity curves, and Sharpe/drawdown stats. Fixed in both `run()` and
+  `run_with_signals()` (`src/backtesting/engine.rs`).
+- ✅ Iron condor position sizing used the distance between the two short strikes instead of the
+  wider wing width (`open_iron_condor()`) — fixed to `call_width.max(put_width) - net_premium`,
+  matching the already-correct (but previously unused) `margin.rs::max_loss_iron_condor()`.
+- ✅ Lookahead bias: `run_with_signals()`'s custom signal callback received the **full**
+  pre-computed volatility series instead of `&hist_vols[..=day_idx]` — a strategy could read
+  future volatility. Found while verifying fix #6; `examples/backtest_short_options.rs`'s
+  `hist_vols.last()` was silently doing exactly this.
+- ✅ New `src/risk/payoff.rs`: a general payoff-based option risk classification engine
+  (`OptionExposure`, `RiskClassification::{DefinedRisk, PartiallyDefined, UnboundedRisk}`,
+  `classify_group()`, `portfolio_max_loss()`). Evaluates the piecewise-linear expiration payoff
+  at every held strike instead of hand-written formulas per structure — correctly handles
+  naked legs, verticals, iron condors/butterflies with one algorithm.
+- ✅ Hedge detection (`src/risk/invariants.rs` `NoNakedLongPremium`) previously matched any
+  short on the same underlying+expiry regardless of option type — a short put would
+  incorrectly "hedge" a long call. Now buckets by `(root, expiry, option_type)` and requires
+  same-type quantity coverage.
+- ✅ `MaxLossWithinLimit` previously approximated risk as `strike × |qty| × 100` (silently wrong
+  for naked short calls, which are unbounded). Now uses `payoff::portfolio_max_loss()` and
+  flags unbounded risk unconditionally, not just as a %-of-equity threshold.
+- ✅ Backtest/live parity: `backtesting::engine.rs` now routes every SHORT position through
+  the SAME `risk::manage_open_positions()` the live bot uses, via a new
+  `manage_short_positions_shared()` — removing the last duplicate exit-condition
+  implementation. (Long positions and multi-leg spread/condor legs keep the existing
+  time/%-based logic — `PositionMonitor` is architecturally short-premium-only, so applying it
+  to longs would be incorrect, not a reasonable unification.)
+- 🐛 **Found while wiring the above up:** `PositionMonitor::evaluate()` hardcoded
+  `Utc::now()` for "today" — fine for live trading, but fatal once reused by the backtester:
+  a 2024 simulated date vs. the real wall-clock date made every historical short position
+  look instantly expired (0% win rate on every short-premium backtest). Fixed by threading an
+  explicit `today: NaiveDate` through `PositionMonitor::evaluate()` and
+  `manage_open_positions()` (8 call sites updated); live callers still pass
+  `Utc::now().date_naive()`, the backtester passes simulated time. Also fixed
+  `tests/helpers/mod.rs::generate_synthetic_stock_data()`, whose dates wrapped every 30 days
+  instead of advancing — a latent bug exposed by the same fix.
+- ⏭️ Skipped as cosmetic/no-risk: #7 (spread terminology in comments/logs) and #8 (README
+  placeholder clone URL).
+- **Any previously-saved `performance_matrix.json` / backtest results predate these fixes and
+  should be regenerated** (`dollarbill backtest --save`) before being trusted again.
+- 765 tests, zero failures (16 ignored) — up from 748/16 (added payoff.rs's 9 tests, 4 new
+  invariants/position_monitor/engine regression tests pinning the fixes above).
 
 **What still has gaps:**
 
@@ -149,7 +196,7 @@ Cross-platform scripts in `scripts/`.
 - [x] IV rank filter reduces false signals in flat-IV periods
 - [x] `performance_matrix.json` populated from real backtest run
 - [x] `StrategyMatcher` produces non-default recommendations (wired via RegimePipeline)
-- [x] 748 tests passing (16 ignored)
+- [x] 765 tests passing (16 ignored)
 - [x] Paper trading session: bot runs for a full market day without crash
 - [x] Shared `manage_open_positions()` used identically by live bot and backtesting
 - [x] Runtime invariant checker actively flattens risk on violation (not just circuit-breaker flag)

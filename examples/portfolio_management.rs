@@ -272,6 +272,7 @@ fn create_position(id: usize, symbol: &str, quantity: i32, price: f64, delta: f6
         entry_price: price,
         entry_date: "2024-02-01".to_string(),
         entry_spot: 100.0,
+        expiry_date: None,
         exit_price: None,
         exit_date: None,
         exit_spot: None,

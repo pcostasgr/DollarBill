@@ -10,7 +10,8 @@ use crate::models::bs_mod::{black_scholes_merton_call, black_scholes_merton_put}
 use crate::market_data::csv_loader::HistoricalDay;
 use crate::portfolio::{PortfolioManager, PortfolioConfig, SizingMethod, AllocationMethod, RiskLimits};
 use crate::strategies::SignalAction;
-use crate::risk::{DailyRiskLimits, GuardAction, check_all as risk_check_all};
+use crate::risk::{DailyRiskLimits, GuardAction, check_all as risk_check_all, ManagedPosition, ManagementAction, ManagementConfig, manage_open_positions};
+use crate::alpaca::AlpacaClient;
 
 /// How the bid-ask spread (and market impact) scales beyond a flat percentage.
 ///
@@ -424,8 +425,9 @@ impl BacktestEngine {
             self.check_exit_conditions(&day.date, spot, &hist_vols, day_idx);
         }
         
-        // Close all remaining positions at end
-        let final_day = historical_data.first()
+        // Close all remaining positions at end, using the final observed price —
+        // not the first day's price (see TestFiles/DollarBill_RECOMMENDED_CHANGES.md #1).
+        let final_day = historical_data.last()
             .expect("non-empty after guard");
         self.close_all_positions(&final_day.date, final_day.close);
         
@@ -470,8 +472,10 @@ impl BacktestEngine {
             let total_equity = self.current_capital + self.unrealized_pnl();
             self.equity_curve.add_point(day.date.clone(), total_equity);
             
-            // Get signals from custom function
-            let signals = signal_fn(symbol, spot, day_idx, &hist_vols);
+            // Get signals from custom function. Only expose volatility observations
+            // up to and including today — never the full series (see
+            // TestFiles/DollarBill_RECOMMENDED_CHANGES.md #6: lookahead bias).
+            let signals = signal_fn(symbol, spot, day_idx, &hist_vols[..=day_idx]);
             
             // Execute signals
             let current_vol = hist_vols.get(day_idx).copied().unwrap_or(0.25);
@@ -545,8 +549,9 @@ impl BacktestEngine {
             self.check_exit_conditions(&day.date, spot, &hist_vols, day_idx);
         }
         
-        // Close all remaining positions
-        let final_day = historical_data.first()
+        // Close all remaining positions using the final observed price —
+        // not the first day's price (see TestFiles/DollarBill_RECOMMENDED_CHANGES.md #1).
+        let final_day = historical_data.last()
             .expect("non-empty after guard");
         self.close_all_positions(&final_day.date, final_day.close);
         
@@ -606,7 +611,7 @@ impl BacktestEngine {
             return;
         }
         
-        let position = Position::new(
+        let mut position = Position::new(
             self.position_counter,
             symbol.to_string(),
             OptionType::Call,
@@ -618,6 +623,7 @@ impl BacktestEngine {
             spot,
             Some(greeks),
         );
+        position.expiry_date = Self::compute_expiry_date(date, time_to_expiry);
         
         // Effective fill price when buying (we pay more than mid due to spread)
         let effective_price = self.effective_price_ctx(price, true, volatility, position_size);
@@ -700,7 +706,7 @@ impl BacktestEngine {
             return;
         }
         
-        let position = Position::new(
+        let mut position = Position::new(
             self.position_counter,
             symbol.to_string(),
             OptionType::Put,
@@ -712,6 +718,7 @@ impl BacktestEngine {
             spot,
             Some(greeks),
         );
+        position.expiry_date = Self::compute_expiry_date(date, time_to_expiry);
         
         // Effective fill price when buying (we pay more than mid due to spread)
         let effective_price = self.effective_price_ctx(price, true, volatility, position_size);
@@ -783,7 +790,7 @@ impl BacktestEngine {
         }
 
         // For short positions, quantity is negative
-        let position = Position::new(
+        let mut position = Position::new(
             self.position_counter,
             symbol.to_string(),
             OptionType::Call,
@@ -795,6 +802,7 @@ impl BacktestEngine {
             spot,
             Some(greeks),
         );
+        position.expiry_date = Self::compute_expiry_date(date, time_to_expiry);
         
         // Effective fill price when selling (we get less than mid due to spread)
         let effective_price = self.effective_price_ctx(greeks.price, false, volatility, position_size as i32);
@@ -868,7 +876,7 @@ impl BacktestEngine {
         }
 
         // For short positions, quantity is negative
-        let position = Position::new(
+        let mut position = Position::new(
             self.position_counter,
             symbol.to_string(),
             OptionType::Put,
@@ -880,6 +888,7 @@ impl BacktestEngine {
             spot,
             Some(greeks),
         );
+        position.expiry_date = Self::compute_expiry_date(date, time_to_expiry);
         
         // Effective fill price when selling (we get less than mid due to spread)
         let effective_price = self.effective_price_ctx(greeks.price, false, volatility, position_size as i32);
@@ -937,9 +946,11 @@ impl BacktestEngine {
         // Net premium received (positive for credit)
         let net_premium = sell_call_price + sell_put_price - buy_call_price - buy_put_price;
         
-        // Calculate position size based on max loss (spread width - premium)
-        let spread_width = sell_call_strike - sell_put_strike;
-        let max_loss = spread_width - net_premium;
+        // Max loss is the wider wing minus premium, not the distance between the
+        // short strikes (see TestFiles/DollarBill_RECOMMENDED_CHANGES.md #2).
+        let call_width = (buy_call_strike - sell_call_strike).abs();
+        let put_width = (sell_put_strike - buy_put_strike).abs();
+        let max_loss = call_width.max(put_width) - net_premium;
         let position_size = self.calculate_position_size_for_spread(max_loss.abs());
         
         if position_size == 0 {
@@ -1067,7 +1078,7 @@ impl BacktestEngine {
             OptionType::Put => black_scholes_merton_put(spot, strike, time_to_expiry, self.config.risk_free_rate, volatility, 0.0),
         };
         
-        let position = Position::new(
+        let mut position = Position::new(
             self.position_counter,
             symbol.to_string(),
             option_type,
@@ -1079,6 +1090,7 @@ impl BacktestEngine {
             spot,
             Some(greeks),
         );
+        position.expiry_date = Self::compute_expiry_date(date, time_to_expiry);
         
         let effective_price = self.effective_price_ctx(price, quantity > 0, volatility, quantity.abs());
         let commission = self.calculate_commission(quantity.abs());
@@ -1210,11 +1222,20 @@ impl BacktestEngine {
     
     fn check_exit_conditions(&mut self, date: &str, spot: f64, hist_vols: &[f64], day_idx: usize) {
         let volatility = hist_vols.get(day_idx).copied().unwrap_or(0.25);  // Default vol if missing
-        
+
+        // Short positions are managed by the shared risk::position_management
+        // layer (identical decision logic to the live bot) — see
+        // TestFiles/DollarBill_RECOMMENDED_CHANGES.md #5.
+        self.manage_short_positions_shared(date, spot, hist_vols, day_idx);
+
         let mut positions_to_close = Vec::new();
         
         for position in self.positions.iter() {
             if !matches!(position.status, PositionStatus::Open) {
+                continue;
+            }
+            // Short positions were already evaluated above.
+            if position.quantity < 0 {
                 continue;
             }
             
@@ -1229,33 +1250,6 @@ impl BacktestEngine {
             // Also close if approaching expiry (within 2 days)
             if days_held >= self.config.days_to_expiry.saturating_sub(2) {
                 positions_to_close.push((position.id, days_held, "Near Expiry".to_string()));
-                continue;
-            }
-
-            // ── Short-specific profit/stop (measured against premium received) ──────
-            if position.quantity < 0 && position.entry_price > 0.0 {
-                // Derive current option price from unrealized P&L:
-                //   unrealized_pnl = (current - entry) × qty × 100
-                //   → current = entry + unrealized_pnl / (qty × 100)
-                let current_price = position.entry_price
-                    + position.unrealized_pnl / (position.quantity as f64 * 100.0);
-
-                if let Some(tp) = self.config.short_take_profit_pct {
-                    // 50% profit target: option dropped to ≤50% of entry premium
-                    if current_price <= position.entry_price * (1.0 - tp / 100.0) {
-                        positions_to_close.push((position.id, days_held, "Short Take Profit".to_string()));
-                        continue;
-                    }
-                }
-                if let Some(sl) = self.config.short_stop_loss_pct {
-                    // 200% stop: option rose to ≥300% of entry (we've lost 2× the premium)
-                    if current_price >= position.entry_price * (1.0 + sl / 100.0) {
-                        positions_to_close.push((position.id, days_held, "Short Stop Loss".to_string()));
-                        continue;
-                    }
-                }
-                // Neither short-specific exit triggered — skip the long-style checks
-                // (long-style percentages are meaningless for credit positions).
                 continue;
             }
 
@@ -1576,6 +1570,102 @@ impl BacktestEngine {
             _ => 1  // Fallback
         }
     }
+
+    /// Compute an expiration date string ("YYYY-MM-DD") from an entry date and
+    /// a time-to-expiry in years, so positions can be routed through the
+    /// shared `risk::position_management` layer (needs a real expiry, not
+    /// just a days-to-expiry count).
+    fn compute_expiry_date(entry_date: &str, time_to_expiry_years: f64) -> Option<String> {
+        use chrono::NaiveDate;
+        let date_str = entry_date.split_whitespace().next()?;
+        let start = NaiveDate::parse_from_str(date_str, "%Y-%m-%d").ok()?;
+        let days = (time_to_expiry_years * 365.0).round() as i64;
+        Some((start + chrono::Duration::days(days)).format("%Y-%m-%d").to_string())
+    }
+
+    /// Build a `ManagedPosition` snapshot for the shared position-management
+    /// layer from an open short option `Position`. Returns `None` when the
+    /// position has no known expiry (can't be routed through the shared layer).
+    fn build_managed_position(pos: &Position, spot: f64, sigma: f64) -> Option<ManagedPosition> {
+        let expiry = pos.expiry_date.as_deref()?;
+        let mut parts = expiry.split('-');
+        let yy: u32 = parts.next()?.parse::<u32>().ok()? % 100;
+        let mm: u32 = parts.next()?.parse().ok()?;
+        let dd: u32 = parts.next()?.parse().ok()?;
+        let is_call = matches!(pos.option_type, OptionType::Call);
+        let occ = AlpacaClient::occ_symbol(&pos.symbol, yy, mm, dd, is_call, pos.strike);
+
+        Some(ManagedPosition {
+            symbol: pos.symbol.clone(),
+            occ_symbol: Some(occ),
+            qty: pos.quantity as f64,
+            entry_premium: Some(pos.entry_price),
+            expires_at: pos.expiry_date.clone(),
+            entry_date: pos.entry_date.clone(),
+            roll_count: 0,
+            current_mark: spot, // not consumed by manage_open_positions' decision path
+            spot,
+            sigma,
+        })
+    }
+
+    /// Evaluate and close short option positions through the SAME shared
+    /// `manage_open_positions` layer the live bot uses (see
+    /// TestFiles/DollarBill_RECOMMENDED_CHANGES.md #5). Roll/ITM-proximity and
+    /// credit-target thresholds are disabled here (no equivalents previously
+    /// existed in backtesting config) so this is a minimal, behavior-preserving
+    /// swap of the duplicate stop/profit/max-hold logic for the real one.
+    fn manage_short_positions_shared(&mut self, date: &str, spot: f64, hist_vols: &[f64], day_idx: usize) {
+        let sigma = hist_vols.get(day_idx).copied().unwrap_or(0.25);
+
+        let snapshots: Vec<(usize, ManagedPosition)> = self.positions.iter()
+            .filter(|p| matches!(p.status, PositionStatus::Open) && p.quantity < 0)
+            .filter_map(|p| Self::build_managed_position(p, spot, sigma).map(|m| (p.id, m)))
+            .collect();
+        if snapshots.is_empty() {
+            return;
+        }
+
+        let config = ManagementConfig {
+            credit_target_pct: 0.0,
+            roll_before_dte: 0,
+            max_rolls: 0,
+            roll_dte_days: 0,
+            risk_free_rate: self.config.risk_free_rate,
+            profit_target_pct: self.config.short_take_profit_pct.map(|p| p / 100.0).unwrap_or(0.0),
+            stop_loss_pct: self.config.short_stop_loss_pct.map(|p| 1.0 + p / 100.0).unwrap_or(f64::INFINITY),
+            max_position_days: self.config.max_days_hold as i64,
+            itm_proximity_pct: 0.0,
+            roll_trigger_pct: 0.0,
+            block_long_premium: false,
+            max_portfolio_delta_pct: 0.0,
+            protected_equity: Default::default(),
+            max_risk_per_symbol_pct: 0.0,
+        };
+
+        let managed: Vec<ManagedPosition> = snapshots.iter().map(|(_, m)| m.clone()).collect();
+        // Pass the SIMULATED date, not wall-clock time — PositionMonitor's DTE/roll
+        // math must be evaluated against the backtest's "today", not real time.
+        let today = date.split_whitespace().next()
+            .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+            .unwrap_or_else(|| chrono::Utc::now().date_naive());
+        let actions = manage_open_positions(&managed, &config, 0.0, today);
+
+        for ((pos_id, _), action) in snapshots.iter().zip(actions.iter()) {
+            let should_close = matches!(
+                action,
+                ManagementAction::ProfitTake { .. }
+                    | ManagementAction::DefensiveClose { .. }
+                    | ManagementAction::ForceCloseLong { .. }
+                    | ManagementAction::Roll { .. }
+            );
+            if !should_close { continue; }
+            let days_held = self.positions.iter().find(|p| p.id == *pos_id)
+                .map(|p| self.calculate_days_between(&p.entry_date, date))
+                .unwrap_or(0);
+            self.close_position_by_id(*pos_id, date, spot, sigma, days_held);
+        }
+    }
     
     fn generate_result(&self, symbol: &str, start_date: String, end_date: String) -> BacktestResult {
         let metrics = PerformanceMetrics::calculate(
@@ -1598,6 +1688,178 @@ impl BacktestEngine {
             equity_curve: self.equity_curve.clone(),
             metrics,
         }
+    }
+}
+
+#[cfg(test)]
+mod correctness_regression_tests {
+    // Regression tests for TestFiles/DollarBill_RECOMMENDED_CHANGES.md items #1, #2, #6.
+    use super::*;
+
+    fn day(date: &str, close: f64) -> HistoricalDay {
+        HistoricalDay { date: date.to_string(), close }
+    }
+
+    /// #1 — a position still open when the backtest ends must be liquidated using the
+    /// *last* historical observation, not the first.
+    #[test]
+    fn final_liquidation_uses_last_day_not_first() {
+        let data = vec![
+            day("2024-01-01", 100.0),
+            day("2024-01-02", 110.0),
+            day("2024-01-03", 120.0),
+        ];
+
+        let config = BacktestConfig {
+            // Disable every early-exit path so the manually-inserted position
+            // survives untouched until the post-loop final liquidation.
+            max_days_hold: 1_000_000,
+            stop_loss_pct: None,
+            take_profit_pct: None,
+            short_take_profit_pct: None,
+            short_stop_loss_pct: None,
+            ..Default::default()
+        };
+        let mut engine = BacktestEngine::new(config);
+
+        // Insert an open long call directly, bypassing the entry pipeline so the
+        // test isolates the end-of-backtest liquidation step.
+        engine.positions.push(Position::new(
+            0,
+            "TEST".to_string(),
+            OptionType::Call,
+            ExerciseStyle::European,
+            100.0,   // strike
+            1,       // long 1 contract
+            1.0,     // entry premium (irrelevant to this test)
+            "2024-01-01".to_string(),
+            100.0,   // entry spot
+            None,
+        ));
+
+        engine.run_with_signals("TEST", data, |_symbol, _spot, _day_idx, _hist_vols| Vec::new());
+
+        let pos = engine.positions.first().expect("position must still be present");
+        assert!(matches!(pos.status, PositionStatus::Closed), "position must be closed by end of backtest");
+        assert_eq!(pos.exit_date.as_deref(), Some("2024-01-03"), "must liquidate using the LAST day's date");
+        assert_eq!(pos.exit_spot, Some(120.0), "must liquidate using the LAST day's price, not the first");
+    }
+
+    /// #2 — iron condor max loss (and therefore position sizing) must use the wider
+    /// wing width, not the distance between the two short strikes.
+    #[test]
+    fn iron_condor_sizes_by_wing_width_not_short_strike_distance() {
+        let spot = 100.0;
+        let sell_call_strike = 105.0;
+        let buy_call_strike = 108.0;   // call wing = 3
+        let sell_put_strike = 95.0;
+        let buy_put_strike = 80.0;     // put wing = 15 (the wider wing)
+        // Short-strike distance (the old, wrong formula) would be 105 - 95 = 10,
+        // which is neither wing width — a good discriminating test case.
+        let days_to_expiry = 30;
+        let volatility = 0.20;
+
+        let config = BacktestConfig::default();
+        let risk_free_rate = config.risk_free_rate;
+        let mut engine = BacktestEngine::new(config);
+        let initial_capital = engine.current_capital;
+
+        let time_to_expiry = days_to_expiry as f64 / 365.0;
+        let sell_call_price = black_scholes_merton_call(spot, sell_call_strike, time_to_expiry, risk_free_rate, volatility, 0.0).price;
+        let buy_call_price = black_scholes_merton_call(spot, buy_call_strike, time_to_expiry, risk_free_rate, volatility, 0.0).price;
+        let sell_put_price = black_scholes_merton_put(spot, sell_put_strike, time_to_expiry, risk_free_rate, volatility, 0.0).price;
+        let buy_put_price = black_scholes_merton_put(spot, buy_put_strike, time_to_expiry, risk_free_rate, volatility, 0.0).price;
+        let net_premium = sell_call_price + sell_put_price - buy_call_price - buy_put_price;
+
+        let call_width: f64 = (buy_call_strike - sell_call_strike).abs();
+        let put_width: f64 = (sell_put_strike - buy_put_strike).abs();
+        let expected_max_loss = call_width.max(put_width) - net_premium;
+        let max_loss_per_contract = expected_max_loss.abs() * 100.0;
+        let expected_contracts = ((initial_capital * 0.02) / max_loss_per_contract) as usize;
+        let expected_contracts = expected_contracts.max(1).min(10) as i32;
+
+        engine.open_iron_condor(
+            "TEST", spot,
+            sell_call_strike, buy_call_strike, sell_put_strike, buy_put_strike,
+            days_to_expiry, "2024-01-01", volatility,
+        );
+
+        assert_eq!(engine.positions.len(), 4, "iron condor must open exactly 4 legs");
+        for pos in &engine.positions {
+            assert_eq!(
+                pos.quantity.abs(), expected_contracts,
+                "leg size must be derived from the wider wing width, not the short-strike distance"
+            );
+        }
+    }
+
+    /// #6 — the custom signal callback must never see volatility observations
+    /// beyond the current simulated day (no lookahead).
+    #[test]
+    fn signal_fn_cannot_see_future_volatility() {
+        let data = vec![
+            day("2024-01-01", 100.0),
+            day("2024-01-02", 101.0),
+            day("2024-01-03", 102.0),
+            day("2024-01-04", 103.0),
+        ];
+        let mut engine = BacktestEngine::new(BacktestConfig::default());
+        let seen_lengths = std::cell::RefCell::new(Vec::new());
+
+        engine.run_with_signals("TEST", data, |_symbol, _spot, day_idx, hist_vols| {
+            seen_lengths.borrow_mut().push((day_idx, hist_vols.len()));
+            Vec::new()
+        });
+
+        for (day_idx, len) in seen_lengths.borrow().iter() {
+            assert_eq!(*len, day_idx + 1, "signal_fn must only see volatility up to and including today");
+        }
+    }
+
+    /// #5 — short positions must be managed via the shared
+    /// `risk::position_management::manage_open_positions` layer, evaluated
+    /// against the SIMULATED date. Regression guard: an earlier version of
+    /// this integration passed `Utc::now()` (real wall-clock time) into the
+    /// shared layer, which made every short position in a historical ("2024")
+    /// backtest look instantly expired and close for a guaranteed loss on the
+    /// very first day. A flat, low-vol synthetic market must instead let most
+    /// deep-OTM short strangles decay to a profitable close.
+    #[test]
+    fn short_positions_use_simulated_date_not_wall_clock() {
+        let mut data = Vec::new();
+        let mut price = 100.0;
+        for i in 0..60 {
+            let date = (chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap() + chrono::Duration::days(i))
+                .format("%Y-%m-%d").to_string();
+            // Tiny alternating wiggle — stays essentially flat, deep OTM strangles should decay profitably.
+            price *= if i % 2 == 0 { 1.001 } else { 0.999 };
+            data.push(day(&date, price));
+        }
+
+        let config = BacktestConfig {
+            initial_capital: 100_000.0,
+            max_positions: 3,
+            days_to_expiry: 30,
+            max_days_hold: 25,
+            ..Default::default()
+        };
+        let mut engine = BacktestEngine::new(config);
+
+        let result = engine.run_with_signals("TEST", data, |_symbol, spot, _day_idx, hist_vols| {
+            let hist_vol = hist_vols.last().copied().unwrap_or(0.20);
+            vec![
+                SignalAction::SellCall { strike: spot * 1.10, days_to_expiry: 30, volatility: hist_vol },
+                SignalAction::SellPut  { strike: spot * 0.90, days_to_expiry: 30, volatility: hist_vol },
+            ]
+        });
+
+        assert!(result.metrics.total_trades > 5, "test setup should have produced several trades");
+        assert!(
+            result.metrics.win_rate > 0.0,
+            "deep-OTM short strangles in a flat market must show SOME wins — \
+             a 0% win rate indicates every position was force-closed on day one \
+             (the Utc::now()-vs-simulated-date bug)"
+        );
     }
 }
 

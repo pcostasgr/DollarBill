@@ -625,7 +625,7 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                             spot:          price,
                             sigma,
                         };
-                        let mgmt_actions = manage_open_positions(&[managed_pos], &mgmt_config, equity - estimated_daily_loss);
+                        let mgmt_actions = manage_open_positions(&[managed_pos], &mgmt_config, equity - estimated_daily_loss, chrono::Utc::now().date_naive());
                         // Derive strike for roll targeting from existing OCC; fall back to spot
                         let occ_strike = pos.occ_symbol.as_deref()
                             .and_then(|occ| occ_parser::parse_occ(occ).map(|p| p.strike))

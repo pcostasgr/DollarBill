@@ -123,10 +123,16 @@ impl Default for ManagementConfig {
 ///
 /// `equity` is the current mark-to-market account equity, used for the
 /// per-symbol concentration check.  Pass `0.0` to skip that check.
+///
+/// `today` is the date used for all DTE/expiry math. Live callers pass
+/// `chrono::Utc::now().date_naive()`; the backtester passes the simulated
+/// date so expiry/roll decisions are evaluated against simulated time, not
+/// wall-clock time.
 pub fn manage_open_positions(
     positions: &[ManagedPosition],
     config: &ManagementConfig,
     equity: f64,
+    today: chrono::NaiveDate,
 ) -> Vec<ManagementAction> {
     let monitor = PositionMonitor::new(PositionMonitorConfig {
         profit_target_pct:     config.profit_target_pct,
@@ -200,7 +206,7 @@ pub fn manage_open_positions(
             strike,
             is_call,
         };
-        let action = match monitor.evaluate(&snapshot, pos.spot, pos.sigma) {
+        let action = match monitor.evaluate(&snapshot, pos.spot, pos.sigma, today) {
             CloseDecision::Hold => ManagementAction::Hold,
             CloseDecision::Close(reason) => {
                 let reason_str = match &reason {
@@ -344,7 +350,7 @@ mod tests {
         // cap trigger) so this test isolates profit-take/DTE logic from the
         // concentration guard, which is covered separately.
         let pos = short_put("AAPL", 150.0, 180.0, 3.0, 30);
-        let actions = manage_open_positions(&[pos], &cfg(), 500_000.0);
+        let actions = manage_open_positions(&[pos], &cfg(), 500_000.0, chrono::Utc::now().date_naive());
         // DeltaAlert will always be in the list; we want to confirm no ForceCloseLong/DefensiveClose
         assert!(!actions.iter().any(|a| matches!(a, ManagementAction::ForceCloseLong { .. })));
         assert!(!actions.iter().any(|a| matches!(a, ManagementAction::DefensiveClose { .. })));
@@ -354,7 +360,7 @@ mod tests {
     fn force_close_unhedged_long() {
         let mut pos = short_put("AAPL", 150.0, 180.0, 3.0, 30);
         pos.qty = 1.0; // long, unhedged
-        let actions = manage_open_positions(&[pos.clone()], &cfg(), 100_000.0);
+        let actions = manage_open_positions(&[pos.clone()], &cfg(), 100_000.0, chrono::Utc::now().date_naive());
         assert!(actions.iter().any(|a| matches!(a, ManagementAction::ForceCloseLong { .. })));
     }
 
@@ -367,7 +373,7 @@ mod tests {
         // Give the long the same expiry month as the short
         let long_occ = long_wing.occ_symbol.clone().unwrap();
         // Same root + expiry → is_hedge = true
-        let actions = manage_open_positions(&[short, long_wing], &cfg(), 100_000.0);
+        let actions = manage_open_positions(&[short, long_wing], &cfg(), 100_000.0, chrono::Utc::now().date_naive());
         assert!(!actions.iter().any(|a| matches!(a, ManagementAction::ForceCloseLong { .. })));
         let _ = long_occ; // silence unused warning
     }
@@ -378,7 +384,7 @@ mod tests {
         pos.qty = 1.0;
         let mut c = cfg();
         c.block_long_premium = false;
-        let actions = manage_open_positions(&[pos], &c, 100_000.0);
+        let actions = manage_open_positions(&[pos], &c, 100_000.0, chrono::Utc::now().date_naive());
         assert!(!actions.iter().any(|a| matches!(a, ManagementAction::ForceCloseLong { .. })));
     }
 }

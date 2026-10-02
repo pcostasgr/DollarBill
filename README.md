@@ -708,7 +708,7 @@ trade_audit.csv                         # Runtime: append-only audit log
 
 ## ✅ Testing
 
-**Comprehensive Test Suite: 748 tests, 100% passing (16 ignored)**
+**Comprehensive Test Suite: 765 tests, 100% passing (16 ignored)**
 
 ### Test Coverage by Category
 
