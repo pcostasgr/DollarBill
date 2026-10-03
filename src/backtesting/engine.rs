@@ -349,7 +349,7 @@ impl BacktestEngine {
     fn advance_sim_day(&mut self, date: &str) {
         if self.current_sim_date != date {
             self.current_sim_date = date.to_string();
-            let total_equity = self.current_capital + self.unrealized_pnl();
+            let total_equity = self.total_equity();
             self.start_of_day_equity = total_equity;
             self.daily_trades_taken = 0;
         }
@@ -357,7 +357,7 @@ impl BacktestEngine {
 
     /// Check all intra-day risk guards.  Returns `true` if new entries are allowed.
     fn risk_guards_allow_entry(&self) -> bool {
-        let total_equity = self.current_capital + self.unrealized_pnl();
+        let total_equity = self.total_equity();
         risk_check_all(
             self.start_of_day_equity,
             total_equity,
@@ -400,7 +400,7 @@ impl BacktestEngine {
 
             // Update equity curve
             self.update_open_positions(&day.date, spot, &hist_vols, day_idx);
-            let total_equity = self.current_capital + self.unrealized_pnl();
+            let total_equity = self.total_equity();
             self.equity_curve.add_point(day.date.clone(), total_equity);
             
             // Generate signals based on volatility
@@ -423,6 +423,7 @@ impl BacktestEngine {
             
             // Check exit conditions for all open positions
             self.check_exit_conditions(&day.date, spot, &hist_vols, day_idx);
+            self.record_equity(&day.date);
         }
         
         // Close all remaining positions at end, using the final observed price —
@@ -430,6 +431,7 @@ impl BacktestEngine {
         let final_day = historical_data.last()
             .expect("non-empty after guard");
         self.close_all_positions(&final_day.date, final_day.close);
+        self.record_equity(&final_day.date);
         
         self.generate_result(symbol, start_date, end_date)
     }
@@ -469,7 +471,7 @@ impl BacktestEngine {
 
             // Update positions and equity
             self.update_open_positions(&day.date, spot, &hist_vols, day_idx);
-            let total_equity = self.current_capital + self.unrealized_pnl();
+            let total_equity = self.total_equity();
             self.equity_curve.add_point(day.date.clone(), total_equity);
             
             // Get signals from custom function. Only expose volatility observations
@@ -547,6 +549,7 @@ impl BacktestEngine {
             
             // Check exit conditions for all open positions
             self.check_exit_conditions(&day.date, spot, &hist_vols, day_idx);
+            self.record_equity(&day.date);
         }
         
         // Close all remaining positions using the final observed price —
@@ -554,6 +557,7 @@ impl BacktestEngine {
         let final_day = historical_data.last()
             .expect("non-empty after guard");
         self.close_all_positions(&final_day.date, final_day.close);
+        self.record_equity(&final_day.date);
         
         self.generate_result(symbol, start_date, end_date)
     }
@@ -1474,7 +1478,7 @@ impl BacktestEngine {
 
         // ── Buying-power / notional cap (mirrors live bot's order_cost > buying_power check) ──
         if let Some(max_pct) = self.config.max_position_notional_pct {
-            let total_equity = self.current_capital + self.unrealized_pnl();
+            let total_equity = self.total_equity();
             let order_notional = option_price * contracts.abs() as f64 * 100.0;
             let allowed_notional = total_equity * max_pct;
             if order_notional > allowed_notional {
@@ -1509,19 +1513,30 @@ impl BacktestEngine {
         }
     }
     
-    fn unrealized_pnl(&self) -> f64 {
-        self.positions.iter()
+    /// Cash already includes entry premiums. Add signed current position value,
+    /// including the cost basis, rather than adding only the change in value.
+    fn total_equity(&self) -> f64 {
+        self.current_capital + self.positions.iter()
             .filter(|p| matches!(p.status, PositionStatus::Open))
-            .map(|p| p.unrealized_pnl)
-            .sum()
+            .map(|p| p.entry_price * p.quantity as f64 * 100.0 + p.unrealized_pnl)
+            .sum::<f64>()
+    }
+
+    fn record_equity(&mut self, date: &str) {
+        if self.equity_curve.dates.last().map(String::as_str) == Some(date) {
+            self.equity_curve.dates.pop();
+            self.equity_curve.equity.pop();
+            self.equity_curve.drawdown.pop();
+        }
+        self.equity_curve.add_point(date.to_string(), self.total_equity());
     }
     
     fn calculate_rolling_volatility(&self, data: &[HistoricalDay], window: usize) -> Vec<f64> {
         let mut vols = Vec::new();
         
         for i in 0..data.len() {
-            let start = if i + window < data.len() { i } else { data.len().saturating_sub(window) };
             let end = i + 1;
+            let start = end.saturating_sub(window);
             
             if end - start < 2 {
                 vols.push(0.25);  // Default
@@ -1700,6 +1715,46 @@ mod correctness_regression_tests {
         HistoricalDay { date: date.to_string(), close }
     }
 
+    #[test]
+    fn equity_values_long_and_short_inventory_without_double_counting_premiums() {
+        for quantity in [2, -2] {
+            let mut engine = BacktestEngine::new(BacktestConfig { initial_capital: 10_000.0, ..Default::default() });
+            let initial = engine.current_capital;
+            let mut pos = Position::new(0, "TEST".into(), OptionType::Put,
+                ExerciseStyle::European, 100.0, quantity, 5.0, "2024-01-01".into(), 100.0, None);
+            engine.current_capital -= 5.0 * quantity as f64 * 100.0 + 1.0;
+            engine.positions.push(pos.clone());
+            assert_eq!(engine.total_equity(), initial - 1.0);
+            pos.update_unrealized_pnl(6.0);
+            engine.positions[0] = pos;
+            assert_eq!(engine.total_equity(), initial - 1.0 + quantity as f64 * 100.0);
+            assert!(engine.risk_guards_allow_entry());
+            engine.positions[0].close(6.0, "2024-01-02".into(), 100.0, 1);
+            engine.current_capital += 6.0 * quantity as f64 * 100.0 - 1.0;
+            assert_eq!(engine.total_equity(), initial - 2.0 + quantity as f64 * 100.0);
+        }
+    }
+
+    #[test]
+    fn rolling_volatility_is_trailing_and_independent_of_future_data() {
+        let engine = BacktestEngine::new(BacktestConfig::default());
+        let data: Vec<_> = (0..100).map(|i| day("2024-01-01", if i % 2 == 0 { 100.0 } else { 102.0 })).collect();
+        let full = engine.calculate_rolling_volatility(&data, 20);
+        let prefix = engine.calculate_rolling_volatility(&data[..40], 20);
+        assert_eq!(&full[..40], prefix.as_slice());
+        let log_return = (102.0_f64 / 100.0).ln();
+        // Nineteen alternating returns: ten positive, nine negative.
+        let expected = (log_return.powi(2) - (log_return / 19.0).powi(2)).sqrt() * 252.0_f64.sqrt();
+        assert!((full[19] - expected).abs() < 1e-12);
+        assert!((full[39] - expected).abs() < 1e-12);
+        let mut changed = data.clone();
+        changed[0].close = 10_000.0;
+        let changed_vol = engine.calculate_rolling_volatility(&changed, 20);
+        assert_eq!(changed_vol[20], full[20], "observations outside the window must not contribute");
+        assert!(engine.calculate_rolling_volatility(&[], 20).is_empty());
+        assert_eq!(engine.calculate_rolling_volatility(&data[..1], 20), vec![0.25]);
+    }
+
     /// #1 — a position still open when the backtest ends must be liquidated using the
     /// *last* historical observation, not the first.
     #[test]
@@ -1737,7 +1792,9 @@ mod correctness_regression_tests {
             None,
         ));
 
-        engine.run_with_signals("TEST", data, |_symbol, _spot, _day_idx, _hist_vols| Vec::new());
+        let result = engine.run_with_signals("TEST", data, |_symbol, _spot, _day_idx, _hist_vols| Vec::new());
+        assert_eq!(result.equity_curve.equity.last().copied(), Some(result.final_capital));
+        assert_eq!(result.equity_curve.dates.len(), 3, "settlement must update the final day, not add a duplicate return");
 
         let pos = engine.positions.first().expect("position must still be present");
         assert!(matches!(pos.status, PositionStatus::Closed), "position must be closed by end of backtest");

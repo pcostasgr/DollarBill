@@ -253,7 +253,9 @@ impl AlpacaClient {
                     let status = response.status();
                     if status.is_success() {
                         let bytes = response.bytes().await?;
-                        let data = serde_json::from_slice(&bytes).map_err(|e| {
+                        // DELETE /orders/{id} acknowledges cancellation with 204.
+                        let body = if status == StatusCode::NO_CONTENT { b"null".as_slice() } else { &bytes };
+                        let data = serde_json::from_slice(body).map_err(|e| {
                             let body = String::from_utf8_lossy(&bytes);
                             format!("JSON decode error: {e}\nResponse body: {body}")
                         })?;
@@ -382,26 +384,31 @@ impl AlpacaClient {
     /// times. Returns the final order regardless of terminal status so the caller
     /// can decide how to handle partial fills or rejections.
     pub async fn await_order_fill(&self, order_id: &str) -> Result<Order, Box<dyn Error>> {
-        for _ in 0..FILL_POLL_MAX_ATTEMPTS {
+        self.await_order_fill_with_policy(order_id, FILL_POLL_MAX_ATTEMPTS,
+            Duration::from_secs(FILL_POLL_INTERVAL_SECS)).await
+    }
+
+    async fn await_order_fill_with_policy(
+        &self, order_id: &str, attempts: u32, interval: Duration,
+    ) -> Result<Order, Box<dyn Error>> {
+        for _ in 0..attempts {
             let order = self.get_order(order_id).await?;
-            match order.status.as_str() {
-                "filled" | "canceled" | "expired" | "rejected" | "done_for_day" => {
-                    return Ok(order);
-                }
-                _ => {
-                    tokio::time::sleep(Duration::from_secs(FILL_POLL_INTERVAL_SECS)).await;
-                }
+            if order.is_terminal() {
+                return Ok(order);
             }
+            tokio::time::sleep(interval).await;
         }
-        // Timeout: cancel the dangling order to avoid an unintended late fill
-        let total_wait_secs = FILL_POLL_INTERVAL_SECS * FILL_POLL_MAX_ATTEMPTS as u64;
-        eprintln!("⚠️  Order {} not filled after {}s — attempting cancel",
-            order_id, total_wait_secs);
+        // Cancellation is asynchronous and can race a fill. Read the final
+        // execution quantity after cancellation, including any partial fill.
         if let Err(e) = self.cancel_order(order_id).await {
-            eprintln!("   Cancel failed (order may already be terminal): {}", e);
+            warn!("Cancel for {} failed; checking final state: {}", order_id, e);
         }
-        Err(format!("Order {} timed out after {}s and was canceled",
-            order_id, total_wait_secs).into())
+        for _ in 0..attempts.max(1) {
+            let order = self.get_order(order_id).await?;
+            if order.is_terminal() { return Ok(order); }
+            tokio::time::sleep(interval).await;
+        }
+        Err(format!("Order {} outcome unresolved after cancel; reconciliation required", order_id).into())
     }
 
     // ============ Position Methods ============
@@ -546,7 +553,7 @@ impl AlpacaClient {
 
     /// Get a specific order by ID
     pub async fn get_order(&self, order_id: &str) -> Result<Order, Box<dyn Error>> {
-        self.get(&format!("/v2/orders/{}", order_id)).await
+        self.get(&format!("/v2/orders/{}?nested=true", order_id)).await
     }
 
     /// Cancel a specific order
@@ -642,6 +649,30 @@ impl AlpacaClient {
         }
         let body = serde_json::to_value(&req)?;
         self.post_order_safe(body).await
+    }
+
+    /// Submit once, then wait for a terminal execution report. A canceled
+    /// order can still contain fills; callers must inspect executed quantities.
+    pub async fn submit_options_order_and_wait(&self, order: &OptionsOrderRequest) -> Result<Order, Box<dyn Error>> {
+        let submitted = self.submit_options_order(order).await?;
+        if submitted.is_terminal() {
+            // Submission responses need not expand multi-leg executions.
+            return if order.legs.is_some() { self.get_order(&submitted.id).await } else { Ok(submitted) };
+        }
+        self.await_order_fill(&submitted.id).await
+    }
+
+    /// A close is complete only after the entire requested quantity executed.
+    pub async fn close_position_and_wait(&self, symbol: &str) -> Result<Order, Box<dyn Error>> {
+        let submitted = self.close_position(symbol).await?;
+        let terminal = if submitted.is_terminal() { submitted } else {
+            self.await_order_fill(&submitted.id).await?
+        };
+        if terminal.status != "filled" {
+            return Err(format!("Close {} ended {} with {} of {} filled; position must remain tracked",
+                symbol, terminal.status, terminal.filled_qty, terminal.qty).into());
+        }
+        Ok(terminal)
     }
 
     /// Parse an OCC symbol, then query Alpaca's live options chain to find the nearest
@@ -1230,7 +1261,23 @@ mod mock_http_tests {
             for (status, reason, body) in responses {
                 if let Ok((mut socket, _)) = listener.accept().await {
                     let mut buf = [0u8; 8192];
-                    let _ = socket.read(&mut buf).await; // drain the request, ignore contents
+                    // TCP reads can split headers and JSON body. Closing with
+                    // unread request bytes resets the connection on Windows.
+                    let mut request = Vec::new();
+                    loop {
+                        let n = socket.read(&mut buf).await.unwrap();
+                        if n == 0 { break; }
+                        request.extend_from_slice(&buf[..n]);
+                        if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                            let headers = String::from_utf8_lossy(&request[..end]);
+                            let length = headers.lines().find_map(|line| {
+                                let (name, value) = line.split_once(':')?;
+                                name.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse::<usize>().unwrap())
+                            }).unwrap_or(0);
+                            if request.len() >= end + 4 + length { break; }
+                        }
+                    }
                     let resp = format!(
                         "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                         body.len()
@@ -1266,6 +1313,98 @@ mod mock_http_tests {
             "limit_price":null,"stop_price":null,"filled_avg_price":null,"status":"accepted",
             "extended_hours":false,"legs":null}}"#
         )
+    }
+
+    fn execution_json(status: &str, filled_qty: &str) -> String {
+        let mut value: serde_json::Value = serde_json::from_str(&sample_order_json("fill-test")).unwrap();
+        value["status"] = status.into();
+        value["qty"] = "5".into();
+        value["filled_qty"] = filled_qty.into();
+        value["filled_avg_price"] = "2.50".into();
+        value.to_string()
+    }
+
+    #[tokio::test]
+    async fn options_submission_waits_for_execution_report() {
+        let base = spawn_mock_server(vec![
+            (200, "OK", execution_json("accepted", "0")),
+            (200, "OK", execution_json("filled", "5")),
+        ]).await;
+        let client = AlpacaClient::with_base_url("k".into(), "s".into(), base);
+        let request = AlpacaClient::signal_to_options_order(
+            &SignalAction::SellPut { strike: 100.0, days_to_expiry: 30, volatility: 0.25 },
+            "AAPL", 5, None).unwrap();
+        let result = client.submit_options_order_and_wait(&request).await.unwrap();
+        assert_eq!(result.status, "filled");
+        assert_eq!(result.filled_qty, "5");
+    }
+
+    #[tokio::test]
+    async fn immediate_multi_leg_fill_fetches_nested_executions() {
+        let request = AlpacaClient::signal_to_options_order(
+            &SignalAction::SellStraddle { strike: 100.0, days_to_expiry: 30 },
+            "AAPL", 5, None).unwrap();
+        let submitted = execution_json("filled", "5");
+        let mut nested: serde_json::Value = serde_json::from_str(&submitted).unwrap();
+        nested["legs"] = request.legs.as_ref().unwrap().iter().map(|leg| {
+            let mut fill = nested.clone();
+            fill["symbol"] = leg.symbol.clone().into();
+            fill["side"] = "sell".into();
+            fill
+        }).collect::<Vec<_>>().into();
+        let base = spawn_mock_server(vec![
+            (200, "OK", submitted), (200, "OK", nested.to_string()),
+        ]).await;
+        let client = AlpacaClient::with_base_url("k".into(), "s".into(), base);
+        let result = client.submit_options_order_and_wait(&request).await.unwrap();
+        let position = super::super::execution::position_from_fill(&result, "AAPL", None, "now").unwrap().unwrap();
+        assert_eq!(position.legs.len(), 2);
+        assert!(position.legs.iter().all(|leg| leg.qty == -5.0));
+    }
+
+    #[tokio::test]
+    async fn timeout_cancellation_preserves_partial_executions() {
+        let base = spawn_mock_server(vec![
+            (200, "OK", execution_json("partially_filled", "2")),
+            (204, "No Content", String::new()),
+            (200, "OK", execution_json("canceled", "2")),
+        ]).await;
+        let client = AlpacaClient::with_base_url("k".into(), "s".into(), base);
+        let result = client.await_order_fill_with_policy("ord-1", 1, Duration::ZERO).await.unwrap();
+        assert_eq!(result.status, "canceled");
+        assert_eq!(result.filled_qty, "2");
+    }
+
+    #[tokio::test]
+    async fn cancel_fill_race_returns_actual_final_execution() {
+        let base = spawn_mock_server(vec![
+            (200, "OK", execution_json("accepted", "0")),
+            (422, "Unprocessable Entity", "already filled".into()),
+            (200, "OK", execution_json("filled", "5")),
+        ]).await;
+        let client = AlpacaClient::with_base_url("k".into(), "s".into(), base);
+        let result = client.await_order_fill_with_policy("ord-1", 1, Duration::ZERO).await.unwrap();
+        assert_eq!(result.filled_qty, "5");
+        assert_eq!(result.status, "filled");
+    }
+
+    #[tokio::test]
+    async fn unresolved_cancel_is_not_reported_as_completed() {
+        let base = spawn_mock_server(vec![
+            (200, "OK", execution_json("accepted", "0")),
+            (204, "No Content", String::new()),
+            (200, "OK", execution_json("pending_cancel", "0")),
+        ]).await;
+        let client = AlpacaClient::with_base_url("k".into(), "s".into(), base);
+        assert!(client.await_order_fill_with_policy("ord-1", 1, Duration::ZERO).await
+            .unwrap_err().to_string().contains("unresolved"));
+    }
+
+    #[tokio::test]
+    async fn rejected_close_does_not_claim_position_is_closed() {
+        let base = spawn_mock_server(vec![(200, "OK", execution_json("rejected", "0"))]).await;
+        let client = AlpacaClient::with_base_url("k".into(), "s".into(), base);
+        assert!(client.close_position_and_wait("AAPL").await.is_err());
     }
 
     // ── Checklist item 1: Alpaca error codes ───────────────────────────────

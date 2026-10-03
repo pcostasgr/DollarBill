@@ -77,6 +77,13 @@ pub struct Order {
     pub legs: Option<Vec<Order>>,
 }
 
+impl Order {
+    /// Only these statuses guarantee that no more contracts can execute.
+    pub fn is_terminal(&self) -> bool {
+        matches!(self.status.as_str(), "filled" | "canceled" | "expired" | "rejected" | "replaced")
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderRequest {
     pub symbol: String,

@@ -82,6 +82,14 @@ pub struct TradeRecord {
 }
 
 /// An open (or recently closed) position.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct PositionLegRecord {
+    pub occ_symbol: String,
+    /// Negative for a short contract, positive for a long contract.
+    pub qty: f64,
+    pub entry_price: f64,
+}
+
 #[derive(Debug, Clone)]
 pub struct PositionRecord {
     pub symbol:            String,
@@ -100,6 +108,8 @@ pub struct PositionRecord {
     /// Number of times this position has been rolled.  Used to cap roll
     /// attempts and avoid infinite rolling on a declining underlying.
     pub roll_count:        i32,
+    /// Actual executed legs; empty for legacy records and equities.
+    pub legs:             Vec<PositionLegRecord>,
 }
 
 // ─── TradeStore ───────────────────────────────────────────────────────────
@@ -149,7 +159,12 @@ impl TradeStore {
         let opts = SqliteConnectOptions::new()
             .filename(db_path)
             .create_if_missing(true);
-        let pool = SqlitePool::connect_with(opts).await?;
+        // Each SQLite :memory: connection owns a different database.
+        let pool = if db_path == ":memory:" {
+            sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect_with(opts).await?
+        } else {
+            SqlitePool::connect_with(opts).await?
+        };
         Self::migrate(&pool).await?;
         Ok(Self { pool })
     }
@@ -208,6 +223,8 @@ impl TradeStore {
             .execute(pool).await;
         let _ = sqlx::query("ALTER TABLE positions ADD COLUMN roll_count INTEGER NOT NULL DEFAULT 0")
             .execute(pool).await;
+        let _ = sqlx::query("ALTER TABLE positions ADD COLUMN legs_json TEXT NOT NULL DEFAULT '[]'")
+            .execute(pool).await;
         // Fill-time snapshot columns (schema v4)
         let _ = sqlx::query("ALTER TABLE trades ADD COLUMN spot_price    REAL").execute(pool).await;
         let _ = sqlx::query("ALTER TABLE trades ADD COLUMN iv_at_fill    REAL").execute(pool).await;
@@ -265,8 +282,8 @@ impl TradeStore {
     pub async fn upsert_position(&self, p: &PositionRecord) -> Result<(), sqlx::Error> {
         sqlx::query(
             "INSERT OR REPLACE INTO positions
-             (symbol, qty, entry_price, entry_date, strategy, expires_at, premium_collected, occ_symbol, roll_count)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+             (symbol, qty, entry_price, entry_date, strategy, expires_at, premium_collected, occ_symbol, roll_count, legs_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         )
         .bind(&p.symbol)
         .bind(p.qty)
@@ -277,6 +294,7 @@ impl TradeStore {
         .bind(p.premium_collected)
         .bind(&p.occ_symbol)
         .bind(p.roll_count)
+        .bind(serde_json::to_string(&p.legs).map_err(|e| sqlx::Error::Encode(Box::new(e)))?)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -294,14 +312,14 @@ impl TradeStore {
     /// Return all currently open positions.
     pub async fn get_open_positions(&self) -> Result<Vec<PositionRecord>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT symbol, qty, entry_price, entry_date, strategy, expires_at, premium_collected, occ_symbol, roll_count FROM positions",
+            "SELECT symbol, qty, entry_price, entry_date, strategy, expires_at, premium_collected, occ_symbol, roll_count, legs_json FROM positions",
         )
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(rows
+        rows
             .into_iter()
-            .map(|row| PositionRecord {
+            .map(|row| Ok(PositionRecord {
                 symbol:            row.get("symbol"),
                 qty:               row.get("qty"),
                 entry_price:       row.get("entry_price"),
@@ -311,8 +329,10 @@ impl TradeStore {
                 premium_collected: row.get("premium_collected"),
                 occ_symbol:        row.get("occ_symbol"),
                 roll_count:        row.get::<Option<i32>, _>("roll_count").unwrap_or(0),
-            })
-            .collect())
+                legs: serde_json::from_str(row.get::<&str, _>("legs_json"))
+                    .map_err(|e| sqlx::Error::Decode(Box::new(e)))?,
+            }))
+            .collect()
     }
 
     /// Return the most recent `limit` trade records, newest first.

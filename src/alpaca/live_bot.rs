@@ -4,9 +4,11 @@
 use crate::alpaca::occ as occ_parser;
 use crate::risk::guards::{DailyRiskLimits, check_all as check_risk_guards};
 use crate::risk::invariants::{assert_invariants, BotState, InvariantPosition};
-use crate::risk::{ManagedPosition, ManagementAction, ManagementConfig, manage_open_positions};
+use crate::risk::{ManagementAction, ManagementConfig, manage_open_positions};
 use crate::alerting::Alerter;
 use crate::alpaca::AlpacaClient;
+use crate::alpaca::execution::{position_from_fill, managed_positions, invariant_positions,
+    management_action, close_tracked_position, reconcile_positions};
 use crate::analysis::performance_matrix::StrategyRecommendations;
 use crate::analysis::regime_detector::RegimeDetector;
 use crate::calibration::heston_calibrator::{calibrate_heston, CalibParams};
@@ -29,15 +31,12 @@ use crate::strategies::{
     cash_secured_puts::CashSecuredPuts,
 };
 use crate::streaming;
-use chrono::{Duration, NaiveDate, Utc};
+use chrono::Utc;
 use log::{debug, info, warn, error};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
-/// Parse expiry date from an OCC symbol string.
-/// OCC format: ROOT(6) YYMMDD(6) C|P(1) STRIKE(8)  — e.g. "QCOM260508P00120000"
-/// Returns `Some("2026-05-08")` or `None` if parsing fails.
 /// Conservative per-contract margin/cost estimate for a given signal action.
 /// Used as a pre-flight buying-power guard before submitting options orders.
 /// For iron butterflies Alpaca charges margin on BOTH wings (not just the wider one),
@@ -72,10 +71,6 @@ fn estimate_margin(action: &SignalAction, qty: u32, rough_premium: f64) -> f64 {
     }
 }
 
-fn parse_occ_expiry(occ: &str) -> Option<String> {
-    occ_parser::parse_occ_expiry_str(occ)
-}
-
 pub async fn run_live_bot(
     client: AlpacaClient,
     symbols: Vec<String>,
@@ -106,94 +101,25 @@ pub async fn run_live_bot(
     println!("\n🔄 Reconciling positions with Alpaca…");
     match client.get_positions().await {
         Ok(alpaca_pos) => {
-            // For options, Alpaca stores the full OCC symbol (e.g. "GLD260626P00405000")
-            // but SQLite tracks the root symbol ("GLD").  Build alpaca_syms using the
-            // same root key so the stale-removal check doesn't falsely evict open option
-            // positions every time the bot restarts.
-            let alpaca_syms: HashSet<String> = alpaca_pos.iter().map(|p| {
-                if p.asset_class == "us_option" && p.symbol.len() >= 18 {
-                    p.symbol[..6].trim().to_string()
-                } else {
-                    p.symbol.clone()
-                }
-            }).collect();
-            // Remove SQLite records absent from Alpaca (must have closed/expired)
-            for p in &persisted {
-                if !alpaca_syms.contains(&p.symbol) {
-                    eprintln!("  ⚠  {} in SQLite but absent from Alpaca — removing stale record",
-                        p.symbol);
-                    let _ = store.close_position(&p.symbol).await;
-                } else {
-                    println!("  ✅ {} confirmed open in Alpaca", p.symbol);
-                }
-            }
-            // Import Alpaca positions not yet tracked in SQLite
-            let sqlite_syms: HashSet<String> =
-                persisted.iter().map(|p| p.symbol.clone()).collect();
-            for ap in &alpaca_pos {
-                // For options (OCC symbols like "QCOM260508P00120000") use the
-                // underlying root as the key so WebSocket tick matching works.
-                // Store the full OCC symbol in occ_symbol for accurate closing.
-                let (rec_symbol, rec_occ, rec_expires_at) =
-                    if ap.asset_class == "us_option" && ap.symbol.len() >= 18 {
-                        let root = ap.symbol[..6].trim().to_string();
-                        // OCC: ROOT(6) YYMMDD(6) C|P(1) STRIKE(8)
-                        // e.g. QCOM260508P00120000 → 2026-05-08
-                        let exp = parse_occ_expiry(&ap.symbol);
-                        (root, Some(ap.symbol.clone()), exp)
-                    } else {
-                        (ap.symbol.clone(), None, None)
-                    };
-                if !sqlite_syms.contains(&rec_symbol) {
-                    println!("  📥 Importing {} (Alpaca: {}) from Alpaca into SQLite", rec_symbol, ap.symbol);
-                    let premium = ap.avg_entry_price.parse::<f64>().ok()
-                        .filter(|&p| p > 0.0);
-                    let rec = persistence::PositionRecord {
-                        symbol:            rec_symbol,
-                        qty:               ap.qty.parse::<f64>().unwrap_or(0.0),
-                        entry_price:       ap.avg_entry_price.parse::<f64>().unwrap_or(0.0),
-                        entry_date:        Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
-                        strategy:          Some("reconciled".to_string()),
-                        expires_at:        rec_expires_at,
-                        premium_collected: premium,
-                        occ_symbol:        rec_occ,
-                        roll_count:        0,
-                    };
-                    let _ = store.upsert_position(&rec).await;
-                } else {
-                    // Position already in SQLite — patch expires_at and premium_collected
-                    // if they are missing (e.g. previous reconciliation didn't fill them).
-                    if let Some(existing) = persisted.iter().find(|p| p.symbol == rec_symbol) {
-                        if existing.expires_at.is_none() || existing.premium_collected.is_none() {
-                            let exp = if existing.expires_at.is_none() {
-                                if ap.asset_class == "us_option" && ap.symbol.len() >= 18 {
-                                    parse_occ_expiry(&ap.symbol)
-                                } else { None }
-                            } else {
-                                existing.expires_at.clone()
-                            };
-                            let premium = if existing.premium_collected.is_none() {
-                                ap.avg_entry_price.parse::<f64>().ok().filter(|&p| p > 0.0)
-                            } else {
-                                existing.premium_collected
-                            };
-                            let patched = persistence::PositionRecord {
-                                expires_at:        exp,
-                                premium_collected: premium,
-                                occ_symbol:        existing.occ_symbol.clone().or_else(|| {
-                                    if ap.asset_class == "us_option" { Some(ap.symbol.clone()) } else { None }
-                                }),
-                                ..existing.clone()
-                            };
-                            let _ = store.upsert_position(&patched).await;
-                            println!("  🔧 Patched {} — expires_at={:?} premium={:?}",
-                                rec_symbol, patched.expires_at, patched.premium_collected);
-                        }
+            let now = Utc::now().to_rfc3339();
+            let records = match reconcile_positions(&alpaca_pos, &persisted, &now) {
+                Ok(records) => records,
+                Err(e) => { error!("Position reconciliation failed: {}", e); return; }
+            };
+            for old in &persisted {
+                if !records.iter().any(|p| p.symbol == old.symbol) {
+                    if let Err(e) = store.close_position(&old.symbol).await {
+                        error!("Removing stale position failed: {}", e); return;
                     }
                 }
             }
+            for record in records {
+                if let Err(e) = store.upsert_position(&record).await {
+                    error!("Saving reconciled position failed: {}", e); return;
+                }
+            }
         }
-        Err(e) => eprintln!("⚠️  Position reconciliation skipped: {}", e),
+        Err(e) => { error!("Position reconciliation failed: {}", e); return; },
     }
 
     // In-memory open-position guard (rebuilt from reconciled SQLite state).
@@ -495,7 +421,7 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
     }
 
     let mut ctrl_c_trade = std::pin::pin!(tokio::signal::ctrl_c());
-    loop {
+    'trading: loop {
         let event = tokio::select! {
             biased;
             res = &mut ctrl_c_trade => {
@@ -555,22 +481,9 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                     .or_insert_with(VecDeque::new);
                 buf.push_back(price);
                 if buf.len() > max_price_buf { buf.pop_front(); }
-                if buf.len() < min_prices_for_hv { continue; }
-
-                // Circuit breaker — stop new signals if daily loss limit is hit
-                if circuit_broken { continue; }
-
-                // DailyRiskLimits guard — halts new entries when drawdown or trade cap is hit
-                let current_equity = equity - estimated_daily_loss;
-                if check_risk_guards(equity, current_equity, trades_today, &daily_risk_limits).is_halt() {
-                    continue;
-                }
-
-                // Signal cooldown check
-                let now = Instant::now();
-                if let Some(&prev) = last_signal.get(&sym) {
-                    if now.duration_since(prev).as_secs() < signal_cooldown_secs { continue; }
-                }
+                let warmed_up = buf.len() >= min_prices_for_hv;
+                let entries_halted = circuit_broken || check_risk_guards(
+                    equity, equity - estimated_daily_loss, trades_today, &daily_risk_limits).is_halt();
 
                 // ── P3.1 Non-blocking IV cache refresh ────────────────────
                 // The main cache is not sent into the task; instead we log that
@@ -583,8 +496,10 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
 
                 // Volatility + Heston params from rolling ticks
                 let prices: Vec<f64> = buf.iter().copied().collect();
-                let sigma = compute_historical_vol(&prices);
-                if sigma < 1e-8 { continue; }
+                let observed_sigma = compute_historical_vol(&prices);
+                let valid_sigma = observed_sigma.is_finite() && observed_sigma >= 1e-8;
+                // Management must run even before the tick buffer warms up.
+                let sigma = if valid_sigma { observed_sigma } else { 0.25 };
 
                 // ── P3.1 Use live IV from cache if available, else HV ─────
                 let live_iv = iv_cache.get_cached_iv(&sym);
@@ -602,39 +517,19 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                         })
                 });
 
-                // ── IV sanity guard: stale after-hours quotes produce absurd IV ──
-                // >200% IV is physically implausible for equities during live hours;
-                // skip this tick rather than fire garbage signals.
-                if model_iv > 2.0 {
-                    debug!("Skipping {} — IV {:.1}% looks like stale/after-hours data", sym, model_iv * 100.0);
-                    continue;
-                }
-
                 // ── P2.1 Position close check (via shared manage_open_positions) ──
                 if open_syms.contains(&sym) {
                     if let Some(pos) = open_positions.get(&sym).cloned() {
-                        let managed_pos = ManagedPosition {
-                            symbol:        sym.clone(),
-                            occ_symbol:    pos.occ_symbol.clone(),
-                            qty:           pos.qty,
-                            entry_premium: pos.premium_collected,
-                            expires_at:    pos.expires_at.clone(),
-                            entry_date:    pos.entry_date.clone(),
-                            roll_count:    pos.roll_count,
-                            current_mark:  price,
-                            spot:          price,
-                            sigma,
-                        };
-                        let mgmt_actions = manage_open_positions(&[managed_pos], &mgmt_config, equity - estimated_daily_loss, chrono::Utc::now().date_naive());
+                        let snapshots = managed_positions(&pos, price, sigma);
+                        let mgmt_actions = manage_open_positions(&snapshots, &mgmt_config,
+                            equity - estimated_daily_loss, Utc::now().date_naive());
                         // Derive strike for roll targeting from existing OCC; fall back to spot
                         let occ_strike = pos.occ_symbol.as_deref()
                             .and_then(|occ| occ_parser::parse_occ(occ).map(|p| p.strike))
                             .unwrap_or(price);
-                        let primary = mgmt_actions.iter().find(|a| {
-                            !matches!(a, ManagementAction::Hold | ManagementAction::DeltaAlert { .. })
-                        });
+                        let primary = management_action(&mgmt_actions, entries_halted, pos.legs.len() > 1);
                         let (close_reason_opt, roll_info): (Option<String>, Option<(f64, u32, i32)>) =
-                            match primary {
+                            match primary.as_ref() {
                                 None => (None, None),
                                 Some(ManagementAction::Hold) | Some(ManagementAction::DeltaAlert { .. }) => (None, None),
                                 Some(ManagementAction::Roll { new_dte_days, roll_number, .. }) =>
@@ -654,13 +549,14 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                 println!("  🔄 Rolling {} — spot ${:.2} K=${:.2} (roll {}/{})",
                                     sym, price, new_strike, roll_number, max_rolls);
                                 if !dry_run {
-                                    let close_result = client.close_position(occ).await;
+                                    let close_result = client.close_position_and_wait(occ).await;
                                     match close_result {
                                         Ok(_) => {
                                             println!("    ✅ Closed old leg {}", occ);
                                             use crate::alpaca::types::{OptionsOrderRequest, OrderType, TimeInForce, OrderSide};
                                             let (yy, mm, dd) = AlpacaClient::expiry_from_dte(new_dte_days as usize);
-                                            let new_occ = AlpacaClient::occ_symbol(&sym, yy, mm, dd, false, new_strike);
+                                            let is_call = occ_parser::parse_occ(occ).map(|p| p.is_call).unwrap_or(false);
+                                            let new_occ = AlpacaClient::occ_symbol(&sym, yy, mm, dd, is_call, new_strike);
                                             let resolved = client.resolve_single_leg_occ(&new_occ).await;
                                             let new_order = OptionsOrderRequest {
                                                 r#type: OrderType::Market,
@@ -674,64 +570,32 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                                 limit_price: None,
                                                 client_order_id: None,
                                             };
-                                            match client.submit_options_order(&new_order).await {
+                                            match client.submit_options_order_and_wait(&new_order).await {
                                                 Ok(filled) => {
-                                                    let new_expiry = format!("20{:02}-{:02}-{:02}", yy, mm, dd);
-                                                    let new_occ_stored = if filled.symbol.len() > 10 {
-                                                        Some(filled.symbol.clone())
-                                                    } else {
-                                                        Some(resolved.clone())
-                                                    };
-                                                    let new_premium = filled.filled_avg_price
-                                                        .as_deref()
-                                                        .and_then(|p| p.parse::<f64>().ok())
-                                                        .filter(|&p| p > 0.0)
-                                                        .or(pos.premium_collected);
-                                                    let rolled_pos = persistence::PositionRecord {
-                                                        symbol:            sym.clone(),
-                                                        qty:               pos.qty,
-                                                        entry_price:       price,
-                                                        entry_date:        ts.clone(),
-                                                        strategy:          pos.strategy.clone(),
-                                                        expires_at:        Some(new_expiry),
-                                                        premium_collected: new_premium,
-                                                        occ_symbol:        new_occ_stored,
-                                                        roll_count:        roll_number,
-                                                    };
-                                                    if let Err(e) = store.upsert_position(&rolled_pos).await {
-                                                        error!("DB roll upsert failed: {}", e);
-                                                    } else {
-                                                        // Imbalance guard: new-leg qty must match old-leg qty
-                                                        let filled_qty = filled.filled_qty
-                                                            .parse::<f64>()
-                                                            .unwrap_or(pos.qty.abs());
-                                                        if (filled_qty - pos.qty.abs()).abs() > 0.5 {
-                                                            warn!("ROLL_IMBALANCE [{sym}]: old qty={:.0} new filled_qty={:.0} — flattening imbalance",
-                                                                pos.qty.abs(), filled_qty);
-                                                            eprintln!("    ⚠️  Roll imbalance for {sym}: expected {:.0} got {:.0} — flattening",
-                                                                pos.qty.abs(), filled_qty);
-                                                            // Close whatever partial fill landed to avoid naked exposure
-                                                            if let Some(ref new_occ_s) = rolled_pos.occ_symbol {
-                                                                let _ = client.close_position(new_occ_s).await;
+                                                    match position_from_fill(&filled, &sym, pos.strategy.clone(), &ts) {
+                                                        Ok(Some(mut rolled_pos)) => {
+                                                            rolled_pos.roll_count = roll_number;
+                                                            if let Err(e) = store.upsert_position(&rolled_pos).await {
+                                                                error!("DB roll upsert failed: {}", e);
+                                                                circuit_broken = true;
                                                             }
+                                                            open_positions.insert(sym.clone(), rolled_pos);
+                                                        }
+                                                        Ok(None) => {
                                                             let _ = store.close_position(&sym).await;
                                                             open_syms.remove(&sym);
                                                             open_positions.remove(&sym);
                                                             cooldown.record_close(&sym);
-                                                        } else {
-                                                            open_positions.insert(sym.clone(), rolled_pos);
-                                                            println!("    ✅ Rolled to {} (roll {}/{})",
-                                                                filled.symbol, roll_number, max_rolls);
+                                                        }
+                                                        Err(e) => {
+                                                            error!("Roll execution needs reconciliation: {}", e);
+                                                            break 'trading;
                                                         }
                                                     }
                                                 }
                                                 Err(e) => {
-                                                    error!("Roll new leg submit failed for {}: {}", sym, e);
-                                                    eprintln!("    ⚠️  Roll new leg failed for {}: {}", sym, e);
-                                                    let _ = store.close_position(&sym).await;
-                                                    open_syms.remove(&sym);
-                                                    open_positions.remove(&sym);
-                                                    cooldown.record_close(&sym);
+                                                    error!("Roll submission/fill unresolved for {}: {}; stopping for reconciliation", sym, e);
+                                                    break 'trading;
                                                 }
                                             }
                                         }
@@ -754,53 +618,17 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                 info!("Closing {} ({}): {}", sym, pos.strategy.as_deref().unwrap_or("?"), &close_reason);
                                 println!("  🔒 Closing {} — {}", sym, close_reason);
                                 if !dry_run {
-                                    let occ_opt = pos.occ_symbol.clone();
-                                    let close_sym = occ_opt.as_deref().unwrap_or(&sym);
-                                    let close_result = client.close_position(close_sym).await;
-                                    match close_result {
-                                        Ok(_) => {
+                                    match close_tracked_position(&client, &pos).await {
+                                        Ok(()) => {
                                             let _ = store.close_position(&sym).await;
                                             open_syms.remove(&sym);
                                             open_positions.remove(&sym);
                                             cooldown.record_close(&sym);
-                                            println!("    ✅ {} closed ({})", sym, close_sym);
+                                            println!("    Closed {}", sym);
                                         }
                                         Err(e) => {
-                                            let is_not_found = e.to_string().contains("404") || e.to_string().contains("position not found");
-                                            if occ_opt.is_none() {
-                                                warn!("Direct close failed for {} — trying leg lookup: {}", sym, e);
-                                                let results = client.close_positions_for_underlying(&sym).await;
-                                                let any_ok = results.iter().any(|r| r.is_ok());
-                                                if any_ok {
-                                                    let _ = store.close_position(&sym).await;
-                                                    open_syms.remove(&sym);
-                                                    open_positions.remove(&sym);
-                                                    cooldown.record_close(&sym);
-                                                    println!("    ✅ {} legs closed via lookup", sym);
-                                                } else if results.is_empty() {
-                                                    // No matching positions in Alpaca — expired or closed externally.
-                                                    // Clean up the stale local record so we stop retrying.
-                                                    warn!("No open positions for {} found in Alpaca — removing stale local record", sym);
-                                                    let _ = store.close_position(&sym).await;
-                                                    open_syms.remove(&sym);
-                                                    open_positions.remove(&sym);
-                                                    println!("    🗑️  {} removed (not found in Alpaca — likely expired)", sym);
-                                                } else {
-                                                    error!("close leg lookup also failed for {}: {:?}", sym,
-                                                        results.iter().map(|r| r.as_ref().err().map(|e| e.to_string())).collect::<Vec<_>>());
-                                                    eprintln!("    ⚠️  All close attempts failed for {}", sym);
-                                                }
-                                            } else if is_not_found {
-                                                // Single-leg OCC no longer exists in Alpaca (expired/exercised).
-                                                warn!("Position {} ({}) not found in Alpaca — removing stale local record", sym, close_sym);
-                                                let _ = store.close_position(&sym).await;
-                                                open_syms.remove(&sym);
-                                                open_positions.remove(&sym);
-                                                println!("    🗑️  {} ({}) removed (not found in Alpaca — likely expired)", sym, close_sym);
-                                            } else {
-                                                error!("close_position failed for {} ({}): {}", sym, close_sym, e);
-                                                eprintln!("    ⚠️  Close failed for {} ({}): {}", sym, close_sym, e);
-                                            }
+                                            error!("Close incomplete for {}: {}; keeping position tracked", sym, e);
+                                            circuit_broken = true;
                                         }
                                     }
                                 } else {
@@ -812,6 +640,15 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                     }
                     // Position is open and not ready to close; skip new-entry signals
                     continue;
+                }
+
+                // Entry-only guards must never bypass management of open risk.
+                if entries_halted || !warmed_up || !valid_sigma || !model_iv.is_finite() || model_iv > 2.0 {
+                    continue;
+                }
+                let now = Instant::now();
+                if let Some(&prev) = last_signal.get(&sym) {
+                    if now.duration_since(prev).as_secs() < signal_cooldown_secs { continue; }
                 }
 
                 // ── Re-entry cooldown: skip if symbol was recently closed ─
@@ -973,13 +810,29 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                 tokio::spawn(async move { a.circuit_breaker(edl, mdl).await; });
                                 continue;
                             }
-                            match client.submit_options_order(&order).await {
+                            match client.submit_options_order_and_wait(&order).await {
                                 Ok(filled) => {
+                                    let pos = match position_from_fill(&filled, &sym, Some(sig.strategy_name.clone()), &ts) {
+                                        Ok(Some(pos)) => pos,
+                                        Ok(None) => {
+                                            info!("Order {} ended {} without fills", filled.id, filled.status);
+                                            continue;
+                                        }
+                                        Err(e) => {
+                                            error!("Execution needs reconciliation: {}", e);
+                                            break 'trading;
+                                        }
+                                    };
+                                    let executed_qty = filled.filled_qty.parse::<f64>().unwrap_or(0.0);
+                                    let fill_price = pos.entry_price;
+                                    // Track exposure even if the database write later fails.
+                                    open_syms.insert(sym.clone());
+                                    open_positions.insert(sym.clone(), pos.clone());
                                     info!("Order submitted: id={} sym={} status={} strategy={}",
                                         filled.id, sym, filled.status, sig.strategy_name);
                                     println!("    Submitted: {} ({})", filled.id, filled.status);
                                     let daily_vol_post = sigma / (252.0_f64).sqrt();
-                                    estimated_daily_loss += price * daily_vol_post * qty as f64 * 100.0;
+                                    estimated_daily_loss += price * daily_vol_post * executed_qty * 100.0;
 
                                     // Daily-loss warning at configurable threshold (default 80%)
                                     if !daily_loss_warned
@@ -1006,49 +859,21 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                         sig.strategy_name, sig.action, price,
                                         chrono::Utc::now().format("%H:%M:%S"));
                                     last_signal_desc.insert(sym.clone(), desc);
-                                    let expiry_date = Utc::now().date_naive()
-                                        + Duration::days(sig.expiry_days as i64);
-                                    // Store the OCC symbol from the confirmed fill so
-                                    // close logic can target the exact contract.
-                                    // Single-leg: filled.symbol is the OCC (>10 chars).
-                                    // Multi-leg:  extract leg symbols from filled.legs and
-                                    //             store them comma-joined for diagnostics.
-                                    let occ = if filled.symbol.len() > 10 {
-                                        Some(filled.symbol.clone())
-                                    } else if let Some(ref legs) = filled.legs {
-                                        let syms: Vec<&str> = legs.iter()
-                                            .filter(|l| l.symbol.len() > 10)
-                                            .map(|l| l.symbol.as_str())
-                                            .collect();
-                                        if syms.is_empty() { None } else { Some(syms.join(",")) }
-                                    } else {
-                                        None
-                                    };
-                                    let pos = persistence::PositionRecord {
-                                        symbol:            sym.clone(),
-                                        qty:               qty as f64,
-                                        entry_price:       price,
-                                        entry_date:        ts.clone(),
-                                        strategy:          Some(sig.strategy_name.clone()),
-                                        expires_at:        Some(expiry_date.format("%Y-%m-%d").to_string()),
-                                        premium_collected: Some(rough_premium),
-                                        occ_symbol:        occ,
-                                        roll_count:        0,
-                                    };
                                     if let Err(e) = store.upsert_position(&pos).await {
                                         error!("DB position upsert failed: {}", e);
                                         eprintln!("DB position error: {}", e);
+                                        circuit_broken = true;
                                     } else {
                                         open_syms.insert(sym.clone());
                                         open_positions.insert(sym.clone(), pos);
                                         // Deduct estimated margin so subsequent pre-flight
                                         // checks see the reduced available buying power.
-                                        remaining_buy_pwr -= estimate_margin(&sig.action, qty, rough_premium);
+                                        remaining_buy_pwr -= estimate_margin(&sig.action, executed_qty.ceil() as u32, rough_premium);
                                         // Fill alert
                                         let a = alerter.clone();
                                         let sym_c  = sym.clone();
                                         let strat_c = sig.strategy_name.clone();
-                                        let (qty_c, price_c) = (qty, price);
+                                        let (qty_c, price_c) = (executed_qty as u32, fill_price);
                                         tokio::spawn(async move { a.fill(&sym_c, &strat_c, qty_c, price_c).await; });
                                         // ── Fill-time snapshot: log Greeks + IV to trades table ──
                                         let dte_years = (sig.expiry_days as f64 / 365.0).max(1.0 / 365.0);
@@ -1065,10 +890,10 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                         let fill_rec = persistence::TradeRecord {
                                             symbol:        sym.clone(),
                                             action:        format!("{:?}", sig.action),
-                                            quantity:      qty as f64,
-                                            price,
+                                            quantity:      executed_qty,
+                                            price:         fill_price,
                                             order_id:      Some(filled.id.clone()),
-                                            fill_status:   Some("filled".to_string()),
+                                            fill_status:   Some(filled.status.clone()),
                                             strategy:      Some(sig.strategy_name.clone()),
                                             error_message: None,
                                             timestamp:     ts.clone(),
@@ -1083,14 +908,8 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                         }
                                         // ── Post-fill invariant check ─────────────────────
                                         {
-                                            let inv_positions: Vec<InvariantPosition> = open_positions.values().map(|p| {
-                                                InvariantPosition {
-                                                    symbol:       p.symbol.clone(),
-                                                    occ_symbol:   p.occ_symbol.clone(),
-                                                    qty:          p.qty,
-                                                    current_mark: p.entry_price,
-                                                }
-                                            }).collect();
+                                            let inv_positions: Vec<InvariantPosition> = open_positions.values()
+                                                .flat_map(invariant_positions).collect();
                                             let inv_state = BotState {
                                                 positions:              inv_positions,
                                                 equity:                 equity - estimated_daily_loss,
@@ -1114,16 +933,17 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                                 // ── Flatten all open risk (plan §4: on failure the bot must
                                                 // flatten, trip the breaker, alert, and log the full state) ──
                                                 if !dry_run {
-                                                    match client.close_all_positions().await {
-                                                        Ok(closed) => warn!("Flattened {} position(s) after invariant violation", closed.len()),
-                                                        Err(e) => error!("Flatten-all failed after invariant violation: {} — MANUAL INTERVENTION REQUIRED", e),
+                                                    for position in open_positions.values().cloned().collect::<Vec<_>>() {
+                                                        match close_tracked_position(&client, &position).await {
+                                                            Ok(()) => {
+                                                                let _ = store.close_position(&position.symbol).await;
+                                                                open_positions.remove(&position.symbol);
+                                                                open_syms.remove(&position.symbol);
+                                                            }
+                                                            Err(e) => error!("Flatten incomplete for {}: {}; retaining position for management", position.symbol, e),
+                                                        }
                                                     }
                                                 }
-                                                for flat_sym in open_positions.keys().cloned().collect::<Vec<_>>() {
-                                                    let _ = store.close_position(&flat_sym).await;
-                                                }
-                                                open_positions.clear();
-                                                open_syms.clear();
                                                 let a = alerter.clone();
                                                 tokio::spawn(async move { a.invariant_violation(&violation_strings).await; });
                                             }
@@ -1132,6 +952,8 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                         // this symbol on this tick to prevent duplicate entries.
                                         break;
                                     }
+
+                                    if circuit_broken { break; }
 
                                     // ── P3.3 Greeks / portfolio-risk alert ────────────
                                     let risk = pm.get_portfolio_risk();
@@ -1175,6 +997,7 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                         theta_at_fill: None,
                                     };
                                     let _ = store.insert_trade(&fail_rec).await;
+                                    break 'trading; // Broker outcome must be reconciled before new submissions.
                                 }
                             }
                         }
