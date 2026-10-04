@@ -340,14 +340,25 @@ impl TradeStore {
         &self,
         limit: u32,
     ) -> Result<Vec<TradeRecord>, sqlx::Error> {
+        self.query_trade_history(limit, false).await
+    }
+
+    /// Return the most recent orders, excluding heartbeat ticks before limiting.
+    pub async fn get_recent_orders(&self, limit: u32) -> Result<Vec<TradeRecord>, sqlx::Error> {
+        self.query_trade_history(limit, true).await
+    }
+
+    async fn query_trade_history(&self, limit: u32, orders_only: bool) -> Result<Vec<TradeRecord>, sqlx::Error> {
         let rows = sqlx::query(
             "SELECT symbol, action, quantity, price, order_id, fill_status, strategy, error_message,
                     timestamp, spot_price, iv_at_fill, delta_at_fill, vega_at_fill, theta_at_fill
              FROM trades
+             WHERE (?2 = 0 OR action <> 'tick')
              ORDER BY id DESC
              LIMIT ?1",
         )
         .bind(limit)
+        .bind(orders_only)
         .fetch_all(&self.pool)
         .await?;
 

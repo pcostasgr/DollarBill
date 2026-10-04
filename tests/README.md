@@ -60,6 +60,12 @@ cargo test --locked --offline --test execution_replay
 Use a fresh output directory when rerunning the baseline; prior evidence is
 preserved. Broker tests use local/offline contracts and do not establish
 real-account paper acceptance.
+
+After that baseline, three dashboard contract/rendering tests were added.
+Run `cargo test --locked --offline --bin dashboard` to check heartbeat-filtered
+recent orders, existing tables alongside the new execution schema, status
+rendering and small terminal sizes. The baseline totals above describe the
+archived run before those tests were added.
 See [the baseline guide](../docs/baseline.md) for execution scenarios, test
 categories and the machine-checked ignored-test inventory. Counts below are
 historical; binary targets duplicate many library tests.

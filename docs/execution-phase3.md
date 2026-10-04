@@ -117,3 +117,21 @@ Strict all-target/all-feature Clippy failed on existing module diagnostics;
 none were reported in the new domain/execution modules, replay binary, build
 script or execution integration tests. Broker paper acceptance and live
 integration remain unverified.
+
+## Dashboard compatibility check
+
+The existing terminal dashboard reads `data/bot_status.json` and the legacy
+`TradeStore` positions/trades tables. It does not consume `trading_events_v1` or
+the replay CLI's artifacts. The event journal can coexist with those tables,
+but displaying Phase 3 sessions requires a future dashboard integration.
+
+An October 4 smoke check launched the dashboard against a SQLite backup of the
+saved bot database, loaded three positions, displayed recent orders, refreshed
+with `r` and exited with `q`. The old database migrated successfully on the copy.
+The recent-orders query now excludes heartbeat ticks before applying its limit;
+previously, 20 newer ticks could hide every actual order. Three dashboard tests
+cover this regression, journal/schema coexistence, status rendering and small
+terminal sizes. Run them with `cargo test --locked --offline --bin dashboard`.
+The saved status snapshot is from August 28; its `LIVE` label is stored mode,
+not proof that a bot is currently running. The smoke check made no broker calls
+and did not migrate or modify the original database.

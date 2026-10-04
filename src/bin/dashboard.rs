@@ -64,8 +64,7 @@ impl App {
         // SQLite positions + recent orders
         if let Ok(store) = TradeStore::new(&self.db_path).await {
             self.positions = store.get_open_positions().await.unwrap_or_default();
-            let hist = store.get_trade_history(20).await.unwrap_or_default();
-            self.trades = hist.into_iter().filter(|t| t.action != "tick").collect();
+            self.trades = store.get_recent_orders(20).await.unwrap_or_default();
         }
     }
 }
@@ -356,4 +355,97 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dollarbill::execution::store::EventStore;
+    use ratatui::backend::TestBackend;
+
+    fn trade(action: &str) -> TradeRecord {
+        TradeRecord {
+            symbol: "AAPL".into(), action: action.into(), quantity: 2.0, price: 195.25,
+            order_id: Some("dashboard-contract".into()), fill_status: Some("filled".into()),
+            strategy: Some("Momentum".into()), error_message: None,
+            timestamp: "2026-10-04T09:30:00Z".into(), spot_price: Some(195.25),
+            iv_at_fill: None, delta_at_fill: None, vega_at_fill: None, theta_at_fill: None,
+        }
+    }
+
+    fn screen(app: &App, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|f| render(f, app)).unwrap();
+        terminal.backend().buffer().content.iter().map(|cell| cell.symbol()).collect()
+    }
+
+    #[tokio::test]
+    async fn legacy_dashboard_reads_positions_and_orders_with_execution_schema_present() {
+        let path = std::env::temp_dir().join(format!("dashboard-contract-{}-{}.db",
+            std::process::id(), std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let db_path = path.to_str().unwrap();
+        // The new append-only journal must coexist with the dashboard's legacy tables.
+        let journal = EventStore::open(db_path).await.unwrap();
+        let store = TradeStore::new(db_path).await.unwrap();
+        store.upsert_position(&PositionRecord {
+            symbol: "AAPL".into(), qty: 2.0, entry_price: 195.25,
+            entry_date: "2026-10-04".into(), strategy: Some("Momentum".into()),
+            expires_at: None, premium_collected: None, occ_symbol: None,
+            roll_count: 0, legs: vec![],
+        }).await.unwrap();
+        store.insert_trade(&trade("buy")).await.unwrap();
+        for _ in 0..25 {
+            store.insert_trade(&trade("tick")).await.unwrap();
+        }
+        let history = store.get_trade_history(20).await.unwrap();
+        assert_eq!(history.len(), 20);
+        assert!(history.iter().all(|record| record.action == "tick"));
+        let mut app = App::new(db_path.into());
+        app.refresh().await;
+        assert_eq!(app.positions.len(), 1);
+        assert_eq!(app.positions[0].qty, 2.0);
+        assert_eq!(app.trades.len(), 1);
+        assert_eq!(app.trades[0].action, "buy");
+        let rendered = screen(&app, 160, 35);
+        assert!(rendered.contains("AAPL"));
+        assert!(rendered.contains("195.25"));
+        assert!(rendered.contains("filled"));
+        store.close_position("AAPL").await.unwrap();
+        app.refresh().await;
+        assert!(app.positions.is_empty());
+        drop(store);
+        journal.close().await;
+        // This uniquely-created scratch file is the only file removed.
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn bot_status_contract_renders_risk_signals_and_orders() {
+        let status = BotStatus {
+            updated_at: "2026-10-04T09:30:00Z".into(), dry_run: true,
+            circuit_broken: true, estimated_daily_loss: 80.0, max_daily_loss: 100.0,
+            equity: 10000.0, open_position_count: 1, session_orders: 1,
+            last_signals: [("AAPL".into(), "Momentum buy".into())].into(),
+            portfolio_delta: 2.0, portfolio_gamma: 0.125,
+            portfolio_vega: 15.0, portfolio_theta: -3.0,
+        };
+        let json = serde_json::to_string(&status).unwrap();
+        let mut app = App::new(":memory:".into());
+        app.status = serde_json::from_str(&json).unwrap();
+        app.trades.push(trade("buy"));
+        let rendered = screen(&app, 180, 35);
+        for expected in ["DRY-RUN", "TRIPPED", "$80.00 / $100.00", "Momentum buy",
+            "0.1250", "09:30:00", "filled"] {
+            assert!(rendered.contains(expected), "missing {expected}");
+        }
+    }
+
+    #[test]
+    fn empty_dashboard_renders_at_small_terminal_sizes() {
+        let app = App::new(":memory:".into());
+        for (width, height) in [(160, 35), (80, 24), (30, 10), (1, 1)] {
+            screen(&app, width, height);
+        }
+    }
 }
