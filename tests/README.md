@@ -31,7 +31,38 @@ cargo test test_call_option_atm
 
 ## Current Status
 
-**765 tests implemented, 765 passing, 16 ignored (100% of runnable tests ✅)**
+Verified October 4, 2026 with
+`python scripts/baseline.py --offline --output target/baseline-phase3`:
+
+| Target | Passed | Ignored |
+| --- | ---: | ---: |
+| Library unit tests | 309 | 7 |
+| Main binary unit tests (repeated library modules) | 309 | 7 |
+| Execution replay integration tests | 21 | 0 |
+| General integration tests (`--test lib`) | 379 | 0 |
+| Pricing validation | 14 | 7 |
+| Portfolio tests | 64 | 0 |
+| Standalone CDF verification | 1 | 0 |
+| Doctests | 11 | 2 |
+
+Totals are test executions, not unique test functions. Dashboard and replay
+binary unit targets contain zero tests. All three execution fixtures passed
+repeat-output comparison and JSONL/SQLite replay equality. All-target/all-feature
+check and release build passed separately; strict Clippy still fails on existing
+diagnostics.
+
+Run the focused simulator, recovery and adapter contracts with:
+
+```text
+cargo test --locked --offline --test execution_replay
+```
+
+Use a fresh output directory when rerunning the baseline; prior evidence is
+preserved. Broker tests use local/offline contracts and do not establish
+real-account paper acceptance.
+See [the baseline guide](../docs/baseline.md) for execution scenarios, test
+categories and the machine-checked ignored-test inventory. Counts below are
+historical; binary targets duplicate many library tests.
 
 > Historical breakdown below predates the September 2026 adversarial-hardening pass (OCC parser
 > proptest, order-path pipeline, runtime invariants, kill-switch/July-replay integration tests,

@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "run_id": "assignment_timeout_expiry_v1",
+  "initial_cash": "10000",
+  "config": {
+    "latency_ms": 0,
+    "max_quote_age_ms": 500,
+    "fee_per_unit": "0",
+    "slippage_per_unit": "0",
+    "timeout_after_acceptance": ["uncertain"]
+  },
+  "actions": [
+    {"type":"submit", "timestamp_ms":1790938800000, "intent":{
+      "client_order_id":"short-put", "strategy_id":"settlement-regression", "legs":[
+        {"instrument":{"type":"option","underlying":"TEST","expiry":"2026-10-02","kind":"put","strike":"10"},"side":"sell","quantity":1,"limit":null}
+      ]}},
+    {"type":"quote","quote":{"instrument":{"type":"option","underlying":"TEST","expiry":"2026-10-02","kind":"put","strike":"10"},"bid":"2","ask":"2","exchange_timestamp_ms":1790938800001,"received_at_ms":1790938800001,"available_quantity":1}},
+    {"type":"submit","timestamp_ms":1790938800002,"intent":{"client_order_id":"pending-equity","strategy_id":"settlement-regression","legs":[{"instrument":{"type":"equity","symbol":"TEST"},"side":"buy","quantity":1,"limit":null}]}},
+    {"type":"settle","timestamp_ms":1790938800003,"instrument":{"type":"option","underlying":"TEST","expiry":"2026-10-02","kind":"put","strike":"10"},"quantity":1,"assigned":true,"settlement_id":"early-assignment","fee":"0"},
+    {"type":"quote","quote":{"instrument":{"type":"equity","symbol":"TEST"},"bid":"9","ask":"9","exchange_timestamp_ms":1790938800004,"received_at_ms":1790938800004,"available_quantity":1}},
+    {"type":"submit_timeout","timestamp_ms":1790938800005,"intent":{"client_order_id":"uncertain","strategy_id":"settlement-regression","legs":[{"instrument":{"type":"equity","symbol":"TEST"},"side":"buy","quantity":1,"limit":null}]}},
+    {"type":"submit","timestamp_ms":1790938800006,"intent":{"client_order_id":"uncertain","strategy_id":"settlement-regression","legs":[{"instrument":{"type":"equity","symbol":"TEST"},"side":"buy","quantity":1,"limit":null}]}},
+    {"type":"quote","quote":{"instrument":{"type":"equity","symbol":"TEST"},"bid":"9","ask":"9","exchange_timestamp_ms":1790938800007,"received_at_ms":1790938800007,"available_quantity":1}},
+    {"type":"expire","timestamp_ms":1791072000000,"instrument":{"type":"option","underlying":"TEST","expiry":"2026-10-02","kind":"put","strike":"10"},"spot":"9","threshold":"0.01","fee":"0"}
+  ]
+}

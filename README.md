@@ -6,6 +6,38 @@
 
 DollarBill demonstrates options mathematics, Greeks calculations, and basic trading strategies through a clean Rust implementation. Features Black-Scholes and Heston pricing models, volatility surface analysis, backtesting, and paper trading integration.
 
+## Latest development — October 4, 2026
+
+Phase 3 extends the offline execution foundation with a deterministic simulator,
+durable order recovery, exact decimal accounting, and shared strategy/risk routing
+through simulator and Alpaca adapters. Scenarios cover partial multi-leg fills,
+accepted submission timeouts, cancellation races, early assignment/exercise and
+explicit expiry settlement. The Alpaca adapter is tested through an offline
+transport contract; integration into the existing bot and real-account paper
+acceptance remain open.
+
+All-target/all-feature compile checking and release building passed. The offline
+baseline passed 1,097 unit/integration test executions and 11 doctests, including
+21 execution tests and repeatable replay of three fixtures. These counts include
+library tests repeated by binary targets. Strict Clippy still fails on 94 distinct
+diagnostics in existing modules; no diagnostics were reported in the new Phase 3
+code. Historical performance matrices still require corrected strategy identity
+and chronological inputs before regeneration.
+
+See [Phase 3 implementation and limits](docs/execution-phase3.md),
+[verification and lint status](docs/baseline.md), and
+[the future-map review](docs/FUTURE_MAP_REVIEW.md) for current acceptance gates.
+
+```text
+cargo check --locked --offline --all-targets --all-features
+cargo build --locked --offline --release --all-targets --all-features
+python scripts/baseline.py --offline --output target/baseline-new-run
+```
+
+Use a fresh baseline output directory for each run. Omit `--offline` when Cargo
+dependencies have not yet been cached. Older performance and test totals below
+are historical measurements rather than results of this verification.
+
 ## 🤖 Built Entirely with AI
 
 **This project was created through conversational AI development** - every line of code emerged from natural language descriptions with **Claude Sonnet 4.6** and **Grok**. From the Heston FFT implementation to the Nelder-Mead optimizer, it showcases how AI can build sophisticated mathematical software through "vibe coding."

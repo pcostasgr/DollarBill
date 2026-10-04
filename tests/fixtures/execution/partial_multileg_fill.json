@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "run_id": "partial_multileg_fill_v1",
+  "initial_cash": "100000.00",
+  "config": {
+    "latency_ms": 10,
+    "max_quote_age_ms": 500,
+    "fee_per_unit": "0.10",
+    "slippage_per_unit": "0"
+  },
+  "actions": [
+    {
+      "type": "submit", "timestamp_ms": 1000,
+      "intent": {
+        "client_order_id": "condor-1", "strategy_id": "execution-regression", "reduce_only": false,
+        "legs": [
+          {"instrument": {"type": "option", "underlying": "TEST", "expiry": "2030-02-15", "kind": "call", "strike": "110"}, "side": "sell", "quantity": 2, "limit": "2.00"},
+          {"instrument": {"type": "option", "underlying": "TEST", "expiry": "2030-02-15", "kind": "call", "strike": "115"}, "side": "buy", "quantity": 2, "limit": "1.00"},
+          {"instrument": {"type": "option", "underlying": "TEST", "expiry": "2030-02-15", "kind": "put", "strike": "90"}, "side": "sell", "quantity": 2, "limit": "2.00"},
+          {"instrument": {"type": "option", "underlying": "TEST", "expiry": "2030-02-15", "kind": "put", "strike": "85"}, "side": "buy", "quantity": 2, "limit": "1.00"}
+        ]
+      }
+    },
+    {"type": "quote", "quote": {"instrument": {"type": "option", "underlying": "TEST", "expiry": "2030-02-15", "kind": "call", "strike": "110"}, "bid": "2.00", "ask": "2.10", "exchange_timestamp_ms": 1010, "received_at_ms": 1010, "available_quantity": 1}},
+    {"type": "quote", "quote": {"instrument": {"type": "option", "underlying": "TEST", "expiry": "2030-02-15", "kind": "call", "strike": "115"}, "bid": "0.90", "ask": "1.00", "exchange_timestamp_ms": 1020, "received_at_ms": 1020, "available_quantity": 1}},
+    {"type": "quote", "quote": {"instrument": {"type": "option", "underlying": "TEST", "expiry": "2030-02-15", "kind": "put", "strike": "90"}, "bid": "2.00", "ask": "2.10", "exchange_timestamp_ms": 1030, "received_at_ms": 1030, "available_quantity": 2}},
+    {"type": "circuit_breaker", "timestamp_ms": 1040, "reason": "partial structure: cancel remaining entry risk"},
+    {
+      "type": "submit", "timestamp_ms": 1050,
+      "intent": {
+        "client_order_id": "flatten-1", "strategy_id": "risk-reduction", "reduce_only": true,
+        "legs": [
+          {"instrument": {"type": "option", "underlying": "TEST", "expiry": "2030-02-15", "kind": "call", "strike": "110"}, "side": "buy", "quantity": 1, "limit": null},
+          {"instrument": {"type": "option", "underlying": "TEST", "expiry": "2030-02-15", "kind": "call", "strike": "115"}, "side": "sell", "quantity": 1, "limit": null},
+          {"instrument": {"type": "option", "underlying": "TEST", "expiry": "2030-02-15", "kind": "put", "strike": "90"}, "side": "buy", "quantity": 2, "limit": null}
+        ]
+      }
+    },
+    {"type": "quote", "quote": {"instrument": {"type": "option", "underlying": "TEST", "expiry": "2030-02-15", "kind": "call", "strike": "110"}, "bid": "1.40", "ask": "1.50", "exchange_timestamp_ms": 1060, "received_at_ms": 1060, "available_quantity": 1}},
+    {"type": "quote", "quote": {"instrument": {"type": "option", "underlying": "TEST", "expiry": "2030-02-15", "kind": "call", "strike": "115"}, "bid": "0.50", "ask": "0.60", "exchange_timestamp_ms": 1070, "received_at_ms": 1070, "available_quantity": 1}},
+    {"type": "quote", "quote": {"instrument": {"type": "option", "underlying": "TEST", "expiry": "2030-02-15", "kind": "put", "strike": "90"}, "bid": "0.65", "ask": "0.75", "exchange_timestamp_ms": 1080, "received_at_ms": 1080, "available_quantity": 2}}
+  ]
+}

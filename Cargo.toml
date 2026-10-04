@@ -17,6 +17,7 @@ time = "0.3"                                        # Time library for Yahoo Fin
 rayon = "1.8"                                       # Data parallelism for Heston Monte Carlo
 num-complex = "0.4"                                 # Complex numbers for Carr-Madan formula
 rust_decimal = { version = "1.36", features = ["serde"] }  # Exact decimal arithmetic for accounting ledger
+sha2 = "0.10" # Content-addressed build and research inputs
 log = "0.4"                                                 # Structured logging facade for library code
 env_logger = "0.11"                                        # Backend for log — writes to stderr, filter via RUST_LOG
 clap = { version = "4", features = ["derive"] }            # CLI argument parsing with subcommands
@@ -30,6 +31,9 @@ lettre = { version = "0.11", features = ["tokio1-native-tls"] }  # SMTP email al
 [dev-dependencies]
 proptest = "1"   # Property-based testing: 1000-case fuzzing for numerical stability
 criterion = { version = "0.5", features = ["html_reports"] }
+
+[build-dependencies]
+sha2 = "0.10"
 
 [[bench]]
 name = "heston_pricing"

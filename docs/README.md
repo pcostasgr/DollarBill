@@ -2,6 +2,19 @@
 
 Welcome to the DollarBill documentation! This folder contains comprehensive guides for using and understanding the platform.
 
+## Current development status — October 4, 2026
+
+Start with [Phase 3 execution](execution-phase3.md) for the simulator, durable
+recovery, shared risk path and offline Alpaca adapter. The
+[baseline guide](baseline.md) records the latest compile, test, replay and lint
+results. The [future-map review](FUTURE_MAP_REVIEW.md) tracks remaining acceptance
+gates, including historical-harness correction and broker integration.
+
+Debug checking and release building passed for all targets/features. The baseline
+passed 1,097 unit/integration executions and 11 doctests; strict Clippy remains
+failing. Earlier test totals and benchmark measurements linked below are
+historical and were not recertified by this baseline.
+
 ## 📖 User Guides
 
 ### Getting Started
@@ -20,11 +33,15 @@ Welcome to the DollarBill documentation! This folder contains comprehensive guid
 
 ## 🔧 Technical Documentation
 
+- **[Future Map Review](FUTURE_MAP_REVIEW.md)** — code-backed assessment, priorities and first-milestone boundaries
+- **[Reproducible Baseline](baseline.md)** — execution replay, scenario artifacts and ignored-test exceptions
+- **[Phase 3 Execution](execution-phase3.md)** — simulator settlement, shared strategy/risk routing and Alpaca adapter contracts
+
 ### Development
 - **[Implementation Summary](implementation-summary.md)** - Technical details, architecture, and implementation notes
 - **[Parameter Atlas](parameter_atlas.md)** - Complete reference for all configuration parameters
 - **[Testing Strategies](testing-strategies.md)** - Comprehensive test plan and test categories
-- **[Test Implementation Summary](test-implementation-summary.md)** - Test results and coverage (421+ tests, 100% passing) ⭐ UPDATED
+- **[Test Implementation Summary](test-implementation-summary.md)** - Historical test results and coverage; current results are in the baseline guide
 - **[Failed Tests Analysis](failed-tests-analysis.md)** - Resolved test issues and mathematical explanations
 - **[Benchmark Summary](benchmarks/SUMMARY.md)** - Criterion benchmarks with QuantLib cross-validation ⭐ UPDATED
 
@@ -38,7 +55,7 @@ DollarBill/
 ├── src/                     # Rust source code
 │   └── models/              # BS, Heston, Gauss-Laguerre quadrature
 ├── benches/                 # Criterion benchmark harnesses
-├── tests/                   # Integration & unit test suite (307 tests)
+├── tests/                   # Integration, execution replay & numerical tests
 ├── examples/                # Rust example programs
 ├── py/                      # Python utilities & QuantLib reference scripts
 ├── scripts/                 # Shell/batch scripts

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "exceptions": [
+    {"path": "src/alpaca/client.rs", "name": "test_get_account", "category": "broker_contract", "reason": "Requires explicit Alpaca credentials and an external account; excluded from offline baseline."},
+    {"path": "src/alpaca/client.rs", "name": "test_get_positions", "category": "broker_contract", "reason": "Requires explicit Alpaca credentials and broker state; excluded from offline baseline."},
+    {"path": "src/alpaca/client.rs", "name": "test_get_latest_quote", "category": "market_data", "reason": "Requires explicit Alpaca credentials and live data access; excluded from offline baseline."},
+    {"path": "src/market_data/real_market_data.rs", "name": "test_fetch_tesla_data", "category": "market_data", "reason": "External Yahoo network/data dependency; not deterministic offline."},
+    {"path": "src/market_data/real_market_data.rs", "name": "test_fetch_latest_price", "category": "market_data", "reason": "External Yahoo network/data dependency; not deterministic offline."},
+    {"path": "src/market_data/real_option_data_yahoo.rs", "name": "test_fetch_expirations", "category": "market_data", "reason": "External Yahoo options endpoint; not deterministic offline."},
+    {"path": "src/market_data/real_option_data_yahoo.rs", "name": "test_fetch_options", "category": "market_data", "reason": "External Yahoo options endpoint; not deterministic offline."},
+    {"path": "tests/pricing_validation.rs", "name": "heston_on_tesla_crash_period", "category": "mathematical", "reason": "Opt-in expensive CMA-ES calibration on tracked TSLA history; not certified by the default baseline."},
+    {"path": "tests/pricing_validation.rs", "name": "heston_crash_wings_and_feller", "category": "mathematical", "reason": "Opt-in crash-wing calibration/Feller thresholds; requires a separate numerical validation run."},
+    {"path": "tests/pricing_validation.rs", "name": "crash_regime_strategy_survives", "category": "risk", "reason": "Opt-in historical crash strategy acceptance criterion; remains unverified, not assumed to pass."},
+    {"path": "tests/pricing_validation.rs", "name": "cmaes_crash_slice_tight_thresholds", "category": "mathematical", "reason": "Opt-in strict crash-slice calibration thresholds; requires a separate numerical validation run."},
+    {"path": "tests/pricing_validation.rs", "name": "cmaes_lowvol_cross_regime", "category": "mathematical", "reason": "Opt-in low-vol calibration generalization thresholds; requires a separate numerical validation run."},
+    {"path": "tests/pricing_validation.rs", "name": "feller_guard_and_mc_stability", "category": "mathematical", "reason": "Opt-in combined calibration/Feller/Monte Carlo gate; separate from default Monte Carlo stress tests."},
+    {"path": "tests/pricing_validation.rs", "name": "heston_regime_parameter_stability", "category": "mathematical", "reason": "Opt-in regime-dependent calibration stability gate; requires a separate numerical validation run."}
+  ],
+  "doctest_exceptions": [
+    {"path": "src/backtesting/regime_pipeline.rs", "index": 1, "reason": "Illustrative orchestration snippet uses caller-owned market/book variables and a placeholder hedge callback."},
+    {"path": "src/portfolio/allocation.rs", "index": 1, "reason": "Illustrative allocation snippet assumes a caller-owned allocator; executable allocation tests cover the API."}
+  ]
+}

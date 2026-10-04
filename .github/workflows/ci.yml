@@ -36,13 +36,21 @@ jobs:
 
       # Unit + integration test suite — includes kill-switch scenarios,
       # OCC proptest fuzzing, invariant tests, and portfolio tests.
-      - name: Tests
-        run: cargo test --all
+      - name: Reproducible offline baseline
+        run: python3 scripts/baseline.py --output "${{ runner.temp }}/dollarbill-baseline-${{ github.run_id }}-${{ github.run_attempt }}"
         # No real Alpaca API calls are made; tests use the pure risk/invariant layer.
         # Set dummy env vars so any accidental live-path code doesn't panic on missing env.
         env:
           ALPACA_API_KEY: test-key-ci
           ALPACA_API_SECRET: test-secret-ci
+
+      - name: Archive baseline evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: execution-baseline
+          path: ${{ runner.temp }}/dollarbill-baseline-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: warn
 
   # Lint job — catches dead code, unused imports, and obvious style issues.
   lint:

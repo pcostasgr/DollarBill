@@ -16,3 +16,6 @@ pub mod persistence;
 pub mod alerting;
 pub mod risk;
 pub mod order_path;
+pub mod build_info;
+pub mod domain;
+pub mod execution;

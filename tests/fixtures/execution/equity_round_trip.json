@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "run_id": "equity_round_trip_v1",
+  "initial_cash": "1000.00",
+  "config": {"latency_ms": 0, "max_quote_age_ms": 500, "fee_per_unit": "0.01", "slippage_per_unit": "0.00"},
+  "actions": [
+    {"type": "submit", "timestamp_ms": 1, "intent": {"client_order_id": "buy-1", "strategy_id": "round-trip", "reduce_only": false, "legs": [{"instrument": {"type": "equity", "symbol": "TEST"}, "side": "buy", "quantity": 10, "limit": null}]}},
+    {"type": "quote", "quote": {"instrument": {"type": "equity", "symbol": "TEST"}, "bid": "9.90", "ask": "10.00", "exchange_timestamp_ms": 2, "received_at_ms": 2, "available_quantity": 10}},
+    {"type": "submit", "timestamp_ms": 3, "intent": {"client_order_id": "sell-1", "strategy_id": "round-trip", "reduce_only": true, "legs": [{"instrument": {"type": "equity", "symbol": "TEST"}, "side": "sell", "quantity": 10, "limit": null}]}},
+    {"type": "quote", "quote": {"instrument": {"type": "equity", "symbol": "TEST"}, "bid": "12.00", "ask": "12.10", "exchange_timestamp_ms": 4, "received_at_ms": 4, "available_quantity": 10}}
+  ]
+}

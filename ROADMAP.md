@@ -1,8 +1,37 @@
 # DollarBill — Roadmap
 
-**Written:** March 21, 2026 · **Updated:** October 2, 2026  
-**Baseline:** 765 tests passing (16 ignored) · clean build · see Git log for latest commit  
-**Grade at baseline:** 8.5/10
+> **October 4 update:** The historical completion claims below are superseded
+> for future planning by [the future-map review](docs/FUTURE_MAP_REVIEW.md).
+> The first offline execution/replay milestone and its reproducible baseline
+> are documented in [docs/baseline.md](docs/baseline.md). Historical strategy
+> matrices require harness corrections and regeneration before certification.
+> Phase 3 simulator and shared adapter work is tracked in
+> [docs/execution-phase3.md](docs/execution-phase3.md), with explicit operational limitations.
+
+**Written:** March 21, 2026 · **Updated:** October 4, 2026
+**Current verification:** all-target/all-feature check and release build pass;
+1,097 unit/integration executions and 11 doctests pass (counts include repeated
+modules). Strict Clippy fails on 94 distinct existing diagnostics.
+
+## Current execution milestone
+
+- Implemented: provider-independent order/fill units, decimal accounting,
+  append-only SQLite journal, replay and restart recovery.
+- Implemented: deterministic partial multi-leg simulation, shared liquidity,
+  accepted timeout recovery, cancellation races and explicit settlement/expiry.
+- Implemented: shared strategy/risk routing and offline-tested Alpaca adapter
+  contracts, with pending-order buying-power reservations.
+- Verified: 21 execution tests and three repeatable scenario fixtures, including
+  JSONL replay and reopened SQLite state equality.
+- Remaining: broker stream/reconnection and gap recovery, account seeding,
+  fees reconciliation, real-account paper acceptance and existing-bot migration.
+- Remaining: historical strategy identity/chronology repairs and report
+  regeneration; config validation/schema migration gates; existing Clippy backlog.
+
+See [Phase 3](docs/execution-phase3.md) for model limits and
+[baseline](docs/baseline.md) for evidence. The sections below record the earlier
+development history; their phase numbering and completion claims predate the
+future-map execution milestones.
 
 ---
 
