@@ -17,7 +17,7 @@ use crate::market_data::csv_loader::load_csv_closes;
 use crate::market_data::options_feed::LiveIvCache;
 use crate::market_data::real_option_data_yahoo::fetch_liquid_options;
 use crate::market_data::spot_price::fetch_spot;
-use crate::models::bs_mod::{compute_historical_vol, black_scholes_call, black_scholes_put};
+use crate::models::bs_mod::{compute_historical_vol, compute_historical_vol_ticks, black_scholes_call, black_scholes_put};
 use crate::models::heston::heston_start;
 use crate::persistence;
 use crate::portfolio::{PortfolioManager, PortfolioConfig};
@@ -247,7 +247,35 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
     };
 
     // ── P3.1 Live IV cache (15-min TTL) ───────────────────────────────────
-    let iv_cache = LiveIvCache::new(900);
+    // Shared so a background task can populate it (network fetches must never
+    // block the per-tick trading loop below).
+    let iv_cache: Arc<RwLock<LiveIvCache>> = Arc::new(RwLock::new(LiveIvCache::new(900)));
+
+    // Spawn background live ATM-IV refresh task. Polls every minute and only
+    // does the (network) fetch when a symbol's cached reading has gone stale,
+    // storing the result under a brief write lock so the hot loop's reads
+    // never wait on a network call.
+    {
+        let syms_iv = symbols.clone();
+        let iv_bg   = Arc::clone(&iv_cache);
+        tokio::spawn(async move {
+            let poll_interval = tokio::time::Duration::from_secs(60);
+            loop {
+                for sym in &syms_iv {
+                    let is_fresh = iv_bg.read().unwrap().get_cached_iv(sym).is_some();
+                    if is_fresh { continue; }
+                    match LiveIvCache::fetch_atm_iv(sym, 0.05).await {
+                        Ok(iv) => {
+                            iv_bg.write().unwrap().store(sym, iv);
+                            info!("Live ATM IV refreshed for {}: {:.1}%", sym, iv * 100.0);
+                        }
+                        Err(e) => warn!("Live ATM IV refresh failed for {}: {} — using model/HV fallback", sym, e),
+                    }
+                }
+                tokio::time::sleep(poll_interval).await;
+            }
+        });
+    }
 
     // ── P3.2 Shared calibrated Heston params (updated by background task) ─
     let live_params: Arc<RwLock<HashMap<String, CalibParams>>> =
@@ -280,8 +308,10 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
         let source_bg  = spot_price_source.clone();
         tokio::spawn(async move {
             let calib_interval = tokio::time::Duration::from_secs(30 * 60);
+            // Calibrate immediately on startup (don't wait a full 30 min for
+            // the first refresh — the JSON seed above can otherwise stay the
+            // only source of `model_iv` for half an hour).
             loop {
-                tokio::time::sleep(calib_interval).await;
                 for sym in &syms_bg {
                     let spot = match fetch_spot(&source_bg, sym, || {
                         let c = client_bg.clone();
@@ -312,12 +342,16 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                         Err(e) => warn!("BG calib failed for {}: {}", sym, e),
                     }
                 }
+                tokio::time::sleep(calib_interval).await;
             }
         });
     }
 
     // ── Rolling price buffers and signal-cooldown trackers ────────────────
-    let mut price_buf: HashMap<String, VecDeque<f64>> = HashMap::new();
+    // Each price sample is stamped with its arrival `Instant` so the realized
+    // volatility below can be annualized from the buffer's actual sampling
+    // frequency rather than assuming one sample per trading day.
+    let mut price_buf: HashMap<String, VecDeque<(f64, Instant)>> = HashMap::new();
     let mut last_signal: HashMap<String, Instant>     = HashMap::new();
     // Equity tickers the bot intentionally holds long — never auto-sell or flag.
     let protected_equity_set: HashSet<String> =
@@ -421,6 +455,13 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
     }
 
     let mut ctrl_c_trade = std::pin::pin!(tokio::signal::ctrl_c());
+    // ── Options market-hours gate ──────────────────────────────────────────
+    // Options do not trade outside regular session hours; without this guard
+    // the bot keeps generating and attempting to submit entry signals
+    // pre/post-market, which Alpaca then rejects with a 422. Pessimistic
+    // default (closed) until the first clock poll confirms the session is open.
+    let mut market_open = false;
+    let mut clock_poll = tokio::time::interval(tokio::time::Duration::from_secs(60));
     'trading: loop {
         let event = tokio::select! {
             biased;
@@ -428,6 +469,23 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                 let _ = res;
                 info!("Ctrl-C received -- shutting down trading bot gracefully.");
                 break;
+            }
+            _ = clock_poll.tick() => {
+                match client.get_clock().await {
+                    Ok(clock) => {
+                        use chrono::DateTime;
+                        let now_utc = Utc::now();
+                        // Belt-and-suspenders: also check `next_close` directly,
+                        // since options stop trading at the session close even
+                        // if `is_open` lags by a tick.
+                        let session_closed = DateTime::parse_from_rfc3339(&clock.next_close)
+                            .map(|close_ts| now_utc >= close_ts.with_timezone(&Utc))
+                            .unwrap_or(false);
+                        market_open = clock.is_open && !session_closed;
+                    }
+                    Err(e) => warn!("Market clock check failed: {} -- keeping prior state (open={})", e, market_open),
+                }
+                continue 'trading;
             }
             ev = stream.next_event() => ev,
         };
@@ -479,43 +537,48 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                 // Update rolling price buffer
                 let buf = price_buf.entry(sym.clone())
                     .or_insert_with(VecDeque::new);
-                buf.push_back(price);
+                buf.push_back((price, Instant::now()));
                 if buf.len() > max_price_buf { buf.pop_front(); }
                 let warmed_up = buf.len() >= min_prices_for_hv;
                 let entries_halted = circuit_broken || check_risk_guards(
                     equity, equity - estimated_daily_loss, trades_today, &daily_risk_limits).is_halt();
 
-                // ── P3.1 Non-blocking IV cache refresh ────────────────────
-                // The main cache is not sent into the task; instead we log that
-                // a refresh is warranted.  The live_params map (shared via Arc)
-                // is updated by the 30-min background task; the IV cache is only
-                // used as a quick per-tick read-path.
-                if iv_cache.get_cached_iv(&sym).is_none() {
-                    debug!("No cached IV for {} yet; background task will refresh", sym);
+                // ── P3.1 Live IV cache read-path ───────────────────────────
+                // Populated by the background refresh task spawned above; this
+                // is just a quick lock + HashMap lookup, never a network call.
+                if iv_cache.read().unwrap().get_cached_iv(&sym).is_none() {
+                    debug!("No cached market IV for {} yet; background task will refresh", sym);
                 }
 
-                // Volatility + Heston params from rolling ticks
-                let prices: Vec<f64> = buf.iter().copied().collect();
-                let observed_sigma = compute_historical_vol(&prices);
+                // Volatility + Heston params from rolling ticks.
+                // `compute_historical_vol_ticks` annualizes from the buffer's
+                // actual sampling rate (ticks arrive far more often than once a
+                // day, so the daily-close √252 assumption in
+                // `compute_historical_vol` would wildly over-annualize here).
+                let samples: Vec<(f64, Instant)> = buf.iter().copied().collect();
+                let prices: Vec<f64> = samples.iter().map(|(p, _)| *p).collect();
+                let observed_sigma = compute_historical_vol_ticks(&samples);
                 let valid_sigma = observed_sigma.is_finite() && observed_sigma >= 1e-8;
                 // Management must run even before the tick buffer warms up.
                 let sigma = if valid_sigma { observed_sigma } else { 0.25 };
 
-                // ── P3.1 Use live IV from cache if available, else HV ─────
-                let live_iv = iv_cache.get_cached_iv(&sym);
-                let model_iv = live_iv.unwrap_or_else(|| {
-                    // Kick off an async refresh but don't block the tick loop.
-                    // The refresh will populate the cache for the next tick.
-                    // We use the shared calibrated v0 as the best available IV proxy.
-                    live_params
-                        .read().unwrap()
-                        .get(&sym)
-                        .map(|p| p.v0.sqrt())
-                        .unwrap_or_else(|| {
-                            let h = heston_start(price, sigma, 1.0, 0.05);
-                            h.v0.sqrt()
-                        })
-                });
+                // ── Market vs. model IV — these must stay distinct inputs ──
+                // `market_iv`: what the market is actually pricing options at.
+                // Prefer the live options-chain reading (populated by the
+                // background refresh task); fall back to the tick-based
+                // realized-vol estimate only while no fresh reading is cached.
+                let live_iv = iv_cache.read().unwrap().get_cached_iv(&sym);
+                let market_iv = live_iv.unwrap_or(sigma);
+                // `model_iv`: the Heston-calibrated theoretical fair value,
+                // used by strategies to detect mispricing against `market_iv`.
+                let model_iv = live_params
+                    .read().unwrap()
+                    .get(&sym)
+                    .map(|p| p.v0.sqrt())
+                    .unwrap_or_else(|| {
+                        let h = heston_start(price, sigma, 1.0, 0.05);
+                        h.v0.sqrt()
+                    });
 
                 // ── P2.1 Position close check (via shared manage_open_positions) ──
                 if open_syms.contains(&sym) {
@@ -643,7 +706,8 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                 }
 
                 // Entry-only guards must never bypass management of open risk.
-                if entries_halted || !warmed_up || !valid_sigma || !model_iv.is_finite() || model_iv > 2.0 {
+                if entries_halted || !warmed_up || !valid_sigma || !model_iv.is_finite()
+                    || model_iv > 2.0 || !market_open {
                     continue;
                 }
                 let now = Instant::now();
@@ -677,8 +741,11 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                 };
                 let regime = RegimeDetector::detect_from_scalars(sigma, trend_strength);
 
-                // Generate signals
-                let signals = registry.generate_all_signals(&sym, price, sigma, model_iv, sigma);
+                // Generate signals. `market_iv` (live options-chain reading, or
+                // the realized-vol fallback) vs. `model_iv` (Heston fair value)
+                // — previously `sigma` was passed for both the market-IV *and*
+                // historical-vol slots, so strategies never saw a real IV edge.
+                let signals = registry.generate_all_signals(&sym, price, market_iv, model_iv, sigma);
                 let avoid_strat = strategy_avoid.get(&sym).map(|s: &String| s.as_str()).unwrap_or("");
                 let actionable: Vec<_> = signals.iter()
                     .filter(|s| {

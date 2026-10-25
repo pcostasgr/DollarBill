@@ -62,6 +62,14 @@ impl LiveIvCache {
         self.entries.get(symbol).map(|e| e.iv)
     }
 
+    /// Insert/overwrite the cached IV for `symbol`, stamped with the current
+    /// time. Lets a background task fetch `fetch_atm_iv` *outside* any lock
+    /// (the fetch does real network I/O) and only take the lock briefly to
+    /// store the result.
+    pub fn store(&mut self, symbol: &str, iv: f64) {
+        self.entries.insert(symbol.to_string(), IvEntry { iv, refreshed: Instant::now() });
+    }
+
     /// Refresh the IV for `symbol` if the cached entry is missing or stale.
     ///
     /// Returns:
@@ -90,21 +98,27 @@ impl LiveIvCache {
         }
     }
 
-    // ── Internal fetch ─────────────────────────────────────────────────────
+    // ── ATM-IV fetch ────────────────────────────────────────────────────────
+    // `pub` so a background refresh task can call it directly (without `&mut
+    // self`) and only lock the cache for the brief `store()` call afterwards.
 
-    async fn fetch_atm_iv(
+    pub async fn fetch_atm_iv(
         symbol: &str,
         rate: f64,
     ) -> Result<f64, Box<dyn std::error::Error + Send + Sync>> {
         // Fetch spot and nearest-expiry liquid options concurrently.
-        // Map errors to String immediately so they are Send+Sync.
+        // Map errors to String *inside* each joined future so that the
+        // `tokio::join!` combinator's suspended state (while waiting on
+        // whichever future is slower) never has to hold the underlying
+        // `Box<dyn Error>` — which isn't `Send` — making this whole function
+        // usable from `tokio::spawn`.
         let (spot_res, opts_res) = tokio::join!(
-            fetch_latest_price(symbol),
-            fetch_liquid_options(symbol, 0, 10, 25.0),
+            async { fetch_latest_price(symbol).await.map_err(|e| e.to_string()) },
+            async { fetch_liquid_options(symbol, 0, 10, 25.0).await.map_err(|e| e.to_string()) },
         );
 
-        let spot    = spot_res.map_err(|e| e.to_string())?;
-        let options = opts_res.map_err(|e| e.to_string())?;
+        let spot    = spot_res?;
+        let options = opts_res?;
 
         if options.is_empty() {
             return Err(format!("No liquid options returned for {}", symbol).into());

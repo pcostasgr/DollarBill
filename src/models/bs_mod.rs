@@ -162,6 +162,44 @@ pub fn compute_historical_vol(closes: &[f64]) -> f64 {
     variance.sqrt() * 252f64.sqrt()
 }
 
+/// Annualized volatility from a buffer of `(price, sample_time)` ticks.
+///
+/// [`compute_historical_vol`] assumes one return per *trading day* (hence the
+/// fixed `√252` annualization). A live tick/quote buffer is sampled far more
+/// often than once a day, so reusing that daily assumption on tick data
+/// massively over-annualizes the result (e.g. a few-seconds-apart tick buffer
+/// can produce "volatility" readings in the hundreds of percent). This variant
+/// annualizes using the buffer's *actual* average sampling interval instead.
+pub fn compute_historical_vol_ticks(samples: &[(f64, std::time::Instant)]) -> f64 {
+    if samples.len() < 2 {
+        return 0.0;
+    }
+
+    let mut log_returns = Vec::with_capacity(samples.len() - 1);
+    for i in 1..samples.len() {
+        let ret = (samples[i].0 / samples[i - 1].0).ln();
+        log_returns.push(ret);
+    }
+
+    let mean = log_returns.iter().sum::<f64>() / log_returns.len() as f64;
+    let variance = log_returns.iter()
+        .map(|&r| (r - mean).powi(2))
+        .sum::<f64>() / (log_returns.len() - 1) as f64;
+
+    let elapsed_secs = samples.last().unwrap().1
+        .duration_since(samples.first().unwrap().1)
+        .as_secs_f64();
+    if elapsed_secs <= 0.0 {
+        return 0.0;
+    }
+
+    // Trading seconds/year: 252 trading days * 6.5h regular session.
+    const TRADING_SECONDS_PER_YEAR: f64 = 252.0 * 6.5 * 3600.0;
+    let periods_per_year = (samples.len() - 1) as f64 * TRADING_SECONDS_PER_YEAR / elapsed_secs;
+
+    (variance * periods_per_year).sqrt()
+}
+
 /// Daily P&L attribution from Greeks and market changes
 /// Approximate Taylor expansion: delta*ΔS + ½gamma*(ΔS)² + vega*Δσ + theta*Δt + rho*Δr
 pub fn pnl_attribution(
