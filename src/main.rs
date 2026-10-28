@@ -469,6 +469,13 @@ async fn cmd_trade(dry_run: bool, live: bool) {
     use alpaca::{AlpacaClient, live_bot};
     use market_data::symbols::load_enabled_stocks;
 
+    println!("{}", "=".repeat(70));
+    println!("PAPER TRADING BOT v{}{}{}",
+             env!("CARGO_PKG_VERSION"),
+             if dry_run { "  [DRY RUN]" } else { "" },
+             if live    { "  [LIVE STREAM]" } else { "" });
+    println!("{}", "=".repeat(70));
+
     let client = match AlpacaClient::from_env() {
         Ok(c) => c,
         Err(e) => {
@@ -482,12 +489,6 @@ async fn cmd_trade(dry_run: bool, live: bool) {
         Ok(s) => s,
         Err(e) => { eprintln!("Failed to load symbols: {}", e); return; }
     };
-
-    println!("{}", "=".repeat(70));
-    println!("PAPER TRADING BOT{}{}",
-             if dry_run { "  [DRY RUN]" } else { "" },
-             if live    { "  [LIVE STREAM]" } else { "" });
-    println!("{}", "=".repeat(70));
 
     let account = match client.get_account().await {
         Ok(a) => a,
