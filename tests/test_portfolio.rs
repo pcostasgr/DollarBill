@@ -547,8 +547,8 @@ fn perf_calculate_contribution_unknown_strategy() {
 // ─── MultiLegSizer ────────────────────────────────────────────────────────
 
 #[test]
-fn multi_leg_iron_condor_at_least_one_contract() {
-    // Even with a very large max_loss, the function floors to a minimum of 1
+fn multi_leg_iron_condor_rejects_unaffordable_contract() {
+    // The risk budget cannot afford even one contract.
     let sizer = dollarbill::portfolio::MultiLegSizer::new(100_000.0, 2.0, 10.0);
     let contracts = sizer.iron_condor_size(
         SizingMethod::FixedFractional(5.0),
@@ -556,7 +556,7 @@ fn multi_leg_iron_condor_at_least_one_contract() {
         1.50,     // net_credit
         0.30,     // volatility
     );
-    assert!(contracts >= 1, "iron_condor_size must return at least 1; got {}", contracts);
+    assert_eq!(contracts, 0, "unaffordable risk must not be promoted to one contract");
 }
 
 #[test]

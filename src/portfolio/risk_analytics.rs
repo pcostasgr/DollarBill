@@ -23,6 +23,11 @@ pub struct PortfolioRisk {
     pub cvar_95: f64,           // 95% Conditional VaR (Expected Shortfall)
     pub cvar_99: f64,           // 99% Conditional VaR (Expected Shortfall)
     pub concentration_risk: f64, // Maximum single position as % of portfolio
+    pub gross_delta_dollars: f64,
+    pub gamma_loss_1pct: f64,
+    pub vega_loss_1pct: f64,
+    pub volga_loss_1pct: f64,
+    pub charm_loss_1day: f64,
 }
 
 impl Default for PortfolioRisk {
@@ -43,6 +48,8 @@ impl Default for PortfolioRisk {
             cvar_95: 0.0,
             cvar_99: 0.0,
             concentration_risk: 0.0,
+            gross_delta_dollars: 0.0, gamma_loss_1pct: 0.0, vega_loss_1pct: 0.0,
+            volga_loss_1pct: 0.0, charm_loss_1day: 0.0,
         }
     }
 }
@@ -56,11 +63,11 @@ pub struct RiskAnalyzer {
 /// Risk limits and constraints
 #[derive(Debug, Clone)]
 pub struct RiskLimits {
-    pub max_portfolio_delta: f64,      // Maximum net delta
-    pub max_portfolio_gamma: f64,      // Maximum gamma exposure
-    pub max_portfolio_vega: f64,       // Maximum vega exposure
-    pub max_portfolio_volga: f64,      // Maximum volga exposure (tail convexity)
-    pub max_portfolio_charm: f64,      // Maximum charm exposure (overnight gamma risk)
+    pub max_portfolio_delta: f64,      // Gross delta dollars / account equity
+    pub max_portfolio_gamma: f64,      // Gamma P&L on 1% spot move / equity
+    pub max_portfolio_vega: f64,       // Vega P&L on 0.01 absolute IV move / equity
+    pub max_portfolio_volga: f64,      // Volga P&L on 0.01 absolute IV move / equity
+    pub max_portfolio_charm: f64,      // One-day delta drift on 1% spot move / equity
     pub max_concentration_pct: f64,    // Max % in single position
     pub max_var_pct: f64,              // Max VaR as % of portfolio
     pub max_sector_exposure_pct: f64,  // Max exposure to single sector
@@ -94,10 +101,24 @@ impl RiskAnalyzer {
         let mut risk = PortfolioRisk::default();
         
         let mut position_values = Vec::new();
+        let mut factors: HashMap<&str, [f64; 5]> = HashMap::new();
         
         for pos in positions.iter().filter(|p| matches!(p.status, PositionStatus::Open)) {
+            let factor = factors.entry(&pos.symbol).or_insert([0.0; 5]);
+            let valid = pos.entry_spot.is_finite() && pos.entry_spot > 0.0
+                && pos.entry_greeks.as_ref().is_some_and(|g|
+                    [g.price, g.delta, g.gamma, g.vega, g.theta].iter().all(|x| x.is_finite()));
+            if !valid {
+                return PortfolioRisk { var_95: f64::INFINITY, var_99: f64::INFINITY,
+                    cvar_95: f64::INFINITY, cvar_99: f64::INFINITY, ..risk };
+            }
             if let Some(greeks) = &pos.entry_greeks {
                 let position_multiplier = pos.quantity as f64 * 100.0; // Options multiplier
+                let delta_dollars = greeks.delta * position_multiplier * pos.entry_spot;
+                risk.net_exposure += delta_dollars;
+                factor[0] += delta_dollars;
+                factor[1] += 0.5 * greeks.gamma * position_multiplier * (0.01 * pos.entry_spot).powi(2);
+                factor[2] += greeks.vega * position_multiplier * 0.01;
                 
                 // Aggregate Greeks
                 risk.total_delta += greeks.delta * position_multiplier;
@@ -112,6 +133,8 @@ impl RiskAnalyzer {
                 risk.total_vanna += hog.vanna * position_multiplier;
                 risk.total_volga += hog.volga * position_multiplier;
                 risk.total_charm += hog.charm * position_multiplier;
+                factor[3] += 0.5 * hog.volga * position_multiplier * 0.01_f64.powi(2);
+                factor[4] += hog.charm * position_multiplier * pos.entry_spot * 0.01 / 365.0;
             }
 
             if let Some(greeks) = &pos.entry_greeks {
@@ -124,7 +147,13 @@ impl RiskAnalyzer {
         }
         
         // Net exposure (accounting for long/short)
-        risk.net_exposure = risk.total_delta * 100.0; // Delta in dollars
+        for f in factors.values() {
+            risk.gross_delta_dollars += f[0].abs();
+            risk.gamma_loss_1pct += f[1].abs();
+            risk.vega_loss_1pct += f[2].abs();
+            risk.volga_loss_1pct += f[3].abs();
+            risk.charm_loss_1day += f[4].abs();
+        }
         
         // Concentration risk
         if !position_values.is_empty() && self.portfolio_value > 0.0 {
@@ -179,25 +208,36 @@ impl RiskAnalyzer {
 
     /// Compute portfolio volatility proxy (shared between VaR and CVaR).
     fn portfolio_vol_from_positions(&self, positions: &[Position]) -> f64 {
-        let mut total_variance = 0.0;
+        // One-day linear normal stress proxy, NOT a calibrated VaR forecast:
+        // spot sigma=20%/sqrt(252), IV sigma=0.01. Net identical-underlying
+        // exposures first; align adverse shocks across underlyings, with spot
+        // and IV factors independent. Curvature is checked separately.
+        let mut factors: HashMap<&str, (f64, f64)> = HashMap::new();
         for pos in positions.iter().filter(|p| matches!(p.status, PositionStatus::Open)) {
             if let Some(greeks) = &pos.entry_greeks {
-                let position_value = greeks.price * (pos.quantity as f64).abs() * 100.0;
-                let vol_contribution = greeks.vega * position_value / 100.0;
-                total_variance += vol_contribution.powi(2);
+                let f = factors.entry(&pos.symbol).or_default();
+                f.0 += greeks.delta * pos.quantity as f64 * 100.0 * pos.entry_spot * 0.20 / 252.0_f64.sqrt();
+                f.1 += greeks.vega * pos.quantity as f64 * 100.0 * 0.01;
             }
         }
-        total_variance.sqrt()
+        let spot: f64 = factors.values().map(|f| f.0.abs()).sum();
+        let iv: f64 = factors.values().map(|f| f.1.abs()).sum();
+        spot.hypot(iv)
     }
 
     /// Check if portfolio violates risk limits
     pub fn check_risk_limits(&self, risk: &PortfolioRisk) -> Vec<String> {
         let mut violations = Vec::new();
+        if !self.portfolio_value.is_finite() || self.portfolio_value <= 0.0
+            || ![risk.var_95, risk.gross_delta_dollars, risk.gamma_loss_1pct,
+                risk.vega_loss_1pct, risk.volga_loss_1pct, risk.charm_loss_1day].iter().all(|v| v.is_finite()) {
+            return vec!["Invalid or unmarked portfolio risk inputs".into()];
+        }
         
         // Normalize Greeks relative to portfolio value
-        let delta_pct = (risk.total_delta.abs() / self.portfolio_value).min(1.0);
-        let gamma_pct = (risk.total_gamma.abs() / self.portfolio_value).min(1.0);
-        let vega_pct = (risk.total_vega.abs() / self.portfolio_value).min(1.0);
+        let delta_pct = risk.gross_delta_dollars / self.portfolio_value;
+        let gamma_pct = risk.gamma_loss_1pct / self.portfolio_value;
+        let vega_pct = risk.vega_loss_1pct / self.portfolio_value;
         let var_pct = (risk.var_95 / self.portfolio_value) * 100.0;
         
         if delta_pct > self.risk_limits.max_portfolio_delta {
@@ -241,7 +281,7 @@ impl RiskAnalyzer {
         }
 
         // Higher-order Greek limits
-        let volga_pct = (risk.total_volga.abs() / self.portfolio_value).min(1.0);
+        let volga_pct = risk.volga_loss_1pct / self.portfolio_value;
         if volga_pct > self.risk_limits.max_portfolio_volga {
             violations.push(format!(
                 "Portfolio volga {:.1}% exceeds limit {:.1}%",
@@ -250,7 +290,7 @@ impl RiskAnalyzer {
             ));
         }
 
-        let charm_pct = (risk.total_charm.abs() / self.portfolio_value).min(1.0);
+        let charm_pct = risk.charm_loss_1day / self.portfolio_value;
         if charm_pct > self.risk_limits.max_portfolio_charm {
             violations.push(format!(
                 "Portfolio charm {:.1}% exceeds limit {:.1}%",

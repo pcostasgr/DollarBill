@@ -77,7 +77,7 @@ impl PortfolioManager {
             config.allocation_method,
         );
 
-        let performance = PerformanceAttribution::new();
+        let performance = PerformanceAttribution::with_initial_capital(config.initial_capital);
 
         let initial_capital = config.initial_capital;
         
@@ -227,6 +227,11 @@ impl PortfolioManager {
         self.risk_analyzer.calculate_portfolio_greeks(&self.current_positions)
     }
 
+    /// Check the full marked book including the candidate order before I/O.
+    pub fn projected_risk_warnings(&self, positions: &[Position]) -> Vec<String> {
+        self.risk_analyzer.check_risk_limits(&self.risk_analyzer.calculate_portfolio_greeks(positions))
+    }
+
     /// Add strategy to allocation mix
     pub fn add_strategy(
         &mut self,
@@ -280,8 +285,8 @@ impl PortfolioManager {
         println!("   Total Vega:          {:.2}", risk.total_vega);
         println!("   Net Exposure:        ${:.2}", risk.net_exposure);
         println!("   Gross Exposure:      ${:.2}", risk.gross_exposure);
-        println!("   VaR (95%):           ${:.2}", risk.var_95);
-        println!("   VaR (99%):           ${:.2}", risk.var_99);
+        println!("   1-day stress VaR95:  ${:.2}", risk.var_95);
+        println!("   1-day stress VaR99:  ${:.2}", risk.var_99);
         println!("   Concentration Risk:  {:.1}%", risk.concentration_risk);
         
         let violations = self.risk_analyzer.check_risk_limits(&risk);

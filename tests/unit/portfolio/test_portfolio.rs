@@ -411,7 +411,7 @@ fn net_profit_is_sum_of_pnl() {
 
 #[test]
 fn sortino_zero_when_no_losses() {
-    // All-winning strategy has no downside deviation → sortino = 0.0 (no downside)
+    // Positive mean with no downside has an infinite zero-hurdle Sortino ratio.
     let mut pa = PerformanceAttribution::new();
     let positions = vec![
         closed_position(1, "A", 100.0),
@@ -420,8 +420,8 @@ fn sortino_zero_when_no_losses() {
     ];
     let perf = pa.calculate_strategy_performance("test", &positions);
     // All positive returns → no downside deviation → sortino = 0
-    assert_eq!(perf.sortino_ratio, 0.0,
-        "Sortino should be 0 when no losing trades, got {}", perf.sortino_ratio);
+    assert!(perf.sortino_ratio.is_infinite() && perf.sortino_ratio.is_sign_positive(),
+        "Sortino should be positive infinity when no losing trades, got {}", perf.sortino_ratio);
 }
 
 #[test]

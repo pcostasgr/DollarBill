@@ -31,6 +31,11 @@ cargo test test_call_option_atm
 
 ## Current Status
 
+October 28 mathematical fixes add six integration regressions in
+`math_regressions.rs` and two live-order/risk-projection unit cases (also compiled
+by the main binary). See [the fixes and verification](../docs/math-fixes.md).
+The archived October 4 counts below describe their original checkout.
+
 Verified October 4, 2026 with
 `python scripts/baseline.py --offline --output target/baseline-phase3`:
 

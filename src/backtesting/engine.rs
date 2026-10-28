@@ -371,13 +371,14 @@ impl BacktestEngine {
     pub fn run_simple_strategy(
         &mut self,
         symbol: &str,
-        historical_data: Vec<HistoricalDay>,
+        mut historical_data: Vec<HistoricalDay>,
         volatility_threshold: f64,  // IV threshold for entry
     ) -> BacktestResult {
         if historical_data.is_empty() {
             return self.generate_result(symbol, "N/A".to_string(), "N/A".to_string());
         }
         
+        historical_data.sort_by(|a, b| a.date.cmp(&b.date));
         // Safety: the empty-data guard above guarantees at least one element.
         let start_date = historical_data.first()
             .expect("non-empty after guard").date.clone();
@@ -440,7 +441,7 @@ impl BacktestEngine {
     pub fn run_with_signals<F>(
         &mut self,
         symbol: &str,
-        historical_data: Vec<HistoricalDay>,
+        mut historical_data: Vec<HistoricalDay>,
         mut signal_fn: F,
     ) -> BacktestResult
     where
@@ -450,6 +451,7 @@ impl BacktestEngine {
             return self.generate_result(symbol, "N/A".to_string(), "N/A".to_string());
         }
         
+        historical_data.sort_by(|a, b| a.date.cmp(&b.date));
         // Safety: the empty-data guard above guarantees at least one element.
         let start_date = historical_data.first()
             .expect("non-empty after guard").date.clone();

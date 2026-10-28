@@ -43,6 +43,27 @@ pub struct Greeks {
     pub rho: f64,
 }
 
+fn pricing_boundary(s: f64, k: f64, t: f64, r: f64, sigma: f64, q: f64, call: bool) -> Option<Greeks> {
+    if ![s, k, t, r, sigma, q].iter().all(|x| x.is_finite()) || s <= 0.0 || k <= 0.0 || sigma < 0.0 {
+        return Some(Greeks { price: f64::NAN, delta: f64::NAN, gamma: f64::NAN,
+            theta: f64::NAN, vega: f64::NAN, rho: f64::NAN });
+    }
+    if t <= 0.0 || sigma == 0.0 {
+        let time = t.max(0.0);
+        let a = s * (-q * time).exp();
+        let b = k * (-r * time).exp();
+        let sign = if call { 1.0 } else { -1.0 };
+        let intrinsic = sign * (a - b);
+        // At the deterministic kink use midpoint delta and zero curvature.
+        let active = if intrinsic > 0.0 { 1.0 } else if intrinsic == 0.0 { 0.5 } else { 0.0 };
+        return Some(Greeks { price: intrinsic.max(0.0), delta: sign * active * (-q * time).exp(),
+            gamma: 0.0, vega: 0.0,
+            theta: if time == 0.0 { 0.0 } else { sign * active * (q * a - r * b) },
+            rho: sign * active * time * b });
+    }
+    None
+}
+
 /// Black-Scholes-Merton European call pricer + full Greeks
 /// q = continuous dividend yield (0.0 = vanilla Black-Scholes)
 pub fn black_scholes_merton_call(
@@ -53,6 +74,7 @@ pub fn black_scholes_merton_call(
     sigma: f64,
     q: f64,
 ) -> Greeks {
+    if let Some(value) = pricing_boundary(s, k, t, r, sigma, q, true) { return value; }
     if t <= 0.0 {
         let price = s.max(k) - k;
         let delta = if s > k { 1.0 } else { 0.0 };
@@ -98,6 +120,7 @@ pub fn black_scholes_merton_put(
     sigma: f64,
     q: f64,
 ) -> Greeks {
+    if let Some(value) = pricing_boundary(s, k, t, r, sigma, q, false) { return value; }
     if t <= 0.0 {
         let price = (k - s).max(0.0);
         let delta = if s < k { -1.0 } else { 0.0 };
@@ -144,9 +167,10 @@ pub fn black_scholes_put(s: f64, k: f64, t: f64, r: f64, sigma: f64) -> Greeks {
 /// Compute annualized historical volatility from closing prices
 /// Log returns, sample std dev, √252 annualization
 pub fn compute_historical_vol(closes: &[f64]) -> f64 {
-    if closes.len() < 2 {
+    if closes.len() < 3 {
         return 0.0;
     }
+    if closes.iter().any(|p| !p.is_finite() || *p <= 0.0) { return f64::NAN; }
 
     let mut log_returns = Vec::with_capacity(closes.len() - 1);
     for i in 1..closes.len() {
@@ -171,9 +195,11 @@ pub fn compute_historical_vol(closes: &[f64]) -> f64 {
 /// can produce "volatility" readings in the hundreds of percent). This variant
 /// annualizes using the buffer's *actual* average sampling interval instead.
 pub fn compute_historical_vol_ticks(samples: &[(f64, std::time::Instant)]) -> f64 {
-    if samples.len() < 2 {
+    if samples.len() < 3 {
         return 0.0;
     }
+    if samples.iter().any(|(p, _)| !p.is_finite() || *p <= 0.0)
+        || samples.windows(2).any(|w| w[1].1 <= w[0].1) { return f64::NAN; }
 
     let mut log_returns = Vec::with_capacity(samples.len() - 1);
     for i in 1..samples.len() {

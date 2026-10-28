@@ -33,6 +33,8 @@ historical and were not recertified by this baseline.
 
 ## 🔧 Technical Documentation
 
+- **[Mathematical Audit — October 28](MATH_AUDIT_2026-10-28.md)** — numerical counterexamples and remaining pricing, sizing, risk and research defects
+- **[Mathematical Fixes](math-fixes.md)** — corrected boundaries, sizing, live entry checks, risk units and historical result identity
 - **[Future Map Review](FUTURE_MAP_REVIEW.md)** — code-backed assessment, priorities and first-milestone boundaries
 - **[Reproducible Baseline](baseline.md)** — execution replay, scenario artifacts and ignored-test exceptions
 - **[Phase 3 Execution](execution-phase3.md)** — simulator settlement, shared strategy/risk routing and Alpaca adapter contracts

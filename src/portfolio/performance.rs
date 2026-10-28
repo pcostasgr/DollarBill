@@ -55,13 +55,21 @@ impl Default for StrategyPerformance {
 pub struct PerformanceAttribution {
     strategy_performance: HashMap<String, StrategyPerformance>,
     equity_curves: HashMap<String, Vec<f64>>,
+    initial_capital: f64,
 }
 
 impl PerformanceAttribution {
     pub fn new() -> Self {
+        Self::with_initial_capital(100_000.0)
+    }
+
+    /// Capital used for ROI and realized-equity drawdown; `new()` defaults to $100k.
+    pub fn with_initial_capital(initial_capital: f64) -> Self {
+        assert!(initial_capital.is_finite() && initial_capital > 0.0, "initial capital must be finite and positive");
         Self {
             strategy_performance: HashMap::new(),
             equity_curves: HashMap::new(),
+            initial_capital,
         }
     }
 
@@ -77,10 +85,12 @@ impl PerformanceAttribution {
         };
 
         let mut returns = Vec::new();
-        let mut equity_curve = vec![0.0];
+        let mut equity_curve = vec![self.initial_capital];
         let mut cumulative_pnl = 0.0;
 
-        for pos in positions.iter().filter(|p| matches!(p.status, PositionStatus::Closed | PositionStatus::Expired)) {
+        let mut closed: Vec<_> = positions.iter().filter(|p| matches!(p.status, PositionStatus::Closed | PositionStatus::Expired)).collect();
+        closed.sort_by_key(|p| (&p.exit_date, p.id));
+        for pos in closed {
             perf.total_trades += 1;
 
             if pos.is_winner() {
@@ -100,7 +110,7 @@ impl PerformanceAttribution {
 
             // Update equity curve
             cumulative_pnl += pos.realized_pnl;
-            equity_curve.push(cumulative_pnl);
+            equity_curve.push(self.initial_capital + cumulative_pnl);
         }
 
         // Calculate aggregate metrics
@@ -120,6 +130,8 @@ impl PerformanceAttribution {
 
         if perf.gross_loss > 0.0 {
             perf.profit_factor = perf.gross_profit / perf.gross_loss;
+        } else if perf.gross_profit > 0.0 {
+            perf.profit_factor = f64::INFINITY;
         }
 
         // Calculate risk-adjusted returns
@@ -137,8 +149,9 @@ impl PerformanceAttribution {
 
         // Calculate total ROI (assuming starting capital)
         if !equity_curve.is_empty() {
-            let initial_capital = 100_000.0; // Assumption
-            perf.roi = (perf.net_profit / initial_capital) * 100.0;
+            perf.roi = if self.initial_capital.is_finite() && self.initial_capital > 0.0 {
+                (perf.net_profit / self.initial_capital) * 100.0
+            } else { f64::NAN };
         }
 
         // Store for later retrieval
@@ -148,7 +161,8 @@ impl PerformanceAttribution {
         perf
     }
 
-    /// Calculate Sharpe ratio
+    /// Unannualized per-trade ratio at a zero hurdle. Variable holding periods
+    /// cannot use a fixed daily risk-free rate or daily annualization factor.
     fn calculate_sharpe_ratio(&self, returns: &[f64]) -> f64 {
         if returns.is_empty() {
             return 0.0;
@@ -163,11 +177,9 @@ impl PerformanceAttribution {
         let std_dev = variance.sqrt();
 
         if std_dev > 0.0 {
-            // Assuming 5% risk-free rate annualized, daily ~0.014%
-            let risk_free_rate = 0.014;
-            (mean_return - risk_free_rate) / std_dev
+            mean_return / std_dev
         } else {
-            0.0
+            if mean_return > 0.0 { f64::INFINITY } else if mean_return < 0.0 { f64::NEG_INFINITY } else { 0.0 }
         }
     }
 
@@ -186,7 +198,7 @@ impl PerformanceAttribution {
             .collect();
 
         if downside_returns.is_empty() {
-            return 0.0;
+            return if mean_return > 0.0 { f64::INFINITY } else { 0.0 };
         }
 
         let downside_variance: f64 = downside_returns.iter()
@@ -195,8 +207,7 @@ impl PerformanceAttribution {
         let downside_dev = downside_variance.sqrt();
 
         if downside_dev > 0.0 {
-            let risk_free_rate = 0.014;
-            (mean_return - risk_free_rate) / downside_dev
+            mean_return / downside_dev
         } else {
             0.0
         }
@@ -327,8 +338,8 @@ impl PerformanceAttribution {
             log::info!("Avg Loss:          ${:.2}", perf.avg_loss);
             log::info!("Profit Factor:     {:.2}", perf.profit_factor);
             log::info!("");
-            log::info!("Sharpe Ratio:      {:.2}", perf.sharpe_ratio);
-            log::info!("Sortino Ratio:     {:.2}", perf.sortino_ratio);
+            log::info!("Per-trade Sharpe (zero hurdle, unannualized): {:.2}", perf.sharpe_ratio);
+            log::info!("Per-trade Sortino (zero hurdle, unannualized): {:.2}", perf.sortino_ratio);
             log::info!("Omega Ratio:       {:.2}", perf.omega_ratio);
             log::info!("Max Drawdown:      ${:.2} ({:.1}%)", perf.max_drawdown, perf.max_drawdown_pct);
             log::info!("ROI:               {:.2}%", perf.roi);

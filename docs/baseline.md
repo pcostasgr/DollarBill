@@ -209,9 +209,11 @@ not a clean Clippy run or every CI job.
 ## Historical artifacts awaiting regeneration
 
 `models/performance_matrix.json`, `BACKTEST_REPORT.md` and historical benchmark
-claims predate the corrected equity/volatility path. In addition, the current
-`backtest --save` command labels threshold variants as separate strategies and
-does not normalize its newest-first CSV input. Do not use that command as the
-certification step for this baseline. Correct those harness issues, attach
-input/config/code metadata, then regenerate named strategy results in a separate
-milestone. No existing matrix is silently overwritten by the baseline script.
+claims predate the corrected equity/volatility path. The October 28 fixes sort
+backtest inputs chronologically and label the simple call-strategy threshold
+variants accurately. `backtest --save` now writes
+`models/simple_volatility_matrix.json` and a companion `.provenance.json`,
+without loading old rows or overwriting the legacy named-strategy matrix.
+Legacy matrix filtering is disabled in the live bot. These simple-strategy
+results do not certify named strategy performance; that requires a dedicated
+validated harness and new research. See [math-fixes.md](math-fixes.md).

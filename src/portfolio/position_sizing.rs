@@ -49,6 +49,11 @@ impl PositionSizer {
         avg_win: Option<f64>,
         avg_loss: Option<f64>,
     ) -> i32 {
+        if !option_price.is_finite() || option_price <= 0.0 || !self.account_value.is_finite()
+            || self.account_value <= 0.0 || !volatility.is_finite() || volatility < 0.0
+            || !self.max_position_pct.is_finite() || self.max_position_pct <= 0.0 {
+            return 0;
+        }
         let size = match method {
             SizingMethod::FixedFractional(pct) => {
                 self.fixed_fractional(pct, option_price)
@@ -69,7 +74,7 @@ impl PositionSizer {
 
         // Apply maximum position size limit
         let max_contracts = self.max_position_contracts(option_price);
-        size.min(max_contracts)
+        size.min(max_contracts).max(0)
     }
 
     /// Calculate position size scaled by the current market regime.
@@ -95,7 +100,7 @@ impl PositionSizer {
     ) -> i32 {
         let base = self.calculate_size(method, option_price, volatility, win_rate, avg_win, avg_loss);
         let mult = RegimeDetector::sizing_multiplier(regime);
-        ((base as f64 * mult).floor() as i32).max(0)
+        ((base as f64 * mult).floor() as i32).max(0).min(self.max_position_contracts(option_price).max(0))
     }
 
     /// Decide whether a new position should be opened at all given the current regime.
@@ -212,6 +217,8 @@ impl PositionSizer {
 
     /// Check if position fits within risk limits
     pub fn validate_position(&self, contracts: i32, option_price: f64) -> bool {
+        if !option_price.is_finite() || option_price <= 0.0 || !self.account_value.is_finite()
+            || self.account_value <= 0.0 || !self.max_position_pct.is_finite() { return false; }
         let risk = self.position_risk(contracts, option_price);
         let risk_pct = (risk / self.account_value) * 100.0;
         
@@ -240,15 +247,18 @@ impl MultiLegSizer {
         volatility: f64,
     ) -> i32 {
         // Size based on maximum potential loss, not credit
+        if !max_loss.is_finite() || max_loss <= 0.0 || !net_credit.is_finite() || net_credit <= 0.0 {
+            return 0;
+        }
         let risk_amount = self.sizer.account_value * (self.sizer.max_risk_per_trade / 100.0);
         
         // How many spreads fit in our risk budget?
         let contracts = (risk_amount / max_loss).floor() as i32;
         
         // Validate against volatility
-        let vol_adjusted = self.sizer.volatility_based(volatility, net_credit);
+        let vol_adjusted = self.sizer.calculate_size(SizingMethod::VolatilityBased, net_credit, volatility, None, None, None);
         
-        contracts.min(vol_adjusted).max(1)
+        contracts.min(vol_adjusted).min((self.sizer.account_value * self.sizer.max_position_pct / 100.0 / max_loss).floor() as i32).max(0)
     }
 
     /// Calculate size for credit spread (2 legs)
@@ -261,12 +271,15 @@ impl MultiLegSizer {
     ) -> i32 {
         // Max loss = spread width - credit
         let max_loss = (spread_width - net_credit) * 100.0;
+        if !max_loss.is_finite() || max_loss <= 0.0 || !net_credit.is_finite() || net_credit <= 0.0 {
+            return 0;
+        }
         let risk_amount = self.sizer.account_value * (self.sizer.max_risk_per_trade / 100.0);
         
         let contracts = (risk_amount / max_loss).floor() as i32;
-        let vol_adjusted = self.sizer.volatility_based(volatility, net_credit);
+        let vol_adjusted = self.sizer.calculate_size(SizingMethod::VolatilityBased, net_credit, volatility, None, None, None);
         
-        contracts.min(vol_adjusted).max(1)
+        contracts.min(vol_adjusted).min((self.sizer.account_value * self.sizer.max_position_pct / 100.0 / max_loss).floor() as i32).max(0)
     }
 
     /// Update account value

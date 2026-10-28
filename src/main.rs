@@ -59,13 +59,12 @@ enum Commands {
         rate: f64,
     },
 
-    /// Run backtests across configured symbols and optionally update the
-    /// performance matrix used by strategy matching.
+    /// Run simple call-strategy threshold variants on chronological historical data.
     Backtest {
         /// Limit to a single symbol — runs all configured symbols if absent
         #[arg(long)]
         symbol: Option<String>,
-        /// Persist results to models/performance_matrix.json
+        /// Save isolated simple-strategy results and provenance (not live recommendations)
         #[arg(long)]
         save: bool,
     },
@@ -200,16 +199,16 @@ fn cmd_backtest(symbol: Option<&str>, save: bool) {
         },
     };
 
-    // Load or start fresh performance matrix
-    let mut matrix = PerformanceMatrix::load_from_file("models/performance_matrix.json")
-        .unwrap_or_else(|_| PerformanceMatrix::new());
+    // These are threshold variants of ONE simple call strategy, not executions
+    // of the named TradingStrategy implementations. Never mix legacy rows in.
+    let mut matrix = PerformanceMatrix::new();
 
     let strategies: &[(&str, f64)] = &[
-        ("Momentum",         0.20),
-        ("Mean Reversion",   0.35),
-        ("Breakout",         0.15),
-        ("Vol Arbitrage",    0.30),
-        ("Cash-Secured Puts",0.25),
+        ("Simple call: IV < 20%", 0.20),
+        ("Simple call: IV < 35%", 0.35),
+        ("Simple call: IV < 15%", 0.15),
+        ("Simple call: IV < 30%", 0.30),
+        ("Simple call: IV < 25%", 0.25),
     ];
 
     println!("{}", "=".repeat(70));
@@ -217,6 +216,7 @@ fn cmd_backtest(symbol: Option<&str>, save: bool) {
     println!("{}", "=".repeat(70));
 
     let mut ran = 0usize;
+    let mut inputs = Vec::new();
     for sym in &symbols {
         let csv_path = find_csv(sym);
         let history = match load_csv_closes(&csv_path) {
@@ -226,6 +226,14 @@ fn cmd_backtest(symbol: Option<&str>, save: bool) {
                 continue;
             }
         };
+
+        use sha2::{Digest, Sha256};
+        let input_bytes = match std::fs::read(&csv_path) {
+            Ok(bytes) => bytes,
+            Err(e) => { eprintln!("Cannot record input identity for {}: {}", sym, e); continue; }
+        };
+        inputs.push(serde_json::json!({ "symbol": sym, "path": csv_path,
+            "sha256": format!("{:x}", Sha256::digest(&input_bytes)), "observations": history.len() }));
 
         println!("\n📊 {}  ({} trading days)", sym, history.len());
 
@@ -265,12 +273,23 @@ fn cmd_backtest(symbol: Option<&str>, save: bool) {
 
     if save {
         std::fs::create_dir_all("models").ok();
-        match matrix.save_to_file("models/performance_matrix.json") {
-            Ok(_) => println!("💾 Saved  →  models/performance_matrix.json"),
+        match matrix.save_to_file("models/simple_volatility_matrix.json") {
+            Ok(_) => println!("💾 Saved  →  models/simple_volatility_matrix.json (simple strategy variants only)"),
             Err(e) => eprintln!("❌ Save failed: {}", e),
         }
+        let provenance = serde_json::json!({
+            "schema_version": 1, "harness": "simple_call_volatility_thresholds",
+            "build": dollarbill::build_info::BuildInfo::current(), "inputs": inputs,
+            "variants": strategies, "config": format!("{:?}", BacktestConfig::default()),
+            "chronology": "ascending ISO date", "certified_named_strategies": false,
+            "generated_at": chrono::Utc::now().to_rfc3339(),
+        });
+        if let Err(e) = std::fs::write("models/simple_volatility_matrix.provenance.json",
+            serde_json::to_vec_pretty(&provenance).expect("serializable provenance")) {
+            eprintln!("Cannot save research provenance: {}", e);
+        }
     } else {
-        println!("(Pass --save to persist results to models/performance_matrix.json)");
+        println!("(Pass --save to persist results to models/simple_volatility_matrix.json)");
     }
 }
 

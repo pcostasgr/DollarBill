@@ -9,7 +9,6 @@ use crate::alerting::Alerter;
 use crate::alpaca::AlpacaClient;
 use crate::alpaca::execution::{position_from_fill, managed_positions, invariant_positions,
     management_action, close_tracked_position, reconcile_positions};
-use crate::analysis::performance_matrix::StrategyRecommendations;
 use crate::analysis::regime_detector::RegimeDetector;
 use crate::calibration::heston_calibrator::{calibrate_heston, CalibParams};
 use crate::config;
@@ -37,38 +36,105 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
-/// Conservative per-contract margin/cost estimate for a given signal action.
-/// Used as a pre-flight buying-power guard before submitting options orders.
-/// For iron butterflies Alpaca charges margin on BOTH wings (not just the wider one),
-/// so the estimate is 2 × wing_width × qty × 100.
-/// For debit strategies (buy call/put/straddle) the cost is the premium paid, estimated
-/// from `rough_premium` (BSM ATM price proxy computed in the tick loop).
-fn estimate_margin(action: &SignalAction, qty: u32, rough_premium: f64) -> f64 {
-    let q = qty as f64;
-    match action {
-        // ── Credit strategies: margin requirement ──────────────────────────
-        SignalAction::IronButterfly { wing_width, .. } => 2.0 * wing_width * q * 100.0,
-        SignalAction::IronCondor {
-            sell_call_strike, buy_call_strike,
-            sell_put_strike,  buy_put_strike, ..
-        } => {
-            let call_wing = (buy_call_strike - sell_call_strike).abs();
-            let put_wing  = (sell_put_strike  - buy_put_strike).abs();
-            call_wing.max(put_wing) * q * 100.0
+/// Conservative collateral based on the resolved standard-contract payoff.
+/// Naked calls (including short straddles) are unsupported by this entry path.
+fn resolved_entry_budget(order: &crate::alpaca::types::OptionsOrderRequest, premium: f64) -> Result<f64, String> {
+    use crate::alpaca::types::OrderSide;
+    use crate::risk::payoff::{classify_group, OptionExposure, RiskClassification};
+    if !premium.is_finite() || premium <= 0.0 { return Err("Invalid premium estimate".into()); }
+    let legs: Vec<_> = if let Some(legs) = &order.legs {
+        legs.iter().map(|leg| (leg.symbol.as_str(), leg.ratio_qty, &leg.side)).collect()
+    } else {
+        vec![(order.symbol.as_deref().ok_or("Missing entry symbol")?, 1,
+            order.side.as_ref().ok_or("Missing entry side")?)]
+    };
+    if legs.is_empty() { return Err("Empty entry legs".into()); }
+    let mut key = None;
+    let mut exposures = Vec::new();
+    let mut debit = 0.0;
+    for (symbol, ratio, side) in legs {
+        let occ = occ_parser::parse_occ(symbol).ok_or("Invalid resolved OCC")?;
+        let this_key = (occ.root, occ.expiry_str);
+        if key.as_ref().is_some_and(|k| k != &this_key) || ratio == 0 || ratio > i32::MAX as u32 {
+            return Err("Entry requires one underlying/expiry and valid ratios".into());
         }
-        SignalAction::CashSecuredPut { strike, .. }
-        | SignalAction::SellPut { strike, .. } => strike * q * 100.0,
-        SignalAction::CreditCallSpread { sell_strike, buy_strike, .. }
-        | SignalAction::CreditPutSpread { sell_strike, buy_strike, .. } => {
-            (sell_strike - buy_strike).abs() * q * 100.0
-        }
-        // ── Debit strategies: premium paid (actual cash outflow) ───────────
-        // BuyStraddle = long call + long put, so 2× single-leg premium.
-        SignalAction::BuyStraddle { .. } => 2.0 * rough_premium * q * 100.0,
-        SignalAction::BuyCall { .. } | SignalAction::BuyPut { .. } => rough_premium * q * 100.0,
-        // Catch-all (NoAction, ClosePosition, etc.)
-        _ => 0.0,
+        key = Some(this_key);
+        let buy = matches!(side, OrderSide::Buy);
+        if buy { debit += premium * ratio as f64 * 100.0; }
+        exposures.push(OptionExposure { is_call: occ.is_call, strike: occ.strike,
+            quantity: if buy { ratio as i32 } else { -(ratio as i32) } });
     }
+    match classify_group(&exposures) {
+        RiskClassification::DefinedRisk { max_loss } => {
+            let cost = max_loss + debit; // Do not spend uncertain short premium twice.
+            if cost.is_finite() && cost > 0.0 { Ok(cost) } else { Err("Invalid entry budget".into()) }
+        }
+        _ => Err("Uncovered short-call entry is unsupported".into()),
+    }
+}
+
+fn candidate_record(order: &crate::alpaca::types::OptionsOrderRequest, root: &str, qty: u32)
+    -> Result<persistence::PositionRecord, String> {
+    use crate::alpaca::types::OrderSide;
+    let legs = if let Some(legs) = &order.legs {
+        legs.iter().map(|l| persistence::PositionLegRecord { occ_symbol: l.symbol.clone(),
+            qty: qty as f64 * l.ratio_qty as f64 * if matches!(l.side, OrderSide::Buy) { 1.0 } else { -1.0 },
+            entry_price: 0.0 }).collect()
+    } else { vec![persistence::PositionLegRecord {
+        occ_symbol: order.symbol.clone().ok_or("Missing order symbol")?,
+        qty: qty as f64 * if matches!(order.side, Some(OrderSide::Buy)) { 1.0 } else { -1.0 },
+        entry_price: 0.0 }] };
+    Ok(persistence::PositionRecord { symbol: root.into(), qty: qty as f64, entry_price: 0.0,
+        entry_date: Utc::now().to_rfc3339(), strategy: None, expires_at: None,
+        premium_collected: None, occ_symbol: None, roll_count: 0, legs })
+}
+
+/// Build a marked risk snapshot; incomplete marks block entries, never erase risk.
+fn marked_book(records: &HashMap<String, persistence::PositionRecord>,
+    marks: &HashMap<String, (f64, f64, Instant)>, now: chrono::DateTime<Utc>)
+    -> Result<Vec<crate::backtesting::position::Position>, String> {
+    use crate::backtesting::position::{Position, OptionType};
+    use crate::models::{american::ExerciseStyle, bs_mod::Greeks};
+    let mut positions = Vec::new();
+    for record in records.values() {
+        let (spot, sigma, stamp) = marks.get(&record.symbol).ok_or("Missing portfolio mark")?;
+        if stamp.elapsed().as_secs() > 120 || !spot.is_finite() || *spot <= 0.0 || !sigma.is_finite() || *sigma <= 0.0 {
+            return Err("Invalid/stale portfolio mark".into());
+        }
+        let legs = if !record.legs.is_empty() { record.legs.clone() }
+            else if let Some(occ) = &record.occ_symbol { vec![persistence::PositionLegRecord {
+                occ_symbol: occ.clone(), qty: record.qty, entry_price: record.entry_price }] }
+            else { Vec::new() };
+        if legs.is_empty() {
+            if !record.qty.is_finite() || record.qty.fract() != 0.0 || record.qty.abs() > i32::MAX as f64 {
+                return Err("Unsupported equity quantity".into());
+            }
+            // Position's option multiplier is 100: scale per-share equity Greeks.
+            positions.push(Position::new(positions.len(), record.symbol.clone(), OptionType::Call,
+                ExerciseStyle::European, *spot, record.qty as i32, *spot / 100.0,
+                record.entry_date.clone(), *spot, Some(Greeks { price: *spot / 100.0,
+                    delta: 0.01, gamma: 0.0, vega: 0.0, theta: 0.0, rho: 0.0 })));
+        }
+        for leg in legs {
+            let occ = occ_parser::parse_occ(&leg.occ_symbol).ok_or("Invalid portfolio OCC")?;
+            if occ.root != record.symbol || !leg.qty.is_finite() || leg.qty.fract() != 0.0 || leg.qty.abs() > i32::MAX as f64 {
+                return Err("Invalid portfolio leg".into());
+            }
+            let expiry = chrono::NaiveDate::parse_from_str(&occ.expiry_str, "%Y-%m-%d").map_err(|e| e.to_string())?
+                .and_hms_opt(23,59,59).unwrap().and_utc();
+            if expiry < now { return Err("Expired portfolio leg requires reconciliation".into()); }
+            let t = (expiry - now).num_seconds() as f64 / (365.0 * 86400.0);
+            let g = if occ.is_call { black_scholes_call(*spot, occ.strike, t, 0.05, *sigma) }
+                else { black_scholes_put(*spot, occ.strike, t, 0.05, *sigma) };
+            let mut position = Position::new(positions.len(), record.symbol.clone(),
+                if occ.is_call { OptionType::Call } else { OptionType::Put }, ExerciseStyle::American,
+                occ.strike, leg.qty as i32, leg.entry_price, record.entry_date.clone(), *spot, Some(g));
+            position.entry_higher_greeks = Some(crate::models::bs_mod::higher_order_greeks(
+                *spot, occ.strike, t, 0.05, *sigma, 0.0, occ.is_call));
+            positions.push(position);
+        }
+    }
+    Ok(positions)
 }
 
 pub async fn run_live_bot(
@@ -168,6 +234,8 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
     // exceed it before they reach Alpaca (avoiding 403 insufficient-buying-power).
     // Decremented after each fill; not incremented on close (conservative).
     let mut remaining_buy_pwr: f64 = buy_pwr;
+    let mut risk_marks: HashMap<String, (f64, f64, Instant)> = HashMap::new();
+    let mut last_account_refresh = Instant::now();
 
     // ── Email alerting (P4.2) ─────────────────────────────────────────────
     let alert_cfg = config::TradingBotConfigFile::load_alerts();
@@ -222,29 +290,9 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
     registry.register(Box::new(VolatilityArbitrageStrategy::new()));
     registry.register(Box::new(CashSecuredPuts::new()));
 
-    // ── P2.3 StrategyMatcher — per-symbol strategy recommendations ────────
-    // Load the performance matrix so we can skip historically-poor strategies
-    // for each symbol.  Falls back to an empty matcher (no filtering) on error.
-    let strategy_avoid: HashMap<String, String> = {
-        use crate::strategies::matching::StrategyMatcher;
-        let matcher = StrategyMatcher::load_from_files(
-            "models/stock_classifier.json",
-            "models/performance_matrix.json",
-        ).unwrap_or_else(|_| {
-            info!("P2.3: performance_matrix.json not found — strategy filtering disabled");
-            StrategyMatcher::new()
-        });
-        let mut map = HashMap::new();
-        for sym in &symbols {
-            let recs: StrategyRecommendations = matcher.get_recommendations(sym);
-            if recs.confidence_score > 0.0 && recs.avoid_strategy != "Unknown" {
-                info!("P2.3 [{}]: best={}, avoid={} (conf={:.2})",
-                    sym, recs.recommended_strategy, recs.avoid_strategy, recs.confidence_score);
-                map.insert(sym.clone(), recs.avoid_strategy);
-            }
-        }
-        map
-    };
+    // Legacy matrices label simple threshold variants as named strategies.
+    // Do not use those uncertified artifacts to select live strategies.
+    info!("Legacy performance-matrix filtering disabled pending validated research");
 
     // ── P3.1 Live IV cache (15-min TTL) ───────────────────────────────────
     // Shared so a background task can populate it (network fetches must never
@@ -471,6 +519,15 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                 break;
             }
             _ = clock_poll.tick() => {
+                if let Ok(account) = client.get_account().await {
+                    if let (Ok(equity_now), Ok(bp_now)) = (account.equity.parse::<f64>(), account.buying_power.parse::<f64>()) {
+                        if equity_now.is_finite() && equity_now > 0.0 && bp_now.is_finite() && bp_now >= 0.0 {
+                            pm.sync_from_account(equity_now, bp_now);
+                            remaining_buy_pwr = bp_now;
+                            last_account_refresh = Instant::now();
+                        }
+                    }
+                }
                 match client.get_clock().await {
                     Ok(clock) => {
                         use chrono::DateTime;
@@ -581,6 +638,18 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                     });
 
                 // ── P2.1 Position close check (via shared manage_open_positions) ──
+                if valid_sigma && price.is_finite() && price > 0.0 {
+                    risk_marks.insert(sym.clone(), (price, sigma, Instant::now()));
+                }
+                let risk_ready = match marked_book(&open_positions, &risk_marks, Utc::now()) {
+                    Ok(book) => { pm.update_positions(book); true }
+                    Err(e) => { warn!("Portfolio marking blocks entries: {}", e); false }
+                };
+                if risk_ready {
+                    let risk = pm.get_portfolio_risk();
+                    port_delta = risk.total_delta; port_gamma = risk.total_gamma;
+                    port_vega = risk.total_vega; port_theta = risk.total_theta;
+                }
                 if open_syms.contains(&sym) {
                     if let Some(pos) = open_positions.get(&sym).cloned() {
                         let snapshots = managed_positions(&pos, price, sigma);
@@ -648,6 +717,7 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                                             let _ = store.close_position(&sym).await;
                                                             open_syms.remove(&sym);
                                                             open_positions.remove(&sym);
+                                        if let Ok(book) = marked_book(&open_positions, &risk_marks, Utc::now()) { pm.update_positions(book); }
                                                             cooldown.record_close(&sym);
                                                         }
                                                         Err(e) => {
@@ -686,6 +756,7 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                             let _ = store.close_position(&sym).await;
                                             open_syms.remove(&sym);
                                             open_positions.remove(&sym);
+                                        if let Ok(book) = marked_book(&open_positions, &risk_marks, Utc::now()) { pm.update_positions(book); }
                                             cooldown.record_close(&sym);
                                             println!("    Closed {}", sym);
                                         }
@@ -706,7 +777,7 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                 }
 
                 // Entry-only guards must never bypass management of open risk.
-                if entries_halted || !warmed_up || !valid_sigma || !model_iv.is_finite()
+                if !risk_ready || last_account_refresh.elapsed().as_secs() > 120 || entries_halted || !warmed_up || !valid_sigma || !model_iv.is_finite()
                     || model_iv > 2.0 || !market_open {
                     continue;
                 }
@@ -746,7 +817,6 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                 // — previously `sigma` was passed for both the market-IV *and*
                 // historical-vol slots, so strategies never saw a real IV edge.
                 let signals = registry.generate_all_signals(&sym, price, market_iv, model_iv, sigma);
-                let avoid_strat = strategy_avoid.get(&sym).map(|s: &String| s.as_str()).unwrap_or("");
                 let actionable: Vec<_> = signals.iter()
                     .filter(|s| {
                         // Base confidence gate
@@ -754,7 +824,6 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                         if matches!(s.action, SignalAction::NoAction) { return false; }
                         if matches!(s.action, SignalAction::ClosePosition { .. }) { return false; }
                         // P2.3 performance-matrix gate: skip historically worst strategy
-                        if !avoid_strat.is_empty() && s.strategy_name == avoid_strat { return false; }
                         // Regime weight gate: skip strategies with weight < 0.5
                         let weight = RegimeDetector::weight_for(&regime, &s.strategy_name);
                         s.confidence * weight >= min_confidence
@@ -764,34 +833,18 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                 if actionable.is_empty() { continue; }
                 last_signal.insert(sym.clone(), now);
 
-                // Portfolio risk gate
-                let rough_premium = (price * sigma * (30.0_f64 / 365.0).sqrt()).max(0.01);
-                let decision = pm.can_take_position(
-                    &actionable[0].strategy_name,
-                    rough_premium,
-                    sigma,
-                    1,
-                );
-                for w in &decision.risk_warnings {
-                    warn!("Risk gate [{}]: {}", sym, w);
-                    println!("  Risk [{}]: {}", sym, w);
-                }
-
                 info!("Signal [{}] ${:.2} vol={:.1}% regime={:?} -- {} actionable signal(s)",
                     sym, price, sigma * 100.0, regime, actionable.len());
                 println!("[{}]  ${:.2}  vol={:.1}%  regime={:?}", sym, price, sigma * 100.0, regime);
                 for sig in &actionable {
-                    let qty = decision.suggested_size.max(1) as u32;
+                    // Resolve one strategy unit first. Budget its actual strikes/ratios,
+                    // then size and validate this strategy's actual proposed quantity.
+                    let rough_premium = (price * sigma * (sig.expiry_days as f64 / 365.0).sqrt()).max(0.01);
+                    let qty = 1;
                     println!("  📊 [{:<22}]  {:?}  K=${:.2}  exp={}d  conf={:.0}%  edge=${:.2}",
                         sig.strategy_name, sig.action,
                         sig.strike, sig.expiry_days,
                         sig.confidence * 100.0, sig.edge);
-
-                    if dry_run {
-                        println!("    [DRY RUN] Would submit {} x {}", qty, sym);
-                        continue;
-                    }
-                    if !decision.can_trade { continue; }
 
                     match AlpacaClient::signal_to_options_order(&sig.action, &sym, qty, None) {
                         Ok(mut order) => {
@@ -849,9 +902,51 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                     continue;
                                 }
                             }
-                            // Pre-flight buying-power check: skip if estimated margin
-                            // exceeds remaining options buying power.
-                            let estimated_margin = estimate_margin(&sig.action, qty, rough_premium);
+                            let per_unit = match resolved_entry_budget(&order, rough_premium) {
+                                Ok(cost) => cost,
+                                Err(e) => { warn!("Entry rejected [{}]: {}", sym, e); continue; }
+                            };
+                            let qty = pm.calculate_position_size(per_unit / 100.0, sigma, None, None, None)
+                                .min((pm.capital() * pm.config().max_risk_per_trade / 100.0 / per_unit).floor() as i32);
+                            if qty <= 0 { warn!("No affordable entry size [{}]", sym); continue; }
+                            let decision = pm.can_take_position(&sig.strategy_name, per_unit / 100.0, sigma, qty);
+                            if !decision.can_trade {
+                                warn!("Risk gate [{}]: {:?}", sym, decision.risk_warnings);
+                                continue;
+                            }
+                            let qty = qty as u32;
+                            order.qty = Some(qty.to_string());
+                            let estimated_margin = per_unit * qty as f64;
+                            if !estimated_margin.is_finite() { continue; }
+                            let mut projected = open_positions.clone();
+                            let candidate = match candidate_record(&order, &sym, qty) {
+                                Ok(p) => p, Err(e) => { warn!("Invalid candidate: {}", e); continue; }
+                            };
+                            projected.insert(sym.clone(), candidate);
+                            let book = match marked_book(&projected, &risk_marks, Utc::now()) {
+                                Ok(book) => book, Err(e) => { warn!("Unmarked candidate: {}", e); continue; }
+                            };
+                            let projected_warnings = pm.projected_risk_warnings(&book);
+                            if !projected_warnings.is_empty() {
+                                warn!("Projected entry risk [{}]: {:?}", sym, projected_warnings);
+                                continue;
+                            }
+                            let invariants = assert_invariants(&BotState {
+                                positions: projected.values().flat_map(invariant_positions).collect(),
+                                equity: pm.capital(), start_of_day_equity: equity,
+                                was_circuit_broken: circuit_broken, circuit_broken,
+                                max_risk_capital_pct: bot_cfg.max_daily_loss_pct,
+                                max_daily_drawdown_pct: bot_cfg.max_daily_loss_pct,
+                                block_long_premium: true, protected_equity: protected_equity_set.clone(),
+                            });
+                            if !invariants.is_empty() {
+                                warn!("Projected invariant violation [{}]: {:?}", sym, invariants);
+                                continue;
+                            }
+                            if dry_run {
+                                println!("    [DRY RUN] Would submit {} x {} (budget ${:.2})", qty, sym, estimated_margin);
+                                continue;
+                            }
                             if estimated_margin > 0.0 && estimated_margin > remaining_buy_pwr {
                                 warn!("Buying power check: skipping {} — estimated margin ${:.2} > remaining ${:.2}",
                                     sym, estimated_margin, remaining_buy_pwr);
@@ -898,6 +993,33 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                     info!("Order submitted: id={} sym={} status={} strategy={}",
                                         filled.id, sym, filled.status, sig.strategy_name);
                                     println!("    Submitted: {} ({})", filled.id, filled.status);
+                                    // ── P3.3 Greeks / portfolio-risk alert ────────────
+                                    if let Ok(book) = marked_book(&open_positions, &risk_marks, Utc::now()) {
+                                        pm.update_positions(book);
+                                    } else {
+                                        circuit_broken = true;
+                                    }
+                                    let risk = pm.get_portfolio_risk();
+                                    port_delta = risk.total_delta;
+                                    port_gamma = risk.total_gamma;
+                                    port_vega  = risk.total_vega;
+                                    port_theta = risk.total_theta;
+                                    info!("Portfolio risk after order: Δ={:.3} Γ={:.4} Vega={:.2} Theta={:.2}",
+                                        risk.total_delta, risk.total_gamma,
+                                        risk.total_vega, risk.total_theta);
+                                    println!("  📐 Portfolio risk:  Δ={:.3}  Γ={:.4}  Vega={:.2}  Theta={:.2}  NetExp=${:.0}",
+                                        risk.total_delta, risk.total_gamma,
+                                        risk.total_vega, risk.total_theta,
+                                        risk.net_exposure);
+                                    // Issue a hedge alert if portfolio delta is too large
+                                    let delta_limit = pm.capital() * pm.config().risk_limits.max_portfolio_delta;
+                                    if risk.gross_delta_dollars > delta_limit {
+                                        warn!("DELTA HEDGE ALERT: |Δ|={:.3} exceeds limit {:.3} -- consider hedging",
+                                            risk.gross_delta_dollars, delta_limit);
+                                        println!("  ⚠️  DELTA HEDGE ALERT: |Δ|={:.3} exceeds {:.3} — consider hedging",
+                                            risk.gross_delta_dollars, delta_limit);
+                                    }
+
                                     let daily_vol_post = sigma / (252.0_f64).sqrt();
                                     estimated_daily_loss += price * daily_vol_post * executed_qty * 100.0;
 
@@ -935,7 +1057,7 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                         open_positions.insert(sym.clone(), pos);
                                         // Deduct estimated margin so subsequent pre-flight
                                         // checks see the reduced available buying power.
-                                        remaining_buy_pwr -= estimate_margin(&sig.action, executed_qty.ceil() as u32, rough_premium);
+                                        remaining_buy_pwr -= per_unit * executed_qty;
                                         // Fill alert
                                         let a = alerter.clone();
                                         let sym_c  = sym.clone();
@@ -1022,27 +1144,6 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
 
                                     if circuit_broken { break; }
 
-                                    // ── P3.3 Greeks / portfolio-risk alert ────────────
-                                    let risk = pm.get_portfolio_risk();
-                                    port_delta = risk.total_delta;
-                                    port_gamma = risk.total_gamma;
-                                    port_vega  = risk.total_vega;
-                                    port_theta = risk.total_theta;
-                                    info!("Portfolio risk after order: Δ={:.3} Γ={:.4} Vega={:.2} Theta={:.2}",
-                                        risk.total_delta, risk.total_gamma,
-                                        risk.total_vega, risk.total_theta);
-                                    println!("  📐 Portfolio risk:  Δ={:.3}  Γ={:.4}  Vega={:.2}  Theta={:.2}  NetExp=${:.0}",
-                                        risk.total_delta, risk.total_gamma,
-                                        risk.total_vega, risk.total_theta,
-                                        risk.net_exposure);
-                                    // Issue a hedge alert if portfolio delta is too large
-                                    let delta_limit = equity * 0.30 / 100.0; // 30% of equity per $100
-                                    if risk.total_delta.abs() > delta_limit {
-                                        warn!("DELTA HEDGE ALERT: |Δ|={:.3} exceeds limit {:.3} -- consider hedging",
-                                            risk.total_delta, delta_limit);
-                                        println!("  ⚠️  DELTA HEDGE ALERT: |Δ|={:.3} exceeds {:.3} — consider hedging",
-                                            risk.total_delta, delta_limit);
-                                    }
                                 }
                                 Err(e) => {
                                     error!("Order failed: sym={} error={}", sym, e);
@@ -1118,4 +1219,55 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
     println!("  Open positions : {}", final_positions.len());
     println!("  Orders this run: {}", session_orders);
     println!("  Est. daily spend: ${:.2}", estimated_daily_loss);
+}
+
+#[cfg(test)]
+mod math_tests {
+    use super::*;
+    use crate::alpaca::types::{OptionsOrderRequest, OptionsLeg, OrderSide, OrderType, TimeInForce};
+
+    fn order(legs: Vec<OptionsLeg>) -> OptionsOrderRequest {
+        OptionsOrderRequest { r#type: OrderType::Market, time_in_force: TimeInForce::Day,
+            symbol: None, qty: Some("1".into()), side: None, position_intent: None,
+            order_class: Some("mleg".into()), legs: Some(legs), limit_price: None, client_order_id: None }
+    }
+    fn leg(symbol: &str, side: OrderSide) -> OptionsLeg {
+        OptionsLeg { symbol: symbol.into(), side, ratio_qty: 1, position_intent: "open".into() }
+    }
+
+    #[test]
+    fn resolved_straddle_is_rejected_and_spread_uses_actual_strikes() {
+        let naked = order(vec![leg("MSFT261218C00500000", OrderSide::Sell),
+            leg("MSFT261218P00500000", OrderSide::Sell)]);
+        assert!(resolved_entry_budget(&naked, 2.0).is_err());
+        let spread = order(vec![leg("MSFT261218C00500000", OrderSide::Sell),
+            leg("MSFT261218C00510000", OrderSide::Buy)]);
+        assert_eq!(resolved_entry_budget(&spread, 2.0).unwrap(), 1200.0);
+        let mixed = order(vec![leg("MSFT261218C00500000", OrderSide::Sell),
+            leg("MSFT261224C00510000", OrderSide::Buy)]);
+        assert!(resolved_entry_budget(&mixed, 2.0).is_err());
+    }
+
+    #[test]
+    fn risk_projection_preserves_ratios_signs_equity_and_missing_marks() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-28T15:00:00Z").unwrap().with_timezone(&Utc);
+        let mut spread = order(vec![leg("MSFT261218C00500000", OrderSide::Sell),
+            leg("MSFT261218C00510000", OrderSide::Buy)]);
+        spread.legs.as_mut().unwrap()[1].ratio_qty = 2;
+        let record = candidate_record(&spread, "MSFT", 3).unwrap();
+        let mut records = HashMap::from([("MSFT".into(), record)]);
+        assert!(marked_book(&records, &HashMap::new(), now).is_err());
+        let marks = HashMap::from([("MSFT".into(), (500.0,0.3,Instant::now()))]);
+        let book = marked_book(&records, &marks, now).unwrap();
+        assert_eq!(book.iter().map(|p|p.quantity).collect::<Vec<_>>(),vec![-3,6]);
+        assert!(book.iter().all(|p| p.entry_greeks.unwrap().price.is_finite()));
+        records.get_mut("MSFT").unwrap().legs.clear();
+        records.get_mut("MSFT").unwrap().qty=25.0;
+        let book=marked_book(&records,&marks,now).unwrap();
+        let risk=crate::portfolio::RiskAnalyzer::new(100_000.0,Default::default()).calculate_portfolio_greeks(&book);
+        assert_eq!(risk.total_delta,25.0);
+        assert_eq!(risk.net_exposure,12500.0);
+        let stale=HashMap::from([("MSFT".into(),(500.0,0.3,Instant::now()-std::time::Duration::from_secs(121)))]);
+        assert!(marked_book(&records,&stale,now).is_err());
+    }
 }

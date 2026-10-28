@@ -77,6 +77,30 @@ pub fn european_put_binomial(
 }
 
 /// Core binomial tree implementation for American options
+fn tree_boundary(spot: f64, strike: f64, maturity: f64, rate: f64, volatility: f64,
+    config: &BinomialConfig, call: bool, american: bool) -> Option<f64> {
+    let q = if config.use_dividends { config.dividend_yield } else { 0.0 };
+    if ![spot, strike, maturity, rate, volatility, q].iter().all(|v| v.is_finite())
+        || spot <= 0.0 || strike <= 0.0 || volatility < 0.0 { return Some(f64::NAN); }
+    let sign = if call { 1.0 } else { -1.0 };
+    if maturity <= 0.0 { return Some((sign * (spot - strike)).max(0.0)); }
+    if config.n_steps == 0 { return Some(f64::NAN); }
+    if volatility == 0.0 {
+        let value = |t: f64| (sign * (spot * (-q*t).exp() - strike * (-rate*t).exp())).max(0.0);
+        let mut best = value(maturity);
+        if american {
+            best = best.max(value(0.0));
+            let ratio = rate * strike / (q * spot);
+            if rate != q && ratio.is_finite() && ratio > 0.0 {
+                let stationary = ratio.ln() / (rate - q);
+                if stationary > 0.0 && stationary < maturity { best = best.max(value(stationary)); }
+            }
+        }
+        return Some(best);
+    }
+    None
+}
+
 fn binomial_tree(
     spot: f64,
     strike: f64,
@@ -86,6 +110,7 @@ fn binomial_tree(
     config: &BinomialConfig,
     is_call: bool,
 ) -> f64 {
+    if let Some(value) = tree_boundary(spot, strike, maturity, rate, volatility, config, is_call, true) { return value; }
     let n = config.n_steps;
     let dt = maturity / n as f64;
     let u = (volatility * dt.sqrt()).exp();  // Up factor
@@ -99,7 +124,7 @@ fn binomial_tree(
 
     // Validate parameters
     if !p.is_finite() || p < 0.0 || p > 1.0 {
-        return 0.0;  // Invalid parameters
+        return f64::NAN; // Invalid tree parameters are not a zero option valuation.
     }
 
     // Build the binomial tree backwards
@@ -148,6 +173,7 @@ fn binomial_tree_european(
     config: &BinomialConfig,
     is_call: bool,
 ) -> f64 {
+    if let Some(value) = tree_boundary(spot, strike, maturity, rate, volatility, config, is_call, false) { return value; }
     let n = config.n_steps;
     let dt = maturity / n as f64;
     let u = (volatility * dt.sqrt()).exp();
@@ -159,7 +185,7 @@ fn binomial_tree_european(
     let r = disc;
 
     if !p.is_finite() || p < 0.0 || p > 1.0 {
-        return 0.0;
+        return f64::NAN;
     }
 
     // Build the binomial tree backwards (European - no early exercise)

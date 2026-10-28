@@ -8,6 +8,12 @@ DollarBill demonstrates options mathematics, Greeks calculations, and basic trad
 
 ## Latest development — October 4, 2026
 
+**October 28 update:** [Mathematical fixes](docs/math-fixes.md) correct pricing
+boundaries, sizing caps, signed risk units, live portfolio projection and
+per-candidate entry checks. Simple historical variants now have accurate names
+and isolated result/provenance files; the live bot no longer consumes the legacy
+strategy matrix. See the linked guide for model assumptions and verification.
+
 Phase 3 extends the offline execution foundation with a deterministic simulator,
 durable order recovery, exact decimal accounting, and shared strategy/risk routing
 through simulator and Alpaca adapters. Scenarios cover partial multi-leg fills,
@@ -132,7 +138,7 @@ After `cargo build --release`, the `dollarbill` binary exposes six subcommands:
 # Price a single option: AAPL $200 strike, 3-month expiry, 5% rate
 .\target\release\dollarbill.exe price AAPL 200 --dte 0.25 --rate 0.05
 
-# Backtest all configured symbols and save performance matrix
+# Backtest simple call-strategy threshold variants; save an isolated matrix + provenance
 .\target\release\dollarbill.exe backtest --save
 
 # Backtest a single symbol
