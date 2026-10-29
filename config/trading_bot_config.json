@@ -1,5 +1,9 @@
 {
   "bot_runtime": {
+    "live_iv_policy": {
+      "min_remaining_secs": 86400,
+      "max_spot_age_secs": 120
+    },
     "min_confidence":       0.20,
     "max_daily_loss_pct":   0.15,
     "signal_cooldown_secs": 10,

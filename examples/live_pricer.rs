@@ -9,8 +9,8 @@
 //   cargo run --example live_pricer -- --expiry 1 --once         # second-nearest expiry, single pass
 //   cargo run --example live_pricer -- --min-edge-pct 3.0        # 3% edge threshold (default 5%)
 
-use dollarbill::market_data::real_option_data_yahoo::fetch_liquid_options;
-use dollarbill::market_data::real_market_data::fetch_latest_price;
+use dollarbill::market_data::real_option_data_yahoo::fetch_yahoo_option_chain;
+use dollarbill::market_data::options_feed::LiveIvPolicy;
 use dollarbill::calibration::heston_calibrator::{calibrate_heston, CalibParams};
 use dollarbill::calibration::market_option::OptionType;
 use dollarbill::models::heston_analytical::{heston_call, heston_put};
@@ -108,13 +108,14 @@ async fn process_symbol(
     cache: &mut HashMap<String, CacheEntry>,
     calibrate_ttl: Duration,
 ) -> Result<(f64, Vec<EdgeSignal>, bool), Box<dyn std::error::Error>> {
-    // Fetch live spot price and options chain concurrently
-    let (spot_res, options_res) = tokio::join!(
-        fetch_latest_price(symbol),
-        fetch_liquid_options(symbol, expiry_index, min_volume, max_spread_pct),
-    );
-    let spot = spot_res?;
-    let liquid_options = options_res?;
+    // Use the underlying quote delivered with the dated options response.
+    let policy = LiveIvPolicy::default();
+    let chain = fetch_yahoo_option_chain(symbol, expiry_index, policy.min_remaining_secs).await?;
+    chain.validate_spot_age(chrono::Utc::now().timestamp(), policy.max_spot_age_secs)?;
+    let spot = chain.spot;
+    let liquid_options: Vec<_> = chain.options.into_iter().filter(|opt| {
+        opt.volume >= min_volume && (opt.ask-opt.bid)/opt.mid_price()*100.0 <= max_spread_pct
+    }).collect();
 
     if liquid_options.is_empty() {
         return Ok((spot, vec![], false));

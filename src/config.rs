@@ -180,6 +180,9 @@ pub enum SpotPriceSource {
 /// so the bot starts even if the JSON file is absent or incomplete.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BotRuntimeConfig {
+    /// Input freshness and minimum expiry horizon for live market IV.
+    #[serde(default)]
+    pub live_iv_policy: crate::market_data::options_feed::LiveIvPolicy,
     /// Minimum signal confidence (0–1) required before placing an order.
     #[serde(default = "BotRuntimeConfig::default_min_confidence")]
     pub min_confidence: f64,
@@ -259,6 +262,7 @@ impl BotRuntimeConfig {
 impl Default for BotRuntimeConfig {
     fn default() -> Self {
         Self {
+            live_iv_policy: Default::default(),
             min_confidence:       Self::default_min_confidence(),
             max_daily_loss_pct:   Self::default_max_daily_loss_pct(),
             signal_cooldown_secs: Self::default_signal_cooldown_secs(),

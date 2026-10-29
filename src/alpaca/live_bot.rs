@@ -305,19 +305,23 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
     // never wait on a network call.
     {
         let syms_iv = symbols.clone();
+        let iv_policy = bot_cfg.live_iv_policy;
         let iv_bg   = Arc::clone(&iv_cache);
         tokio::spawn(async move {
             let poll_interval = tokio::time::Duration::from_secs(60);
             loop {
                 for sym in &syms_iv {
-                    let is_fresh = iv_bg.read().unwrap().get_cached_iv(sym).is_some();
-                    if is_fresh { continue; }
-                    match LiveIvCache::fetch_atm_iv(sym, 0.05).await {
+                    if !iv_bg.read().unwrap().can_refresh(sym) { continue; }
+                    match LiveIvCache::fetch_atm_iv_with_policy(sym, 0.05, iv_policy).await {
                         Ok(iv) => {
                             iv_bg.write().unwrap().store(sym, iv);
                             info!("Live ATM IV refreshed for {}: {:.1}%", sym, iv * 100.0);
                         }
-                        Err(e) => warn!("Live ATM IV refresh failed for {}: {} — using model/HV fallback", sym, e),
+                        Err(e) => {
+                            let mut cache = iv_bg.write().unwrap();
+                            let delay = cache.record_failure(sym);
+                            warn!("Live ATM IV unavailable for {}: {}; retry in {}s; prior IV age={:?}s; new entries paused", sym, e, delay, cache.age_secs(sym));
+                        },
                     }
                 }
                 tokio::time::sleep(poll_interval).await;
@@ -621,11 +625,9 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
 
                 // ── Market vs. model IV — these must stay distinct inputs ──
                 // `market_iv`: what the market is actually pricing options at.
-                // Prefer the live options-chain reading (populated by the
-                // background refresh task); fall back to the tick-based
-                // realized-vol estimate only while no fresh reading is cached.
+                // Fresh options-chain IV is required for entries. Realized
+                // volatility remains a separate input for risk management.
                 let live_iv = iv_cache.read().unwrap().get_cached_iv(&sym);
-                let market_iv = live_iv.unwrap_or(sigma);
                 // `model_iv`: the Heston-calibrated theoretical fair value,
                 // used by strategies to detect mispricing against `market_iv`.
                 let model_iv = live_params
@@ -777,6 +779,10 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                 }
 
                 // Entry-only guards must never bypass management of open risk.
+                let Some(market_iv) = live_iv else {
+                    debug!("Skipping new entries for {}: fresh market IV unavailable; management uses realized volatility", sym);
+                    continue;
+                };
                 if !risk_ready || last_account_refresh.elapsed().as_secs() > 120 || entries_halted || !warmed_up || !valid_sigma || !model_iv.is_finite()
                     || model_iv > 2.0 || !market_open {
                     continue;
@@ -813,7 +819,7 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                 let regime = RegimeDetector::detect_from_scalars(sigma, trend_strength);
 
                 // Generate signals. `market_iv` (live options-chain reading, or
-                // the realized-vol fallback) vs. `model_iv` (Heston fair value)
+                // fresh live IV) vs. `model_iv` (Heston fair value)
                 // — previously `sigma` was passed for both the market-IV *and*
                 // historical-vol slots, so strategies never saw a real IV edge.
                 let signals = registry.generate_all_signals(&sym, price, market_iv, model_iv, sigma);
