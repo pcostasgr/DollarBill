@@ -142,6 +142,11 @@ pub struct TradeStore {
 }
 
 impl TradeStore {
+    /// Wait for pooled connections to close and release their database handles.
+    pub async fn close(self) {
+        self.pool.close().await;
+    }
+
     /// Open (or create) `db_path` and run schema migrations.
     pub async fn new(db_path: &str) -> Result<Self, sqlx::Error> {
         // Ensure the parent directory exists so SQLite can create the file.

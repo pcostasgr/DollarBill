@@ -6,7 +6,8 @@ use crate::models::bs_mod::black_scholes_merton_call;
 use std::fs::File;
 use std::io::Write;
 
-/// Calculate implied volatility using Newton-Raphson method
+/// Invert a European BSM price with bracketed Newton steps and bisection fallback.
+/// Volatility is supported on [0, 10]; out-of-bounds prices return None.
 pub fn implied_volatility_newton(
     market_price: f64,
     spot: f64,
@@ -15,41 +16,39 @@ pub fn implied_volatility_newton(
     rate: f64,
     is_call: bool,
 ) -> Option<f64> {
-    let mut sigma = 0.3; // Initial guess
-    let tolerance = 1e-6;
-    let max_iterations = 100;
-    let q = 0.0;
-    
-    for _ in 0..max_iterations {
-        let greeks = if is_call {
-            black_scholes_merton_call(spot, strike, time_to_expiry, rate, sigma, q)
-        } else {
-            crate::models::bs_mod::black_scholes_merton_put(spot, strike, time_to_expiry, rate, sigma, q)
-        };
-        
-        let price_diff = greeks.price - market_price;
-        
-        if price_diff.abs() < tolerance {
-            return Some(sigma);
-        }
-        
-        // Vega check to avoid division by zero
-        if greeks.vega.abs() < 1e-10 {
-            return None;
-        }
-        
-        // Newton-Raphson update
-        sigma = sigma - price_diff / greeks.vega;
-        
-        // Keep sigma in reasonable range
-        if sigma < 0.01 {
-            sigma = 0.01;
-        } else if sigma > 5.0 {
-            sigma = 5.0;
-        }
+    if ![market_price, spot, strike, time_to_expiry, rate].iter().all(|x| x.is_finite())
+        || spot <= 0.0 || strike <= 0.0 || time_to_expiry <= 0.0 {
+        return None;
     }
-    
-    None // Failed to converge
+    let discounted_strike = strike * (-rate * time_to_expiry).exp();
+    if !discounted_strike.is_finite() { return None; }
+    let lower = if is_call { (spot - discounted_strike).max(0.0) }
+        else { (discounted_strike - spot).max(0.0) };
+    let upper = if is_call { spot } else { discounted_strike };
+    if market_price < lower || market_price >= upper { return None; }
+    if market_price == lower { return Some(0.0); }
+    let price_at = |sigma| if is_call {
+        black_scholes_merton_call(spot, strike, time_to_expiry, rate, sigma, 0.0)
+    } else {
+        crate::models::bs_mod::black_scholes_merton_put(spot, strike, time_to_expiry, rate, sigma, 0.0)
+    };
+    let (mut lo, mut hi) = (0.0, 10.0);
+    if price_at(hi).price < market_price { return None; }
+    let mut sigma = 0.3;
+    for _ in 0..100 {
+        let g = price_at(sigma);
+        let error = g.price - market_price;
+        if error.abs() < 1e-12 * market_price.abs().max(1e-8) { return Some(sigma); }
+        if error > 0.0 { hi = sigma; } else { lo = sigma; }
+        if hi - lo < 1e-12 { return Some((lo + hi) * 0.5); }
+        let next = sigma - error / g.vega;
+        sigma = if next.is_finite() && g.vega > 1e-10 && next > lo && next < hi {
+            next
+        } else {
+            (lo + hi) * 0.5
+        };
+    }
+    None
 }
 
 #[derive(Debug, Clone)]

@@ -1,4 +1,5 @@
-// Live options pricer — wires Yahoo options feed → Heston calibration (TTL-cached) → edge signal loop
+// Live options pricer: same-chain fitted residuals, not validated trading alpha.
+// Calibration and pricing use corrected GL-128; delta/vega are BSM approximations.
 //
 // Usage:
 //   cargo run --example live_pricer                              # poll every 60s, recalibrate every 15min
@@ -12,7 +13,7 @@ use dollarbill::market_data::real_option_data_yahoo::fetch_liquid_options;
 use dollarbill::market_data::real_market_data::fetch_latest_price;
 use dollarbill::calibration::heston_calibrator::{calibrate_heston, CalibParams};
 use dollarbill::calibration::market_option::OptionType;
-use dollarbill::models::heston_analytical::{heston_call_carr_madan, heston_put_carr_madan};
+use dollarbill::models::heston_analytical::{heston_call, heston_put};
 use dollarbill::models::bs_mod::{black_scholes_merton_call, black_scholes_merton_put};
 use dollarbill::market_data::symbols::load_enabled_stocks;
 use serde::Deserialize;
@@ -156,10 +157,10 @@ async fn process_symbol(
 
         let model_price = match opt.option_type {
             OptionType::Call => {
-                heston_call_carr_madan(spot, opt.strike, opt.time_to_expiry, rate, &heston_params)
+                heston_call(spot, opt.strike, opt.time_to_expiry, rate, &heston_params)
             }
             OptionType::Put => {
-                heston_put_carr_madan(spot, opt.strike, opt.time_to_expiry, rate, &heston_params)
+                heston_put(spot, opt.strike, opt.time_to_expiry, rate, &heston_params)
             }
         };
 
@@ -307,7 +308,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         BOLD, CYAN, RESET
     );
     println!(
-        "{}{}║  Heston-calibrated edge signals on live data       ║{}",
+        "{}{}║  Heston fitted residuals on live data             ║{}",
         BOLD, CYAN, RESET
     );
     println!(

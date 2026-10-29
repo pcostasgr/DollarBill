@@ -4,6 +4,7 @@
 use crate::models::heston::HestonParams;
 use crate::models::heston_analytical::HestonCfCache;
 use crate::models::gauss_laguerre::GaussLaguerreRule;
+#[cfg(test)]
 use crate::models::bs_mod::{black_scholes_merton_call, black_scholes_merton_put};
 use crate::calibration::market_option::{MarketOption, OptionType};
 use crate::calibration::cmaes::{Cmaes, CmaesConfig};
@@ -84,25 +85,9 @@ impl CalibrationResult {
     }
 }
 
-/// Invert BSM price to implied vol via bisection (50 steps ≈ 15 digits).
+/// Invert BSM price with the same bracketed solver used by surface extraction.
 fn bsm_iv_calib(market_price: f64, s: f64, k: f64, t: f64, r: f64, is_call: bool) -> Option<f64> {
-    if market_price <= 0.0 || t <= 0.0 || s <= 0.0 || k <= 0.0 { return None; }
-    let discount = (-r * t).exp();
-    let intrinsic = if is_call { (s - k * discount).max(0.0) } else { (k * discount - s).max(0.0) };
-    if market_price < intrinsic - 1e-6 { return None; }
-    let mut lo = 1e-6_f64;
-    let mut hi = 10.0_f64;
-    for _ in 0..50 {
-        let mid = (lo + hi) * 0.5;
-        let price = if is_call {
-            black_scholes_merton_call(s, k, t, r, mid, 0.0).price
-        } else {
-            black_scholes_merton_put(s, k, t, r, mid, 0.0).price
-        };
-        if price < market_price { lo = mid; } else { hi = mid; }
-    }
-    let iv = (lo + hi) * 0.5;
-    if iv.is_finite() { Some(iv) } else { None }
+    crate::utils::vol_surface::implied_volatility_newton(market_price,s,k,t,r,is_call)
 }
 
 /// Box bounds for the 5 Heston parameters [κ, θ, σ, ρ, v₀].
@@ -366,7 +351,7 @@ pub fn calibrate_heston(
         }
     }
 
-    let rule = GaussLaguerreRule::new(32);
+    let rule = GaussLaguerreRule::new(crate::models::heston_analytical::HESTON_PRICING_NODES);
     let atm_iv = estimate_atm_iv(spot, rate, &market_data);
 
     let initial_error = {
@@ -543,7 +528,7 @@ pub fn create_mock_market_data(
     strikes: &[f64],
     maturities: &[f64],
 ) -> Vec<MarketOption> {
-    let rule = GaussLaguerreRule::new(32);
+    let rule = GaussLaguerreRule::new(crate::models::heston_analytical::HESTON_PRICING_NODES);
     let mut market_data = Vec::new();
     
     for &maturity in maturities {
@@ -571,3 +556,29 @@ pub fn create_mock_market_data(
     market_data
 }
 
+
+#[cfg(test)]
+mod iv_validation_tests {
+    use super::*;
+    #[test]
+    fn iv_rejects_invalid_prices_and_unbracketed_roots() {
+        for price in [f64::NAN, f64::INFINITY, -1.0, 100.0, 101.0] {
+            assert!(bsm_iv_calib(price, 100.0, 100.0, 1.0, 0.05, true).is_none());
+        }
+        assert!(bsm_iv_calib(1.0, 120.0, 100.0, 1.0, 0.05, true).is_none());
+        assert!(bsm_iv_calib(100.0, 100.0, 100.0, 1.0, 0.05, false).is_none());
+        assert!(bsm_iv_calib(50.0, 100.0, 100.0, 1e-5, 0.0, true).is_none());
+        assert!(bsm_iv_calib(5.0, 100.0, 100.0, 1.0, f64::NAN, true).is_none());
+    }
+    #[test]
+    fn iv_round_trips_calls_and_puts() {
+        for is_call in [true, false] {
+            for (k, t, vol) in [(100.0, 1.0, 0.2), (105.0, 7.0/365.0, 0.5), (80.0, 0.25, 0.4), (150.0, 7.0/365.0, 0.8), (100.0, 1.0, 0.005)] {
+                let price = if is_call { black_scholes_merton_call(100.0,k,t,0.0,vol,0.0).price }
+                    else { black_scholes_merton_put(100.0,k,t,0.0,vol,0.0).price };
+                let iv=bsm_iv_calib(price,100.0,k,t,0.0,is_call).unwrap();
+                assert!((iv-vol).abs()<1e-8,"call={is_call} K={k} T={t} expected={vol} got={iv}");
+            }
+        }
+    }
+}

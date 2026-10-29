@@ -36,7 +36,7 @@ fn classic_params() -> HestonParams {
     }
 }
 
-const CLASSIC_QUANTLIB_CALL: f64 = 10.3942;
+const CLASSIC_QUANTLIB_CALL: f64 = 10.39421857;
 
 #[test]
 fn test_classic_gl64_vs_quantlib() {
@@ -47,7 +47,7 @@ fn test_classic_gl64_vs_quantlib() {
     let err = (price - CLASSIC_QUANTLIB_CALL).abs();
     println!("Classic GL-64:  {price:.6}  (QuantLib ref: {CLASSIC_QUANTLIB_CALL})  err={err:.4}");
     assert!(
-        err < 0.10,
+        err < 1e-6,
         "GL-64 ({price:.4}) deviates from QuantLib ({CLASSIC_QUANTLIB_CALL}) by {err:.4}"
     );
 }
@@ -61,7 +61,7 @@ fn test_classic_gl128_vs_quantlib() {
     let err = (price - CLASSIC_QUANTLIB_CALL).abs();
     println!("Classic GL-128: {price:.6}  (QuantLib ref: {CLASSIC_QUANTLIB_CALL})  err={err:.4}");
     assert!(
-        err < 0.05,
+        err < 1e-6,
         "GL-128 ({price:.4}) deviates from QuantLib ({CLASSIC_QUANTLIB_CALL}) by {err:.4}"
     );
 }
@@ -73,7 +73,7 @@ fn test_classic_carr_madan_vs_quantlib() {
 
     let err = (price - CLASSIC_QUANTLIB_CALL).abs();
     println!("Classic CM:     {price:.6}  (QuantLib ref: {CLASSIC_QUANTLIB_CALL})  err={err:.4}");
-    println!("  (Note: Carr-Madan uses original char function, may differ)");
+    assert!(err < 1e-6, "Compatibility pricer differs from reference by {err}");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -82,7 +82,7 @@ fn test_classic_carr_madan_vs_quantlib() {
 // S=100, K=100, T=0.5, r=0.05, q=0
 // v₀=0.09, κ=1.5, θ=0.09, σ=1.0, ρ=−0.9
 //
-// QuantLib AnalyticHestonEngine (128-pt GL): Call = 8.55682587
+// QuantLib AnalyticHestonEngine (128-pt GL): Call = 8.593019474854358
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn high_volvol_params() -> HestonParams {
@@ -98,7 +98,7 @@ fn high_volvol_params() -> HestonParams {
     }
 }
 
-const HIGH_VOLVOL_QUANTLIB_CALL: f64 = 8.5568;
+const HIGH_VOLVOL_QUANTLIB_CALL: f64 = 8.593019474854358;
 
 #[test]
 fn test_high_volvol_gl64() {
@@ -109,7 +109,7 @@ fn test_high_volvol_gl64() {
     let err = (price - HIGH_VOLVOL_QUANTLIB_CALL).abs();
     println!("HighVolVol GL-64:  {price:.6}  (QuantLib ref: {HIGH_VOLVOL_QUANTLIB_CALL})  err={err:.4}");
     assert!(
-        err < 1.0,
+        err < 5e-6,
         "GL-64 ({price:.4}) deviates from QuantLib ({HIGH_VOLVOL_QUANTLIB_CALL}) by {err:.4}"
     );
 }
@@ -123,7 +123,7 @@ fn test_high_volvol_gl128() {
     let err = (price - HIGH_VOLVOL_QUANTLIB_CALL).abs();
     println!("HighVolVol GL-128: {price:.6}  (QuantLib ref: {HIGH_VOLVOL_QUANTLIB_CALL})  err={err:.4}");
     assert!(
-        err < 0.5,
+        err < 1e-6,
         "GL-128 ({price:.4}) deviates from QuantLib ({HIGH_VOLVOL_QUANTLIB_CALL}) by {err:.4}"
     );
 }
@@ -151,7 +151,7 @@ fn low_vol_params() -> HestonParams {
     }
 }
 
-const NEAR_BS_QUANTLIB_CALL: f64 = 6.8049;
+const NEAR_BS_QUANTLIB_CALL: f64 = 6.804867054890962;
 
 #[test]
 fn test_near_bs_gl64() {
@@ -167,7 +167,7 @@ fn test_near_bs_gl64() {
     let err_bs = (price - bs_price).abs();
     println!("NearBS GL-64:  {price:.6}  (QuantLib: {NEAR_BS_QUANTLIB_CALL}, BS: {bs_price:.6})  err_ql={err_ql:.4} err_bs={err_bs:.4}");
     assert!(
-        err_ql < 0.10,
+        err_ql < 2e-4,
         "GL-64 near-BS ({price:.4}) deviates from QuantLib ({NEAR_BS_QUANTLIB_CALL}) by {err_ql:.4}"
     );
 }
@@ -207,7 +207,7 @@ fn test_strike_sweep_vs_quantlib() {
                  k, price, ql_ref, abs_err, rel_err);
 
         assert!(
-            abs_err < 0.15 || rel_err < 3.0,
+            abs_err < 5e-5,
             "K={k}: GL-64 ({price:.4}) vs QuantLib ({ql_ref:.4}) -- err {abs_err:.4} ({rel_err:.2}%)"
         );
     }

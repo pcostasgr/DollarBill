@@ -519,7 +519,7 @@ impl PersonalityBasedBot {
                 ManagementAction::Hold => {}
                 ManagementAction::DeltaAlert { portfolio_delta, threshold } => {
                     if threshold > 0.0 && portfolio_delta.abs() > equity * threshold {
-                        println!("   ⚠️  PORTFOLIO DELTA ALERT: {:.1} exceeds {:.2}% of equity threshold",
+                        println!("   ⚠️  PORTFOLIO DOLLAR DELTA ALERT: ${:.1} exceeds {:.2}% of equity threshold",
                             portfolio_delta, threshold * 100.0);
                     }
                 }

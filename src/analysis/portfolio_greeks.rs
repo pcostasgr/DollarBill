@@ -32,7 +32,8 @@ pub struct OptionLeg {
 #[derive(Debug, Clone, Default)]
 pub struct PortfolioGreeks {
     // First-order
-    pub net_delta: f64,
+    pub net_delta: f64, // shares
+    pub net_delta_dollars: f64, // shares multiplied by marked spot
     pub net_gamma: f64,
     pub net_vega: f64,
     pub net_theta: f64,
@@ -89,7 +90,7 @@ pub struct ExposureVector {
 /// Portfolio-level Greek limits enforced before order submission.
 #[derive(Debug, Clone)]
 pub struct PortfolioLimits {
-    /// Max |net delta| as fraction of equity (e.g. 0.30 = 30%).
+    /// Max |net delta dollars| as fraction of equity (e.g. 0.30 = 30%).
     pub max_delta: f64,
     /// Max |net vega| in dollars per $1M notional (e.g. 500.0).
     pub max_vega: f64,
@@ -140,6 +141,7 @@ pub fn compute_book_greeks(spot: f64, rate: f64, legs: &[OptionLeg]) -> Portfoli
         };
 
         pg.net_delta += g.delta * mult;
+        pg.net_delta_dollars += g.delta * mult * spot;
         pg.net_gamma += g.gamma * mult;
         pg.net_vega  += g.vega  * mult;
         pg.net_theta += g.theta * mult;
@@ -204,7 +206,7 @@ pub fn check_limits(
 ) -> Vec<LimitBreach> {
     let mut breaches = Vec::new();
 
-    let delta_abs = greeks.net_delta.abs();
+    let delta_abs = greeks.net_delta_dollars.abs();
     let delta_limit = limits.max_delta * equity;
     if delta_abs > delta_limit {
         breaches.push(LimitBreach {
@@ -291,6 +293,7 @@ mod tests {
     fn limit_check_catches_breach() {
         let pg = PortfolioGreeks {
             net_delta: 500.0,
+            net_delta_dollars: 50_000.0,
             net_vega: 600.0,
             ..Default::default()
         };
@@ -334,5 +337,20 @@ mod tests {
         let ev = compute_exposure_vectors(spot, rate, &legs, &pg);
         assert!(ev.delta_1pct_up.is_finite());
         assert!(ev.vega_5pt_up.is_finite());
+    }
+}
+
+#[cfg(test)]
+mod dollar_delta_tests {
+    use super::*;
+    #[test]
+    fn equity_limit_uses_marked_spot_and_signed_dollar_delta() {
+        let leg=OptionLeg {strike:100.0,time_to_expiry:1.0,sigma:0.2,is_call:true,quantity:1,dividend_yield:0.0};
+        let pg=compute_book_greeks(100.0,0.05,&[leg.clone()]);
+        assert!((pg.net_delta_dollars-100.0*pg.net_delta).abs()<1e-9);
+        assert!(check_limits(&pg,&PortfolioLimits::default(),10_000.0).iter().any(|b|b.greek=="delta"));
+        let mut offset=leg.clone();offset.quantity=-1;
+        let flat=compute_book_greeks(100.0,0.05,&[leg,offset]);
+        assert_eq!(flat.net_delta_dollars,0.0);
     }
 }

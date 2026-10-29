@@ -49,6 +49,7 @@ pub enum ManagementAction {
     ForceCloseLong { symbol: String, occ: Option<String> },
     /// Portfolio delta has exceeded the threshold; no new action required, but
     /// caller should emit an alert and optionally flatten the highest-delta position.
+    /// `portfolio_delta` is dollar delta; `threshold` is a fraction of equity.
     DeltaAlert { portfolio_delta: f64, threshold: f64 },
 }
 
@@ -156,6 +157,27 @@ pub fn manage_open_positions(
         let strike    = occ_parts.as_ref().map(|p| p.strike);
         let is_call   = occ_parts.as_ref().map(|p| p.is_call);
 
+        // ── Portfolio delta accumulation (BSM approximation) ──────────────
+        // Convert share delta to dollars before comparing with account equity.
+        if let (Some(k), Some(is_call_flag)) = (strike, is_call) {
+            if k > 0.0 && pos.spot > 0.0 {
+                use crate::models::bs_mod::{black_scholes_call, black_scholes_put};
+                let expires_days = pos.expires_at.as_deref()
+                    .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+                    .map(|d| (d - today).num_days().max(0))
+                    .unwrap_or(30);
+                let t = (expires_days as f64 / 365.0).max(1.0 / 365.0);
+                let greeks = if is_call_flag {
+                    black_scholes_call(pos.spot, k, t, config.risk_free_rate, pos.sigma)
+                } else {
+                    black_scholes_put(pos.spot, k, t, config.risk_free_rate, pos.sigma)
+                };
+                portfolio_delta += greeks.delta * pos.qty * 100.0 * pos.spot;
+            }
+        } else if pos.occ_symbol.is_none() {
+            portfolio_delta += pos.qty * pos.spot;
+        }
+
         // ── Per-symbol concentration limit ─────────────────────────────────
         if config.max_risk_per_symbol_pct > 0.0 && equity > 0.0 && pos.qty < 0.0 {
             if let Some(k) = strike {
@@ -261,30 +283,12 @@ pub fn manage_open_positions(
         };
         actions.push(action);
 
-        // ── Portfolio delta accumulation (BSM approximation) ──────────────
-        // Use option delta ≈ ±0.5 ATM heuristic when BSM isn't available.
-        if let (Some(k), Some(is_call_flag)) = (strike, is_call) {
-            if k > 0.0 && pos.spot > 0.0 {
-                use crate::models::bs_mod::{black_scholes_call, black_scholes_put};
-                let expires_days = pos.expires_at.as_deref()
-                    .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
-                    .map(|d| (d - chrono::Utc::now().date_naive()).num_days().max(0))
-                    .unwrap_or(30);
-                let t = (expires_days as f64 / 365.0).max(1.0 / 365.0);
-                let greeks = if is_call_flag {
-                    black_scholes_call(pos.spot, k, t, config.risk_free_rate, pos.sigma)
-                } else {
-                    black_scholes_put(pos.spot, k, t, config.risk_free_rate, pos.sigma)
-                };
-                portfolio_delta += greeks.delta * pos.qty * 100.0;
-            }
-        }
     }
 
     // ── Portfolio delta alert ──────────────────────────────────────────────
-    if config.max_portfolio_delta_pct > 0.0 && portfolio_delta.abs() > 0.0 {
-        // Emit alert unconditionally (caller has the equity figure to compare against).
-        // We emit the raw delta; caller checks against equity × threshold.
+    if config.max_portfolio_delta_pct > 0.0 && equity > 0.0
+        && portfolio_delta.abs() > equity * config.max_portfolio_delta_pct {
+        // Dollar delta and equity are both measured in dollars.
         actions.push(ManagementAction::DeltaAlert {
             portfolio_delta,
             threshold: config.max_portfolio_delta_pct,
@@ -339,6 +343,17 @@ mod tests {
             protected_equity:        HashSet::new(),
             max_risk_per_symbol_pct: 0.06,
         }
+    }
+
+    #[test]
+    fn dollar_delta_alert_checks_equity_and_includes_exit_candidates() {
+        let today=chrono::Utc::now().date_naive();
+        let mut pos=short_put("AAPL",100.0,100.0,3.0,30);
+        pos.qty=1.0; // Force-close candidates must still contribute exposure.
+        let actions=manage_open_positions(&[pos.clone()],&cfg(),100_000.0,today);
+        assert!(actions.iter().any(|a| matches!(a,ManagementAction::DeltaAlert {portfolio_delta,..} if portfolio_delta.abs()>300.0)));
+        let mut config=cfg();config.max_portfolio_delta_pct=1.0;
+        assert!(!manage_open_positions(&[pos],&config,100_000.0,today).iter().any(|a|matches!(a,ManagementAction::DeltaAlert {..})));
     }
 
     #[test]

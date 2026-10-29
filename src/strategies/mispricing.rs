@@ -5,7 +5,7 @@ use crate::strategies::SignalAction;
 use crate::calibration::market_option::{MarketOption, OptionType};
 use crate::market_data::options_json_loader::{load_options_from_json, filter_liquid_options};
 use crate::models::bs_mod::{black_scholes_merton_call, black_scholes_merton_put};
-use crate::models::heston_analytical::{heston_call_carr_madan, heston_put_carr_madan};
+use crate::models::heston_analytical::{heston_call, heston_put};
 use crate::models::heston::HestonParams;
 use crate::models::american::{american_call_binomial, american_put_binomial, BinomialConfig};
 use std::error::Error;
@@ -173,10 +173,10 @@ fn calculate_model_price(
             if let Some(params) = heston_params {
                 match option.option_type {
                     OptionType::Call => {
-                        heston_call_carr_madan(spot, option.strike, option.time_to_expiry, rate, params)
+                        heston_call(spot, option.strike, option.time_to_expiry, rate, params)
                     }
                     OptionType::Put => {
-                        heston_put_carr_madan(spot, option.strike, option.time_to_expiry, rate, params)
+                        heston_put(spot, option.strike, option.time_to_expiry, rate, params)
                     }
                 }
             } else {

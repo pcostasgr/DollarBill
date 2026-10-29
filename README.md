@@ -362,7 +362,7 @@ Trades: 2 | Wins: 2 (100%) | Avg Win: $23,203 | Profit Factor: inf
 ### Core Models
 - **Black-Scholes-Merton**: Analytical European pricing with dividends
 - **Heston (Gauss-Laguerre)**: Lord-Kahl CF with pure Rust GL quadrature — **33 µs/call** single, **2.3 µs/opt** batch with CF cache
-- **Heston (Carr-Madan)**: Legacy adaptive Simpson integration path
+- **Heston**: corrected Lord-Kahl characteristic function with 128-node Gauss-Laguerre pricing
 - **SABR**: Hagan et al. (2002) analytic approximation — ATM/OTM branches, β backbone, smile + calibration
 - **Greeks**: All first-order sensitivities
 - **Implied Volatility**: Newton-Raphson solver
@@ -480,7 +480,7 @@ APCA_LIVE=1 ALPACA_API_KEY=<key> ALPACA_API_SECRET=<secret> \
 | **Live options chain** | Yahoo `/v7/finance/options/{symbol}` — bid/ask/IV per expiry |
 | **Liquidity filter** | Configurable min volume and max spread % (from `signals_config.json`) |
 | **Heston calibration** | Nelder-Mead fit with configurable TTL cache (default 15 min) |
-| **Model pricing** | Carr-Madan Heston call/put per live option |
+| **Model pricing** | Corrected GL-128 Heston call/put per live option |
 | **Edge signals** | Reports BUY/SELL where `|model − market| > min_edge_pct%` *and* `> min_edge_$` |
 | **Greeks** | BSM Delta and Vega per signal for position sizing |
 | **Poll loop** | Configurable interval with `tokio::select!` Ctrl+C exit |
@@ -507,9 +507,10 @@ Output columns per signal: `TYPE | STRIKE | BID | ASK | MODEL | EDGE$ | EDGE% | 
 
 **Heston Stochastic Volatility:**
 - **Gauss-Laguerre quadrature** (primary): Lord-Kahl Formulation 2 CF, 2–128 GL nodes
-- **Carr-Madan / adaptive Simpson** (legacy): original characteristic function path
+- Calibration and signals share GL-128; legacy Carr-Madan API names now alias this corrected path
 - QuantLib-validated: matches `AnalyticHestonEngine` to 6 significant figures
-- Put-call parity to machine precision; configurable via `IntegrationMethod` enum
+- Puts are derived from calls by parity; parity tests check consistency, not independent put integration
+- Independent dated QuantLib fixtures cover 1-week, 1-month and 1-year maturities, strikes 70–130 and stressed parameters
 
 **SABR Stochastic Volatility:**
 - Hagan, Kumar, Lesniewski & Woodward (2002) analytic approximation
@@ -826,11 +827,11 @@ See [tests/README.md](tests/README.md) for full test documentation.
 | **DollarBill** | 11-strike sweep (Carr-Madan) | — | 5.43 ms | — |
 | **QuantLib** | 11-strike sweep | — | 531 µs | — |
 
-\* Carr-Madan uses the legacy characteristic function; GL uses the corrected Lord-Kahl CF.
+\* Historical timing only: the legacy Carr-Madan implementation was incorrect and has been retired. These measurements do not describe the compatibility aliases now in use.
 
 **Key results:**
 - GL-64 matches QuantLib to **6 significant figures** (10.394219 vs 10.394218)
-- GL-32 is **31.6× faster** than Carr-Madan and already fully converged
+- GL-32 converges at this ATM benchmark; convergence across strikes and stressed parameters requires more nodes
 - GL-64 11-strike sweep is **13.6× faster** than Carr-Madan sweep
 
 ```bash
@@ -943,3 +944,17 @@ Constantinos 'Costas' Papadopoulos — 720° Software
 ---
 
 **Built with 🦀 Rust — Fast, Safe, Concurrent**
+
+### Pricing and signal interpretation (October 29, 2026)
+
+Calibration fits option-chain midquotes in IV space under the risk-neutral
+Heston model. The live pricer evaluates that same chain, so its “edge” is an
+in-sample model residual, not evidence of excess return. Cached parameters do
+not establish out-of-sample performance. Validate on later quotes, using
+executable bid/ask prices, costs and parameter timestamps before relying on
+signals. Reported live-pricer delta and vega remain BSM approximations.
+
+The backtest engine records daily marked equity. The separate attribution
+module reports realized per-trade statistics; these have different sampling
+and must not be interpreted as daily NAV Sharpe ratios. See
+[the follow-up math changes](docs/math-review-followup.md).

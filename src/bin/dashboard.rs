@@ -65,6 +65,7 @@ impl App {
         if let Ok(store) = TradeStore::new(&self.db_path).await {
             self.positions = store.get_open_positions().await.unwrap_or_default();
             self.trades = store.get_recent_orders(20).await.unwrap_or_default();
+            store.close().await;
         }
     }
 }
@@ -414,7 +415,7 @@ mod tests {
         store.close_position("AAPL").await.unwrap();
         app.refresh().await;
         assert!(app.positions.is_empty());
-        drop(store);
+        store.close().await;
         journal.close().await;
         // This uniquely-created scratch file is the only file removed.
         std::fs::remove_file(path).unwrap();

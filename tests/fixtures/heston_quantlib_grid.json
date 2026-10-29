@@ -1,0 +1,190 @@
+{
+  "quantlib": "1.41",
+  "evaluation_date": "2026-10-29",
+  "day_count": "Actual365Fixed",
+  "rate": 0.05,
+  "dividend_yield": 0,
+  "engine": "AnalyticHestonEngine adaptive integration, tolerance 1e-10",
+  "cases": [
+    {
+      "stressed": false,
+      "days": 7,
+      "strike": 70,
+      "call": 30.067091115557183
+    },
+    {
+      "stressed": false,
+      "days": 7,
+      "strike": 85,
+      "call": 15.081467992980352
+    },
+    {
+      "stressed": false,
+      "days": 7,
+      "strike": 100,
+      "call": 1.1520906193973985
+    },
+    {
+      "stressed": false,
+      "days": 7,
+      "strike": 115,
+      "call": 2.90758685139175e-10
+    },
+    {
+      "stressed": false,
+      "days": 7,
+      "strike": 130,
+      "call": 1.861247059627299e-15
+    },
+    {
+      "stressed": false,
+      "days": 30,
+      "strike": 70,
+      "call": 30.287083632227645
+    },
+    {
+      "stressed": false,
+      "days": 30,
+      "strike": 85,
+      "call": 15.362938849294615
+    },
+    {
+      "stressed": false,
+      "days": 30,
+      "strike": 100,
+      "call": 2.4863887851064423
+    },
+    {
+      "stressed": false,
+      "days": 30,
+      "strike": 115,
+      "call": 0.003259665659093972
+    },
+    {
+      "stressed": false,
+      "days": 30,
+      "strike": 130,
+      "call": 2.2401968606727946e-09
+    },
+    {
+      "stressed": false,
+      "days": 365,
+      "strike": 70,
+      "call": 33.827994906418084
+    },
+    {
+      "stressed": false,
+      "days": 365,
+      "strike": 85,
+      "call": 20.929728319934238
+    },
+    {
+      "stressed": false,
+      "days": 365,
+      "strike": 100,
+      "call": 10.394218565150172
+    },
+    {
+      "stressed": false,
+      "days": 365,
+      "strike": 115,
+      "call": 3.6561989986041836
+    },
+    {
+      "stressed": false,
+      "days": 365,
+      "strike": 130,
+      "call": 0.7996075246365514
+    },
+    {
+      "stressed": true,
+      "days": 7,
+      "strike": 70,
+      "call": 30.067091138002926
+    },
+    {
+      "stressed": true,
+      "days": 7,
+      "strike": 85,
+      "call": 15.08335209120151
+    },
+    {
+      "stressed": true,
+      "days": 7,
+      "strike": 100,
+      "call": 1.6936188084434927
+    },
+    {
+      "stressed": true,
+      "days": 7,
+      "strike": 115,
+      "call": 2.768857659106319e-09
+    },
+    {
+      "stressed": true,
+      "days": 7,
+      "strike": 130,
+      "call": -2.137821625746204e-15
+    },
+    {
+      "stressed": true,
+      "days": 30,
+      "strike": 70,
+      "call": 30.29848625454682
+    },
+    {
+      "stressed": true,
+      "days": 30,
+      "strike": 85,
+      "call": 15.640334210516093
+    },
+    {
+      "stressed": true,
+      "days": 30,
+      "strike": 100,
+      "call": 3.533986153799844
+    },
+    {
+      "stressed": true,
+      "days": 30,
+      "strike": 115,
+      "call": 0.004478343164561807
+    },
+    {
+      "stressed": true,
+      "days": 30,
+      "strike": 130,
+      "call": 6.713079727753116e-09
+    },
+    {
+      "stressed": true,
+      "days": 365,
+      "strike": 70,
+      "call": 35.550192046057454
+    },
+    {
+      "stressed": true,
+      "days": 365,
+      "strike": 85,
+      "call": 23.32864148238749
+    },
+    {
+      "stressed": true,
+      "days": 365,
+      "strike": 100,
+      "call": 12.521494730528122
+    },
+    {
+      "stressed": true,
+      "days": 365,
+      "strike": 115,
+      "call": 4.253564299811886
+    },
+    {
+      "stressed": true,
+      "days": 365,
+      "strike": 130,
+      "call": 0.480601215410548
+    }
+  ]
+}
