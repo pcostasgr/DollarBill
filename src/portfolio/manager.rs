@@ -192,6 +192,45 @@ impl PortfolioManager {
         )
     }
 
+    /// Contracts affordable when each unit ties up `collateral_per_unit` dollars
+    /// (cash-secured puts, defined-risk spreads). Bounded by a share of equity
+    /// and by remaining buying power; the percent-of-premium sizers do not apply.
+    pub fn collateralized_size(&self, collateral_per_unit: f64, max_collateral_pct: f64) -> i32 {
+        if !collateral_per_unit.is_finite() || collateral_per_unit <= 0.0
+            || !self.current_capital.is_finite() || self.current_capital <= 0.0
+            || !max_collateral_pct.is_finite() || max_collateral_pct <= 0.0 {
+            return 0;
+        }
+        let budget = (self.current_capital * max_collateral_pct / 100.0).min(self.buying_power);
+        (budget / collateral_per_unit).floor().max(0.0) as i32
+    }
+
+    /// Risk-limit and allocation gate for collateral-sized entries.
+    pub fn can_take_collateralized_position(
+        &self,
+        strategy: &str,
+        collateral_per_unit: f64,
+        contracts: i32,
+    ) -> PortfolioDecision {
+        let mut warnings = Vec::new();
+        let current_risk = self.risk_analyzer.calculate_portfolio_greeks(&self.current_positions);
+        warnings.extend(self.risk_analyzer.check_risk_limits(&current_risk));
+        let has_capacity = self.allocator.has_capacity(strategy, collateral_per_unit * contracts as f64);
+        if !has_capacity {
+            warnings.push(format!("Strategy {} at capacity", strategy));
+        }
+        if contracts <= 0 {
+            warnings.push("Non-positive contract count".to_string());
+        }
+        PortfolioDecision {
+            can_trade: warnings.is_empty(),
+            suggested_size: contracts,
+            risk_warnings: warnings,
+            allocation_info: self.allocator.get_allocation(strategy)
+                .map(|a| format!("Current: {:.1}%, Target: {:.1}%", a.current_pct, a.target_pct)),
+        }
+    }
+
     /// Calculate position size for iron condor
     pub fn calculate_iron_condor_size(
         &self,

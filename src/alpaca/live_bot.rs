@@ -36,6 +36,10 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
+const VOL_SAMPLE_SECS: u64 = 20;
+const MAX_PLAUSIBLE_SIGMA: f64 = 3.0;
+const MAX_COLLATERAL_PCT_PER_POSITION: f64 = 30.0;
+
 /// Conservative collateral based on the resolved standard-contract payoff.
 /// Naked calls (including short straddles) are unsupported by this entry path.
 fn resolved_entry_budget(order: &crate::alpaca::types::OptionsOrderRequest, premium: f64) -> Result<f64, String> {
@@ -598,7 +602,13 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                 // Update rolling price buffer
                 let buf = price_buf.entry(sym.clone())
                     .or_insert_with(VecDeque::new);
-                buf.push_back((price, Instant::now()));
+                // Decimate to one sample per VOL_SAMPLE_SECS: raw trade ticks are dominated
+                // by bid/ask bounce, which annualizes into absurd (1000%+) volatilities.
+                let tick_time = Instant::now();
+                match buf.back_mut() {
+                    Some(last) if tick_time.duration_since(last.1).as_secs() < VOL_SAMPLE_SECS => last.0 = price,
+                    _ => buf.push_back((price, tick_time)),
+                }
                 if buf.len() > max_price_buf { buf.pop_front(); }
                 let warmed_up = buf.len() >= min_prices_for_hv;
                 let entries_halted = circuit_broken || check_risk_guards(
@@ -619,7 +629,7 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                 let samples: Vec<(f64, Instant)> = buf.iter().copied().collect();
                 let prices: Vec<f64> = samples.iter().map(|(p, _)| *p).collect();
                 let observed_sigma = compute_historical_vol_ticks(&samples);
-                let valid_sigma = observed_sigma.is_finite() && observed_sigma >= 1e-8;
+                let valid_sigma = observed_sigma.is_finite() && observed_sigma >= 1e-8 && observed_sigma <= MAX_PLAUSIBLE_SIGMA;
                 // Management must run even before the tick buffer warms up.
                 let sigma = if valid_sigma { observed_sigma } else { 0.25 };
 
@@ -829,6 +839,7 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                         if s.confidence < min_confidence { return false; }
                         if matches!(s.action, SignalAction::NoAction) { return false; }
                         if matches!(s.action, SignalAction::ClosePosition { .. }) { return false; }
+                        if !s.edge.is_finite() || s.edge <= 0.0 { return false; }
                         // P2.3 performance-matrix gate: skip historically worst strategy
                         // Regime weight gate: skip strategies with weight < 0.5
                         let weight = RegimeDetector::weight_for(&regime, &s.strategy_name);
@@ -902,6 +913,14 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                     }
                                     leg.symbol = resolved;
                                 }
+                                // Strike snapping can collapse distinct legs onto one listed
+                                // contract, which Alpaca rejects with a 422.
+                                if reject_reason.is_none() {
+                                    let mut seen = std::collections::HashSet::new();
+                                    if let Some(dup) = legs.iter().find(|l| !seen.insert(l.symbol.clone())) {
+                                        reject_reason = Some(format!("{}: legs collapsed to the same contract", dup.symbol));
+                                    }
+                                }
                                 if let Some(reason) = reject_reason {
                                     warn!("Order path validation rejected multi-leg order for {} — skipping: {}", sym, reason);
                                     println!("    ⚠️  Rejected multi-leg order for {} ({})", sym, reason);
@@ -912,10 +931,13 @@ profit_target={:.0}% stop_loss={:.0}% max_days={} vol_pct={:.0}%",
                                 Ok(cost) => cost,
                                 Err(e) => { warn!("Entry rejected [{}]: {}", sym, e); continue; }
                             };
-                            let qty = pm.calculate_position_size(per_unit / 100.0, sigma, None, None, None)
-                                .min((pm.capital() * pm.config().max_risk_per_trade / 100.0 / per_unit).floor() as i32);
-                            if qty <= 0 { warn!("No affordable entry size [{}]", sym); continue; }
-                            let decision = pm.can_take_position(&sig.strategy_name, per_unit / 100.0, sigma, qty);
+                            let qty = pm.collateralized_size(per_unit, MAX_COLLATERAL_PCT_PER_POSITION);
+                            if qty <= 0 {
+                                warn!("No affordable entry size [{}]: collateral ${:.0}/unit exceeds {:.0}% of equity ${:.0} or buying power",
+                                    sym, per_unit, MAX_COLLATERAL_PCT_PER_POSITION, pm.capital());
+                                continue;
+                            }
+                            let decision = pm.can_take_collateralized_position(&sig.strategy_name, per_unit, qty);
                             if !decision.can_trade {
                                 warn!("Risk gate [{}]: {:?}", sym, decision.risk_warnings);
                                 continue;
