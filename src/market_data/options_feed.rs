@@ -5,6 +5,7 @@
 // stale and the next call to `refresh_if_stale` triggers a new Yahoo fetch
 // followed by a bracketed IV solve for near-ATM options.
 
+use crate::alpaca::AlpacaClient;
 use crate::market_data::real_option_data_yahoo::{fetch_yahoo_option_chain, YahooOptionChain};
 use crate::calibration::market_option::OptionType;
 use crate::utils::vol_surface::implied_volatility_newton;
@@ -182,8 +183,27 @@ impl LiveIvCache {
         if policy.min_remaining_secs < 0 || policy.max_spot_age_secs <= 0 {
             return Err("Invalid live IV policy".into());
         }
-        let chain = fetch_yahoo_option_chain(symbol, 0, policy.min_remaining_secs).await
+        let mut chain = fetch_yahoo_option_chain(symbol, 0, policy.min_remaining_secs).await
             .map_err(|e| format!("IV chain stage for {symbol}: {e}"))?;
+        // Yahoo's unofficial endpoint occasionally serves a frozen quote
+        // (same `regularMarketTime` across symbols/requests for extended
+        // periods) even though the HTTP response itself is uncached. Cross-
+        // check/override the spot with Alpaca's own real-time trade feed —
+        // already used for order execution — so a stuck Yahoo quote doesn't
+        // permanently block live entries while the underlying is genuinely
+        // trading. Only the spot/timestamp is replaced; strikes/bid/ask/
+        // volume still come from Yahoo's chain.
+        if let Some((price, ts)) = fetch_alpaca_spot(symbol).await {
+            let now = chrono::Utc::now().timestamp();
+            if (now - ts).abs() <= policy.max_spot_age_secs {
+                if (chain.spot_timestamp - ts).abs() > 5 {
+                    info!("{} Yahoo spot_timestamp={} is stale vs Alpaca trade_timestamp={}; using Alpaca spot={} for freshness/pricing",
+                        symbol, chain.spot_timestamp, ts, price);
+                }
+                chain.spot = price;
+                chain.spot_timestamp = ts;
+            }
+        }
         let iv = chain_atm_iv(&chain, rate, policy, chrono::Utc::now().timestamp())
             .map_err(|e| format!("IV validation stage for {symbol}: {e}"))?;
         info!("{} market IV source=Yahoo-chain, spot_timestamp={}, expiry={}, IV={:.1}%",
@@ -191,6 +211,19 @@ impl LiveIvCache {
         Ok(iv)
     }
 
+}
+
+/// Best-effort fetch of Alpaca's latest trade price/timestamp for `symbol`,
+/// used solely to cross-check/override a possibly-stale Yahoo spot quote.
+/// Returns `None` (never errors out the caller) if credentials are missing,
+/// the request fails, or the timestamp can't be parsed — the Yahoo-only
+/// freshness check still applies in that case.
+async fn fetch_alpaca_spot(symbol: &str) -> Option<(f64, i64)> {
+    let client = AlpacaClient::from_env().ok()?;
+    let trade = client.get_latest_trade(symbol).await.ok()?;
+    let ts = chrono::DateTime::parse_from_rfc3339(&trade.timestamp).ok()?.timestamp();
+    if !trade.price.is_finite() || trade.price <= 0.0 { return None; }
+    Some((trade.price, ts))
 }
 
 #[cfg(test)]
